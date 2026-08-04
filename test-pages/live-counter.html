@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>live-counter</title>
+<style>
+  body { font-family: monospace; margin: 0; padding: 16px; background: #111; color: #eee; }
+  #big { font-size: 140px; line-height: 1; font-weight: bold; }
+  #clock { font-size: 48px; }
+  #bar { height: 40px; background: #3a7; width: 0; transition: none; }
+  #small { font-size: 11px; margin-top: 12px; color: #bbb; }
+  #grid { display: flex; gap: 4px; margin-top: 12px; }
+  .cell { width: 40px; height: 40px; background: #333; }
+  .on { background: #d55; }
+</style>
+</head>
+<body>
+<div id="big">0</div>
+<div id="clock">--:--:--</div>
+<div id="bar"></div>
+<div id="grid"></div>
+<div id="small">작은 글씨 가독성 확인용 문자열. 1x1 타일에서 이 줄이 읽히는지 기록하라. ABCDEFG 0123456789</div>
+<script>
+  const big = document.getElementById('big');
+  const clock = document.getElementById('clock');
+  const bar = document.getElementById('bar');
+  const grid = document.getElementById('grid');
+  const cells = [];
+  for (let i = 0; i < 10; i += 1) {
+    const c = document.createElement('div');
+    c.className = 'cell';
+    grid.appendChild(c);
+    cells.push(c);
+  }
+  let n = 0;
+  function tick() {
+    n += 1;
+    big.textContent = String(n);
+    clock.textContent = new Date().toLocaleTimeString('ko-KR', { hour12: false });
+    bar.style.width = (n % 20) * 5 + '%';
+    cells.forEach((c, i) => {
+      c.className = 'cell' + (i === n % 10 ? ' on' : '');
+    });
+  }
+  tick();
+  setInterval(tick, 1000);
+</script>
+</body>
+</html>
