@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "WebDeck",
+  "version": "0.2.0",
+  "description": "Group Chrome tabs into projects and preview them live in a grid",
+  "permissions": ["tabs", "storage", "debugger", "alarms"],
+  "commands": {
+    "focus-dashboard": {
+      "suggested_key": {
+        "default": "Alt+Shift+D"
+      },
+      "description": "Focus the WebDeck dashboard tab"
+    }
+  }
+}
