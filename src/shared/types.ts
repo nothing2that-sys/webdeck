@@ -35,6 +35,15 @@ export interface Project {
   tiles: WebTile[]
 }
 
+//+_+// 런타임 탭 식별 필드는 v1 section 4.2 line 254~262 가 정한 다섯 개다
+export interface BrowserTabInfo {
+  tabId: number
+  windowId: number
+  currentUrl: string
+  title: string
+  favIconUrl?: string
+}
+
 //+_+// 영구 저장 대상이 아니다. v1 section 8 line 637
 export interface TileRuntimeState {
   tileId: string

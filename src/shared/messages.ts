@@ -1,4 +1,4 @@
-import type { Project, TileRuntimeState } from './types'
+import type { BrowserTabInfo, Project, TileRuntimeState } from './types'
 
 //+_+// v1 section 19 line 1143~1150 의 7개. WORKSPACE 계열만 PROJECT 로 치환했다
 export type DashboardRequest =
@@ -11,15 +11,6 @@ export type DashboardRequest =
   | { type: 'SET_TILE_KEEP_ALIVE'; tileId: string; enabled: boolean }
 
 export type DashboardRequestType = DashboardRequest['type']
-
-//+_+// 런타임 탭 식별 필드는 v1 section 4.2 line 254~262 가 정한 다섯 개다
-export interface BrowserTabInfo {
-  tabId: number
-  windowId: number
-  currentUrl: string
-  title: string
-  favIconUrl?: string
-}
 
 //+_+// errorCode 를 union 으로 좁히지 않는다. 오류 분류는 WEBDECK_PLAN section 8 이 Phase 6 으로 배정했다
 export interface DashboardFailure {
