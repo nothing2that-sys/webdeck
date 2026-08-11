@@ -119,6 +119,8 @@ interface InFlightAttempt {
   startedAt: number
   calledAt: number | null
   pageEnableSent: boolean
+  //+_+// 마감 타이머가 실제로 끝난 시각이다. 그 밖의 사유로 포기한 회차는 null 로 남는다
+  timedOutAt: number | null
   cancelTimer: () => void
 }
 
@@ -414,6 +416,7 @@ export class PreviewCaptureManager {
       startedAt: this.clock.now(),
       calledAt: null,
       pageEnableSent: false,
+      timedOutAt: null,
       cancelTimer: () => undefined,
     }
     attempt.cancelTimer = this.clock.schedule(CAPTURE_TIMEOUT_MS, () => {
@@ -432,23 +435,29 @@ export class PreviewCaptureManager {
     if (this.isAbandoned(attempt)) {
       return
     }
+    attempt.timedOutAt = this.clock.now()
     this.settle(attempt, { outcome: 'timeout', bytes: null, message: null })
   }
 
   private onResponse(attempt: InFlightAttempt, data: string | null, failure: string | null): void {
     //+_+// 이미 포기한 회차다. 프레임으로 채택하지 않는다. 다음 회차의 결과로 섞이지 않는다
     if (this.isAbandoned(attempt)) {
-      const roundDurationMs = this.clock.now() - attempt.startedAt
-      this.lateArrivalLog.push({
-        tileId: attempt.tileId,
-        tabId: attempt.tabId,
-        attemptToken: attempt.token,
-        attemptIndex: attempt.attemptIndex,
-        startedAt: attempt.startedAt,
-        roundDurationMs,
-        lateByMs: roundDurationMs - CAPTURE_TIMEOUT_MS,
-        settledAs: data === null ? 'failure' : 'success',
-      })
+      //+_+// 늦은 도착은 마감 타이머가 실제로 끝난 뒤에 온 응답만이다
+      //+_+// 탭이 닫혀 마감 전에 정리된 회차는 여기에 넣지 않는다. r2a 에서 lateByMs 가 음수로 나왔다
+      //+_+// lateByMs 를 마감 시각에서 재므로 구조적으로 음수가 될 수 없다
+      if (attempt.timedOutAt !== null) {
+        const now = this.clock.now()
+        this.lateArrivalLog.push({
+          tileId: attempt.tileId,
+          tabId: attempt.tabId,
+          attemptToken: attempt.token,
+          attemptIndex: attempt.attemptIndex,
+          startedAt: attempt.startedAt,
+          roundDurationMs: now - attempt.startedAt,
+          lateByMs: now - attempt.timedOutAt,
+          settledAs: data === null ? 'failure' : 'success',
+        })
+      }
       return
     }
 

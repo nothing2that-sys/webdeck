@@ -179,7 +179,7 @@ describe('TASK-P3-01 item 22 - capture statistics without an average', () => {
     })
   })
 
-  it('returns zero rates and null percentiles for an empty round', () => {
+  it('returns null rates and null percentiles for an empty round', () => {
     const empty = captureStats({
       roundDurationsMs: [],
       callDurationsMs: [],
@@ -191,8 +191,9 @@ describe('TASK-P3-01 item 22 - capture statistics without an average', () => {
 
     expect(empty.roundDuration).toEqual({ p50: null, p95: null })
     expect(empty.callDuration).toEqual({ p50: null, p95: null })
-    expect(empty.timeoutRate).toBe(0)
-    expect(empty.lateArrivalRate).toBe(0)
+    //+_+// 분모가 0 이면 null 이다. 0 으로 적으면 관측했다는 뜻이 된다
+    expect(empty.timeoutRate).toBeNull()
+    expect(empty.lateArrivalRate).toBeNull()
   })
 })
 
@@ -327,5 +328,37 @@ describe('TASK-P3-01 section 3.6 - the driver is separate from the decision', ()
     expect(DRIVER_TICK_MS).toBe(1000)
     expect(DEBUGGER_PROTOCOL_VERSION).toBe('1.3')
     expect(() => stop()).not.toThrow()
+  })
+})
+
+describe('r2 후속 - 정의되지 않은 비율은 null 이다', () => {
+  //+_+// r2a 의 lateArrivalRate 가 0 으로 나왔다. 타임아웃이 0 이라 정의되지 않는 값이었다
+  it('reports lateArrivalRate as null when nothing ever timed out', () => {
+    const stats = captureStats({
+      roundDurationsMs: [40, 50, 60],
+      callDurationsMs: [35, 45, 55],
+      attempts: 3,
+      successes: 3,
+      timeouts: 0,
+      lateArrivals: 0,
+    })
+
+    expect(stats.timeouts).toBe(0)
+    expect(stats.timeoutRate).toBe(0)
+    expect(stats.lateArrivalRate).toBeNull()
+  })
+
+  it('keeps a real zero when the denominator exists', () => {
+    const stats = captureStats({
+      roundDurationsMs: [40],
+      callDurationsMs: [35],
+      attempts: 2,
+      successes: 1,
+      timeouts: 1,
+      lateArrivals: 0,
+    })
+
+    expect(stats.timeoutRate).toBeCloseTo(0.5)
+    expect(stats.lateArrivalRate).toBe(0)
   })
 })

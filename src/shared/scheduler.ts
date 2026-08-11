@@ -79,8 +79,9 @@ export interface CaptureStats {
   lateArrivals: number
   roundDuration: DurationPercentiles
   callDuration: DurationPercentiles
-  timeoutRate: number
-  lateArrivalRate: number
+  //+_+// 분모가 0 이면 null 이다. "비율 없음"과 "비율 0" 은 다르다
+  timeoutRate: number | null
+  lateArrivalRate: number | null
   //+_+// JSON 에 주석을 달 수 없으므로 분모를 데이터로 싣는다
   rateDenominators: { timeoutRate: 'attempts'; lateArrivalRate: 'timeouts' }
 }
@@ -116,9 +117,10 @@ export function captureStats(input: CaptureStatsInput): CaptureStats {
     lateArrivals: input.lateArrivals,
     roundDuration: percentilesOf(input.roundDurationsMs),
     callDuration: percentilesOf(input.callDurationsMs),
-    timeoutRate: input.attempts === 0 ? 0 : input.timeouts / input.attempts,
+    timeoutRate: input.attempts === 0 ? null : input.timeouts / input.attempts,
     //+_+// 분모는 타임아웃 수다. 포기한 호출이 나중에라도 돌아왔는지를 본다. L21 의 질문이다
-    lateArrivalRate: input.timeouts === 0 ? 0 : input.lateArrivals / input.timeouts,
+    //+_+// 타임아웃이 0 이면 늦은 도착률은 정의되지 않는다. 0 으로 적으면 관측했다는 뜻이 된다
+    lateArrivalRate: input.timeouts === 0 ? null : input.lateArrivals / input.timeouts,
     rateDenominators: { timeoutRate: 'attempts', lateArrivalRate: 'timeouts' },
   }
 }

@@ -994,3 +994,55 @@ describe('TASK-P3-01-S5 - a lost session is reattached on the next round', () =>
     expect(SESSION_LOST_MESSAGES).toHaveLength(2)
   })
 })
+
+describe('r2 후속 - lateArrival 은 마감 뒤에 온 응답만이다', () => {
+  //+_+// r2a 에 lateByMs -4968 이 실렸다. 실체는 탭이 닫혀 마감 전에 정리된 회차였다
+  it('does not log a late arrival when the round was abandoned by a closed tab', async () => {
+    const { manager, clock, backend } = build()
+    manager.register('a', 1, 2000)
+
+    manager.tick()
+    await flush()
+    clock.advance(32)
+    await manager.releaseTab(1)
+    expect(manager.captureRecords[0]?.outcome).toBe('tabGone')
+
+    await settleCapture(backend, 0)
+
+    expect(manager.lateArrivals).toEqual([])
+  })
+
+  it('logs a late arrival only after the deadline actually fired', async () => {
+    const { manager, clock, backend } = build()
+    manager.register('a', 1, 2000)
+
+    manager.tick()
+    await flush()
+    clock.advance(5000)
+    clock.advance(700)
+    await settleCapture(backend, 0)
+
+    expect(manager.lateArrivals).toHaveLength(1)
+    expect(manager.lateArrivals[0]).toMatchObject({ lateByMs: 700, roundDurationMs: 5700 })
+  })
+
+  //+_+// 마감 시각에서 재므로 구조적으로 음수가 될 수 없다
+  it('never reports a negative lateByMs', async () => {
+    const { manager, clock, backend } = build()
+    manager.register('a', 1, 2000)
+    manager.register('b', 2, 2000)
+
+    manager.tick()
+    await flush()
+    clock.advance(5000)
+    await settleCapture(backend, 0)
+    await settleCapture(backend, 1)
+    clock.advance(10)
+    await manager.releaseTab(2)
+
+    for (const entry of manager.lateArrivals) {
+      expect(entry.lateByMs).toBeGreaterThanOrEqual(0)
+    }
+    expect(manager.lateArrivals.every((entry) => entry.lateByMs >= 0)).toBe(true)
+  })
+})
