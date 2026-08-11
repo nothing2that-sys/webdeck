@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BACKOFF_STEPS_MS,
+  CAPTURE_INTERVAL_MS,
+  CAPTURE_TIMEOUT_MS,
   MAX_CONCURRENT_CAPTURES,
+  STALE_AFTER_MULTIPLIER,
   canEnqueue,
   defaultRefreshIntervalMs,
   effectiveIntervalMs,
@@ -154,5 +158,32 @@ describe('v1 25.1 item 11 - capture backoff', () => {
   it('returns the base interval for a negative count without throwing', () => {
     expect(() => nextDelayMs(-1, base)).not.toThrow()
     expect(nextDelayMs(-1, base)).toBe(base)
+  })
+})
+
+describe('TASK-P3-01 item 03 - the seventh and eighth constants', () => {
+  it('caps a single capture call at 5000 ms', () => {
+    expect(CAPTURE_TIMEOUT_MS).toBe(5000)
+  })
+
+  it('declares a tile stale after three missed intervals', () => {
+    expect(STALE_AFTER_MULTIPLIER).toBe(3)
+  })
+
+  //+_+// L13 갱신은 기존 6개를 유지하라고 판정했다. 신설은 2개뿐이다
+  it('leaves the six existing constants untouched', () => {
+    expect(CAPTURE_INTERVAL_MS.spanLarge).toBe(2000)
+    expect(CAPTURE_INTERVAL_MS.spanMedium).toBe(2500)
+    expect(CAPTURE_INTERVAL_MS.spanSmall).toBe(4000)
+    expect(CAPTURE_INTERVAL_MS.dashboardHidden).toBe(45000)
+    expect(MAX_CONCURRENT_CAPTURES).toBe(2)
+    expect(BACKOFF_STEPS_MS).toEqual([2000, 5000, 15000, 30000])
+  })
+
+  //+_+// 성공 캡처가 간헐적으로 1~2초다. 타임아웃이 정상 캡처를 자르면 안 된다
+  //+_+// 미반환 호출은 30000 에서도 돌아오지 않았다. 5000 은 그 관측과 뚜렷이 구분된다
+  it('sits above the observed slow success band and far below the 30000 ms that never returned', () => {
+    expect(CAPTURE_TIMEOUT_MS).toBeGreaterThan(2000)
+    expect(CAPTURE_TIMEOUT_MS).toBeLessThan(30000)
   })
 })

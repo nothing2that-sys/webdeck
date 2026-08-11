@@ -12,6 +12,16 @@ export const MAX_CONCURRENT_CAPTURES = 2
 
 export const BACKOFF_STEPS_MS = [2000, 5000, 15000, 30000] as const
 
+//+_+// 7번째 상수. 잠정값이다. v1 section 6 / 6.1 에 근거가 없다. L13 갱신이 필요하다고 판정했다
+//+_+// L21 이 반환되지 않는 호출을 관측했다. 슬롯 2개가 그런 호출에 잠기면 큐가 영구히 막힌다
+//+_+// 성공 캡처는 간헐적으로 1~2초, 페인트 대기는 763~1004ms 다. 5000 은 그보다 충분히 크다
+//+_+// 미반환 호출은 timeout30000 에서도 돌아오지 않았다. 5초와 미반환은 구분된다
+export const CAPTURE_TIMEOUT_MS = 5000
+
+//+_+// 8번째 상수. 잠정값이다. v1 section 15.2 line 914 는 "일정 시간 이상"만 정하고 값을 정하지 않았다
+//+_+// 타일마다 주기가 다르므로 절대값을 쓸 수 없다. 마지막 성공 이후 주기의 배수로 판정한다
+export const STALE_AFTER_MULTIPLIER = 3
+
 export interface CaptureQueueItem {
   tileId: string
   tabId: number

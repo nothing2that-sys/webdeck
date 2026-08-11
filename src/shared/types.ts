@@ -1,4 +1,6 @@
-//+_+// v1 section 7 line 523~529 의 7개. 하나도 더하지 않는다
+//+_+// v1 section 7 line 523~529 의 7개에 DEVTOOLS 하나만 더한 8개다
+//+_+// v1 section 12 line 826 이 DevTools 충돌을 ERROR 로 만들지 말라고 요구한다. L19 해소
+//+_+// CAPTURE PAUSED 는 더하지 않는다. Preview Pause 는 WEBDECK_PLAN section 8 이 Phase 6 에 배정했다
 export type TileStatus =
   | 'LIVE'
   | 'LOADING'
@@ -6,6 +8,7 @@ export type TileStatus =
   | 'FROZEN'
   | 'DISCARDED'
   | 'DETACHED'
+  | 'DEVTOOLS'
   | 'ERROR'
 
 export type TileMatchMode = 'exact' | 'origin' | 'prefix'

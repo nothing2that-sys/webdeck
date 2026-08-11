@@ -20,13 +20,22 @@ export interface DashboardFailure {
   message: string
 }
 
-//+_+// 조회 2개만 payload 를 갖는다. 명령 5개는 성공 여부만 돌려준다
-//+_+// CAPTURE_TILE 의 이미지 전달 형식은 Phase 3 미결 사항이다. WEBDECK_PLAN section 5 line 208
+//+_+// 조회 2개와 CAPTURE_TILE 이 payload 를 갖는다. 나머지 명령 4개는 성공 여부만 돌려준다
+export type CaptureImageFormat = 'jpeg' | 'png'
+
+//+_+// 전송은 base64 문자열이다. L12 확정. ArrayBuffer / Blob / ImageBitmap 은 확장 메시징이 나르지 못한다
+//+_+// bytes 는 디코드된 이미지의 바이트 수다. base64 문자열 길이가 아니다
 export type DashboardResponse =
   | { ok: true; type: 'GET_PROJECT_STATE'; project: Project; runtimeStates: TileRuntimeState[] }
   | { ok: true; type: 'LIST_BROWSER_TABS'; tabs: BrowserTabInfo[] }
   | { ok: true; type: 'BIND_TILE' }
-  | { ok: true; type: 'CAPTURE_TILE' }
+  | {
+      ok: true
+      type: 'CAPTURE_TILE'
+      imageBase64: string
+      format: CaptureImageFormat
+      bytes: number
+    }
   | { ok: true; type: 'FOCUS_TILE' }
   | { ok: true; type: 'RELOAD_TILE' }
   | { ok: true; type: 'SET_TILE_KEEP_ALIVE' }
