@@ -90,6 +90,7 @@ export interface ReportInput {
   environment: ProbeResult | null
   userObservations: Record<string, string>
   idleTransition: string | null
+  idleTransitionClient: string | null
 }
 
 export interface HarnessReport {
@@ -112,7 +113,13 @@ export interface HarnessReport {
   portLog: PortLogRow[]
   environment: ProbeResult | null
   userObservations: Record<string, string>
+  //+_+// 워커 기록이다. 워커가 죽으면 사라진다. null 이 IDLE 성공의 증거다
   idleTransition: string | null
+  //+_+// 페이지 기록이다. localStorage 에 있으므로 워커 사망을 넘어 살아남는다. P3-D18
+  //+_+// client 있음 + worker 있음 -> 워커 생존
+  //+_+// client 있음 + worker null -> 워커 사망. IDLE 성공이다
+  //+_+// client 없음              -> 전이를 누르지 않았다
+  idleTransitionClient: string | null
 }
 
 //+_+// POC 가 쓴 것과 같은 fnv1a 다. 픽셀 해시가 아니므로 basis 를 리포트에 남긴다
@@ -194,6 +201,7 @@ export function buildReport(
     environment: input.environment,
     userObservations: input.userObservations,
     idleTransition: input.idleTransition,
+    idleTransitionClient: input.idleTransitionClient,
   }
 }
 

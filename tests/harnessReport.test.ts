@@ -48,6 +48,7 @@ function input(overrides: Partial<ReportInput> = {}): ReportInput {
     environment: null,
     userObservations: {},
     idleTransition: null,
+    idleTransitionClient: null,
     ...overrides,
   }
 }
@@ -63,6 +64,7 @@ describe('TASK-P3-01-S5 - report assembly', () => {
       'environment',
       'frameHashBasis',
       'idleTransition',
+      'idleTransitionClient',
       'injections',
       'lateArrivals',
       'meta',
@@ -195,5 +197,46 @@ describe('P3-D16 - the tick constant is duplicated on purpose', () => {
   it('stays finer than the shortest capture interval', () => {
     expect(HARNESS_TICK_MS).toBeLessThan(CAPTURE_INTERVAL_MS.spanLarge)
     expect(DRIVER_TICK_MS).toBeLessThan(CAPTURE_INTERVAL_MS.spanLarge)
+  })
+})
+
+describe('P3-D18 - the idle transition is recorded on both sides', () => {
+  //+_+// 워커 기록은 워커가 죽으면 사라진다. 페이지 기록은 살아남는다. 둘을 함께 실어 판정한다
+  it('carries the worker record and the client record separately', () => {
+    const report = buildReport(
+      input({
+        idleTransition: 'IDLE-C at 2026-08-11T09:09:24.023Z',
+        idleTransitionClient: 'IDLE-C at 2026-08-11T09:09:24.020Z',
+      }),
+      captureStats,
+    )
+
+    expect(report.idleTransition).toBe('IDLE-C at 2026-08-11T09:09:24.023Z')
+    expect(report.idleTransitionClient).toBe('IDLE-C at 2026-08-11T09:09:24.020Z')
+  })
+
+  //+_+// 판정표를 그대로 고정한다
+  it('distinguishes worker survival from worker death and from no transition', () => {
+    const survived = buildReport(
+      input({ idleTransition: 'IDLE-A at t', idleTransitionClient: 'IDLE-A at t' }),
+      captureStats,
+    )
+    const died = buildReport(
+      input({ idleTransition: null, idleTransitionClient: 'IDLE-C at t' }),
+      captureStats,
+    )
+    const notPressed = buildReport(
+      input({ idleTransition: null, idleTransitionClient: null }),
+      captureStats,
+    )
+
+    expect(survived.idleTransitionClient).not.toBeNull()
+    expect(survived.idleTransition).not.toBeNull()
+
+    expect(died.idleTransitionClient).not.toBeNull()
+    expect(died.idleTransition).toBeNull()
+
+    expect(notPressed.idleTransitionClient).toBeNull()
+    expect(notPressed.idleTransition).toBeNull()
   })
 })

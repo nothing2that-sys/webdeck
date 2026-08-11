@@ -139,6 +139,10 @@
       measuredAt 을 다시 찍는다. 캡처도 멈추므로 새 라운드는 다시 시작해야 한다.
       swStarts · portLog · reencode · environment 는 비우지 않는다.
     </p>
+    <p class="warn">
+      idle 전이 후에는 라운드 초기화를 누르지 않는다. 초기화가 워커의 idleTransition 을 지우므로
+      워커 생존 판정을 잃는다. 리포트를 먼저 내려받는다.
+    </p>
     <button id="resetRound">라운드 초기화</button>
     <button id="download">리포트 내려받기</button>
     <div id="status"></div>

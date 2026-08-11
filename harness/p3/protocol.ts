@@ -27,7 +27,13 @@ export type HarnessRequest =
   | { type: 'PROBE' }
   | { type: 'IDLE'; mode: IdleMode }
   | { type: 'SET_OBSERVATION'; key: string; value: string }
-  | { type: 'BUILD_REPORT'; chromeFullVersion: string; round: string }
+  | {
+      type: 'BUILD_REPORT'
+      chromeFullVersion: string
+      round: string
+      //+_+// 페이지가 localStorage 에서 읽어 넣는다. 워커는 이 값을 만들지 않는다. P3-D18
+      idleTransitionClient: string | null
+    }
   | { type: 'RESET_ROUND' }
   | { type: 'SNAPSHOT' }
 

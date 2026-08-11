@@ -18,6 +18,11 @@ const OBSERVATION_KEYS = [
 //+_+// localStorage 는 확장 API 가 아니므로 이 쓰기가 워커를 깨우지 않는다
 const IDLE_KEY = 'harnessIdleTransition'
 
+//+_+// 해제하면 IDLE_KEY 를 지운다. 그대로 지우면 리포트의 idleTransitionClient 가 항상 null 이 되어
+//+_+// P3-D18 의 판정표가 무너진다. 해제 시 이 칸으로 옮기고 리포트를 내려받을 때 소비한다
+//+_+// 소비되므로 다음 라운드로 새지 않는다
+const IDLE_CARRY_KEY = 'harnessIdleTransitionForReport'
+
 let tabList: TabSummary[] = []
 let port: chrome.runtime.Port | null = null
 let idleReached = false
@@ -31,12 +36,21 @@ function el<T extends HTMLElement>(id: string): T {
   return node as T
 }
 
-function storedIdle(): string | null {
+function readLocal(key: string): string | null {
   try {
-    return localStorage.getItem(IDLE_KEY)
+    return localStorage.getItem(key)
   } catch {
     return null
   }
+}
+
+function storedIdle(): string | null {
+  return readLocal(IDLE_KEY)
+}
+
+//+_+// 리포트에 실을 값이다. 전이 직후에는 IDLE_KEY 에, 해제 뒤에는 운반 칸에 있다
+function clientIdleTransition(): string | null {
+  return storedIdle() ?? readLocal(IDLE_CARRY_KEY)
 }
 
 //+_+// 눌렀는지 사용자가 알 수 없다는 신고에 대한 표시다
@@ -44,7 +58,11 @@ function renderIdleState(): void {
   const host = el('idleState')
   const value = storedIdle()
   if (value === null) {
-    host.textContent = 'idle 전이 없음 · 포트 연결됨'
+    const carried = readLocal(IDLE_CARRY_KEY)
+    host.textContent =
+      carried === null
+        ? 'idle 전이 없음 · 포트 연결됨'
+        : `${carried} · 해제됨. 이 값이 리포트의 idleTransitionClient 로 실린다`
     host.className = ''
     return
   }
@@ -291,6 +309,10 @@ function wire(): void {
   //+_+// 워커를 깨우는 것은 여기서만 일어난다. 자동 재연결 경로를 두지 않는다
   el('releaseIdle').addEventListener('click', () => {
     try {
+      const value = storedIdle()
+      if (value !== null) {
+        localStorage.setItem(IDLE_CARRY_KEY, value)
+      }
       localStorage.removeItem(IDLE_KEY)
     } catch {
       log('localStorage 를 비우지 못했다')
@@ -316,11 +338,22 @@ function wire(): void {
       }
       el('versionWarn').textContent = ''
       const round = el<HTMLInputElement>('round').value.trim()
-      const response = await send({ type: 'BUILD_REPORT', chromeFullVersion: version, round })
+      const response = await send({
+        type: 'BUILD_REPORT',
+        chromeFullVersion: version,
+        round,
+        idleTransitionClient: clientIdleTransition(),
+      })
       if (!response.ok || response.type !== 'BUILD_REPORT') {
         return
       }
       download(JSON.stringify(response.report, null, 2), reportFileName(round))
+      //+_+// 운반 칸을 소비한다. 다음 라운드 리포트에 지난 전이가 실리면 안 된다
+      try {
+        localStorage.removeItem(IDLE_CARRY_KEY)
+      } catch {
+        log('운반 칸을 비우지 못했다')
+      }
       log(`${reportFileName(round)} 내려받았다. docs/ 아래로 옮겨 커밋해라`)
     })()
   })

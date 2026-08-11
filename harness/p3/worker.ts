@@ -601,6 +601,7 @@ async function handle(request: HarnessRequest): Promise<HarnessResponse> {
       environment: probeResult,
       userObservations: observations,
       idleTransition,
+      idleTransitionClient: request.idleTransitionClient,
     },
     captureStats,
   )
