@@ -29,7 +29,8 @@ export interface LateArrivalRow {
 }
 
 export interface AttachStageRow {
-  stage: number
+  //+_+// 숫자는 단계별 시험이고 runtime 은 캡처가 부른 attach 다
+  stage: number | 'runtime'
   requested: number
   ok: number
   fail: number

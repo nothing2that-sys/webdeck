@@ -125,6 +125,11 @@ export class DebuggerSessionManager {
     this.detachListeners.push(listener)
   }
 
+  //+_+// 지금 리스를 들고 있는 탭 수다. 누적 시도 수가 아니다
+  get attachedCount(): number {
+    return this.leases.size
+  }
+
   isAttached(tabId: number): boolean {
     return this.leases.has(tabId)
   }

@@ -34,6 +34,8 @@ export interface HarnessSnapshot {
   captureCount: number
   lateArrivalCount: number
   attachedCount: number
+  attachOkTotal: number
+  attachFailTotal: number
   inFlight: number
   queued: number
   swStarts: string[]

@@ -130,10 +130,13 @@ async function refresh(): Promise<void> {
     return
   }
   const snapshot = response.snapshot
+  //+_+// attached 는 지금 리스를 든 탭 수이고 attachOk 는 누적 성공 호출 수다. 둘은 다르다
   el('status').textContent =
     `captures ${String(snapshot.captureCount)} · lateArrivals ${String(snapshot.lateArrivalCount)} · ` +
     `inFlight ${String(snapshot.inFlight)} · queued ${String(snapshot.queued)} · ` +
-    `attachOk ${String(snapshot.attachedCount)} · swStarts ${String(snapshot.swStarts.length)}`
+    `attached ${String(snapshot.attachedCount)} · ` +
+    `attachOk ${String(snapshot.attachOkTotal)} / fail ${String(snapshot.attachFailTotal)} · ` +
+    `swStarts ${String(snapshot.swStarts.length)}`
   el('detachReasons').textContent =
     snapshot.detachReasons.length === 0
       ? 'detach reason 관측 없음'

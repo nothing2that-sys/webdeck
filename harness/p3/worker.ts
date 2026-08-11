@@ -54,6 +54,19 @@ let idleTransition: string | null = null
 let stopDriver: (() => void) | null = null
 const registeredTiles = new Set<string>()
 
+//+_+// 모든 attach 호출을 여기에 남긴다. 단계별 시험뿐 아니라 캡처가 부른 것도 포함한다
+//+_+// L24 가 요구하는 실패 사유 기록이 단계별 시험에만 남아 있으면 안 된다
+interface AttachAttemptRow {
+  at: string
+  stage: number | 'runtime'
+  tabId: number
+  ok: boolean
+  message: string
+}
+
+const attachAttempts: AttachAttemptRow[] = []
+let currentStage: number | 'runtime' = 'runtime'
+
 function nowIso(): string {
   return new Date().toISOString()
 }
@@ -111,7 +124,17 @@ function harnessTabsBackend(): TabsBackend & { removeListeners: () => void } {
 }
 
 const debuggerBackend: DebuggerBackend = {
-  attach: (tabId) => chrome.debugger.attach({ tabId }, DEBUGGER_PROTOCOL_VERSION),
+  //+_+// 성공과 실패를 모두 남기고 오류는 그대로 다시 던진다. 세션 관리자도 사유를 기록해야 한다
+  attach: async (tabId) => {
+    try {
+      await chrome.debugger.attach({ tabId }, DEBUGGER_PROTOCOL_VERSION)
+      attachAttempts.push({ at: nowIso(), stage: currentStage, tabId, ok: true, message: '' })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      attachAttempts.push({ at: nowIso(), stage: currentStage, tabId, ok: false, message })
+      throw error
+    }
+  },
   detach: (tabId) => chrome.debugger.detach({ tabId }),
   sendCommand: (tabId, method, params) => chrome.debugger.sendCommand({ tabId }, method, params),
   onDetach: (listener) => {
@@ -328,17 +351,36 @@ async function reencodeOneFrame(
 
 async function runAttachStage(stage: number, tabIds: number[]): Promise<void> {
   const row: AttachStageRow = { stage, requested: tabIds.length, ok: 0, fail: 0, errors: [] }
-  for (const tabId of tabIds) {
-    const result = await sessions.ensureAttached(tabId)
-    if (result.ok) {
-      row.ok += 1
-    } else {
-      row.fail += 1
-      //+_+// L24 재발 방지. 사유 원문을 반드시 남긴다
-      row.errors.push(`tab ${String(tabId)}: ${result.message}`)
+  currentStage = stage
+  try {
+    for (const tabId of tabIds) {
+      const result = await sessions.ensureAttached(tabId)
+      if (result.ok) {
+        row.ok += 1
+      } else {
+        row.fail += 1
+        //+_+// L24 재발 방지. 사유 원문을 반드시 남긴다
+        row.errors.push(`tab ${String(tabId)}: ${result.message}`)
+      }
     }
+  } finally {
+    currentStage = 'runtime'
   }
   attachStages.push(row)
+}
+
+//+_+// 단계에 속하지 않은 attach 를 한 행으로 모은다. 캡처가 부른 것이 여기 들어온다
+function runtimeAttachRow(): AttachStageRow {
+  const rows = attachAttempts.filter((entry) => entry.stage === 'runtime')
+  return {
+    stage: 'runtime',
+    requested: rows.length,
+    ok: rows.filter((entry) => entry.ok).length,
+    fail: rows.filter((entry) => !entry.ok).length,
+    errors: rows
+      .filter((entry) => !entry.ok)
+      .map((entry) => `tab ${String(entry.tabId)}: ${entry.message}`),
+  }
 }
 
 function noteInjection(name: string, outcome: string, detail: string): void {
@@ -442,7 +484,9 @@ function snapshot(): HarnessSnapshot {
   return {
     captureCount: captures.length,
     lateArrivalCount: lateArrivalRows.length,
-    attachedCount: attachStages.reduce((sum, row) => sum + row.ok, 0),
+    attachedCount: sessions.attachedCount,
+    attachOkTotal: attachAttempts.filter((entry) => entry.ok).length,
+    attachFailTotal: attachAttempts.filter((entry) => !entry.ok).length,
     inFlight: captureManager.inFlightCount,
     queued: captureManager.queueLength,
     swStarts,
@@ -526,7 +570,7 @@ async function handle(request: HarnessRequest): Promise<HarnessResponse> {
       harnessCommit: __HARNESS_COMMIT__,
       captures,
       lateArrivals: lateArrivalRows,
-      attach: attachStages,
+      attach: [...attachStages, runtimeAttachRow()],
       detachEvents: detachRows,
       injections,
       reencode: reencodeResult,

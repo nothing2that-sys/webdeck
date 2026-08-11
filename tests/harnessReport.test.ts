@@ -153,3 +153,32 @@ describe('TASK-P3-01-S5 - report assembly', () => {
     expect(reportFileName('')).toBe('phase3-report-unnamed.json')
   })
 })
+
+describe('TASK-P3-01-S5 - runtime attach is recorded too', () => {
+  //+_+// r1a 는 캡처 315건이 성공했는데 attach[] 가 비어 있었다. 런타임 attach 가 기록되지 않았다
+  it('keeps a runtime row apart from the numbered stages', () => {
+    const report = buildReport(
+      input({
+        attach: [
+          { stage: 3, requested: 3, ok: 3, fail: 0, errors: [] },
+          {
+            stage: 'runtime',
+            requested: 4,
+            ok: 3,
+            fail: 1,
+            errors: ['tab 9: Another debugger is already attached to the tab with id: 9'],
+          },
+        ],
+      }),
+      captureStats,
+    )
+
+    const runtime = report.attach.find((entry) => entry.stage === 'runtime')
+    expect(runtime).toBeDefined()
+    expect(runtime?.ok).toBe(3)
+    expect(runtime?.fail).toBe(1)
+    //+_+// L24. 사유 원문이 단계별 시험 밖에서도 남아야 한다
+    expect(runtime?.errors[0]).toContain('Another debugger is already attached')
+    expect(report.attach.filter((entry) => typeof entry.stage === 'number')).toHaveLength(1)
+  })
+})
