@@ -1,4 +1,3 @@
-import { BACKOFF_STEPS_MS } from '../shared/scheduler'
 import type { TileStatus } from '../shared/types'
 
 //+_+// v1 section 21 line 1201~1213 의 이름을 그대로 쓴다. 캡처 자체의 실패는 이 모듈이 내지 않는다
@@ -10,7 +9,7 @@ export type DebuggerErrorCode =
   | 'TAB_CLOSED'
   | 'RESTRICTED_URL'
 
-//+_+// v1 section 12 가 정한 값이다. BACKOFF_STEPS_MS 4단보다 작아야 계단 색인이 성립한다
+//+_+// v1 section 12 가 정한 값이다. 회차를 넘어 탭 단위로 누적하고 성공하면 0 으로 돌아간다
 export const MAX_ATTACH_ATTEMPTS = 3
 
 //+_+// 비워 둔다. onDetach 의 reason 문자열은 아직 관측되지 않았다
@@ -44,17 +43,19 @@ export interface DetachFailureRecord {
   message: string
 }
 
+//+_+// exhausted 는 누적 시도가 MAX_ATTACH_ATTEMPTS 에 닿았다는 뜻이다. 그때만 ERROR 로 간다
 export type AttachResult =
   | { ok: true; reused: boolean }
-  | { ok: false; errorCode: DebuggerErrorCode; message: string; attempts: number }
+  | {
+      ok: false
+      errorCode: DebuggerErrorCode
+      message: string
+      attempts: number
+      exhausted: boolean
+    }
 
 export interface DebuggerSessionManagerOptions {
-  wait?: (ms: number) => Promise<void>
   devtoolsDetachReasons?: readonly string[]
-}
-
-function defaultWait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 //+_+// Error 가 아닌 값으로 reject 되어도 문자열을 잃지 않는다
@@ -91,9 +92,9 @@ export function tileStatusForDebuggerError(code: DebuggerErrorCode): TileStatus 
 //+_+// lease 다. 같은 탭에 두 번 attach 하지 않고 참조 카운트가 0 일 때만 detach 한다
 export class DebuggerSessionManager {
   private readonly backend: DebuggerBackend
-  private readonly wait: (ms: number) => Promise<void>
   private readonly devtoolsDetachReasons: readonly string[]
   private readonly leases = new Map<number, number>()
+  private readonly attachAttempts = new Map<number, number>()
   private readonly attachFailureLog: AttachFailureRecord[] = []
   private readonly detachEventLog: DetachEventRecord[] = []
   private readonly detachFailureLog: DetachFailureRecord[] = []
@@ -101,7 +102,6 @@ export class DebuggerSessionManager {
 
   constructor(backend: DebuggerBackend, options: DebuggerSessionManagerOptions = {}) {
     this.backend = backend
-    this.wait = options.wait ?? defaultWait
     this.devtoolsDetachReasons = options.devtoolsDetachReasons ?? DEVTOOLS_DETACH_REASONS
     this.backend.onDetach((tabId, reason) => {
       this.handleDetach(tabId, reason)
@@ -134,6 +134,8 @@ export class DebuggerSessionManager {
   }
 
   //+_+// 이미 붙어 있으면 attach 를 다시 부르지 않는다. L24 의 유력한 설명이 중복 attach 였다
+  //+_+// 한 회차에 한 번만 시도한다. 여기서 재우면 슬롯이 CAPTURE_TIMEOUT_MS 를 넘겨 잡힌다. D6
+  //+_+// 시도 사이의 간격은 호출자의 캡처 backoff 계단이 만든다
   async ensureAttached(tabId: number): Promise<AttachResult> {
     const held = this.leases.get(tabId)
     if (held !== undefined) {
@@ -141,26 +143,24 @@ export class DebuggerSessionManager {
       return { ok: true, reused: true }
     }
 
-    let lastMessage = ''
-    for (let attempt = 1; attempt <= MAX_ATTACH_ATTEMPTS; attempt += 1) {
-      if (attempt > 1) {
-        await this.wait(BACKOFF_STEPS_MS[attempt - 2])
-      }
-      try {
-        await this.backend.attach(tabId)
-        this.leases.set(tabId, 1)
-        return { ok: true, reused: false }
-      } catch (error) {
-        lastMessage = errorMessage(error)
-        this.attachFailureLog.push({ tabId, attempt, message: lastMessage })
-      }
-    }
+    const attempt = (this.attachAttempts.get(tabId) ?? 0) + 1
+    this.attachAttempts.set(tabId, attempt)
 
-    return {
-      ok: false,
-      errorCode: 'DEBUGGER_ATTACH_FAILED',
-      message: lastMessage,
-      attempts: MAX_ATTACH_ATTEMPTS,
+    try {
+      await this.backend.attach(tabId)
+      this.attachAttempts.delete(tabId)
+      this.leases.set(tabId, 1)
+      return { ok: true, reused: false }
+    } catch (error) {
+      const message = errorMessage(error)
+      this.attachFailureLog.push({ tabId, attempt, message })
+      return {
+        ok: false,
+        errorCode: 'DEBUGGER_ATTACH_FAILED',
+        message,
+        attempts: attempt,
+        exhausted: attempt >= MAX_ATTACH_ATTEMPTS,
+      }
     }
   }
 

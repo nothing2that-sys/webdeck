@@ -46,19 +46,11 @@ class FakeDebugger implements DebuggerBackend {
   }
 }
 
-//+_+// 재시도 대기를 실제로 재우지 않는다. 계단 값만 기록한다
-function instantWait(recorded: number[]): (ms: number) => Promise<void> {
-  return (ms) => {
-    recorded.push(ms)
-    return Promise.resolve()
-  }
-}
-
-function makeManager(fake: FakeDebugger, waits: number[] = [], devtoolsReasons?: readonly string[]) {
-  return new DebuggerSessionManager(fake, {
-    wait: instantWait(waits),
-    ...(devtoolsReasons === undefined ? {} : { devtoolsDetachReasons: devtoolsReasons }),
-  })
+function makeManager(fake: FakeDebugger, devtoolsReasons?: readonly string[]) {
+  return new DebuggerSessionManager(
+    fake,
+    devtoolsReasons === undefined ? {} : { devtoolsDetachReasons: devtoolsReasons },
+  )
 }
 
 describe('TASK-P3-01 item 04 - ensureAttached reuses the session', () => {
@@ -149,6 +141,7 @@ describe('TASK-P3-01 item 05 - detach only at reference count zero', () => {
 })
 
 describe('TASK-P3-01 item 06 - attach failure keeps the reason string', () => {
+  //+_+// 회차당 한 번만 시도한다. 세 번의 기록은 세 회차에서 나온다. D6
   it('records one verbatim message per failed attempt', async () => {
     const fake = new FakeDebugger()
     const failure = new Error('Cannot access a chrome:// URL')
@@ -156,7 +149,10 @@ describe('TASK-P3-01 item 06 - attach failure keeps the reason string', () => {
     const manager = makeManager(fake)
 
     await manager.ensureAttached(42)
+    await manager.ensureAttached(42)
+    await manager.ensureAttached(42)
 
+    expect(fake.attachCalls).toEqual([42, 42, 42])
     expect(manager.attachFailures).toHaveLength(3)
     expect(manager.attachFailures.map((entry) => entry.attempt)).toEqual([1, 2, 3])
     for (const entry of manager.attachFailures) {
@@ -171,6 +167,8 @@ describe('TASK-P3-01 item 06 - attach failure keeps the reason string', () => {
     fake.attachRejections.push('rejected with a bare string', { code: 7 }, new Error('boom'))
     const manager = makeManager(fake)
 
+    await manager.ensureAttached(42)
+    await manager.ensureAttached(42)
     const result = await manager.ensureAttached(42)
 
     expect(manager.attachFailures.map((entry) => entry.message)).toEqual([
@@ -214,7 +212,8 @@ describe('TASK-P3-01 item 07 - attach failure classification', () => {
       ok: false,
       errorCode: 'DEBUGGER_ATTACH_FAILED',
       message: 'Another debugger is already attached to the tab with id: 42',
-      attempts: 3,
+      attempts: 1,
+      exhausted: false,
     })
   })
 
@@ -262,7 +261,7 @@ describe('TASK-P3-01 item 07 - attach failure classification', () => {
 
   it('routes a listed reason to the DEVTOOLS tile status', () => {
     const fake = new FakeDebugger()
-    const manager = makeManager(fake, [], ['observed_devtools_reason'])
+    const manager = makeManager(fake, ['observed_devtools_reason'])
 
     fake.fireDetach(42, 'observed_devtools_reason')
 
@@ -308,41 +307,46 @@ describe('TASK-P3-01 item 08 - detach failure is swallowed but recorded', () => 
 })
 
 describe('TASK-P3-01 item 09 - three exhausted attempts go to ERROR', () => {
-  it('tries exactly three times and stops', async () => {
+  //+_+// 한 회차에 한 번만 시도한다. 누적이 3 에 닿는 회차에서 exhausted 가 선다. D6
+  it('reports exhausted only on the third accumulated attempt', async () => {
     const fake = new FakeDebugger()
     fake.attachRejections.push(new Error('a'), new Error('b'), new Error('c'))
-    const waits: number[] = []
-    const manager = new DebuggerSessionManager(fake, { wait: instantWait(waits) })
+    const manager = makeManager(fake)
 
-    const result = await manager.ensureAttached(42)
+    expect(await manager.ensureAttached(42)).toMatchObject({ attempts: 1, exhausted: false })
+    expect(await manager.ensureAttached(42)).toMatchObject({ attempts: 2, exhausted: false })
+    expect(await manager.ensureAttached(42)).toMatchObject({ attempts: 3, exhausted: true })
 
     expect(MAX_ATTACH_ATTEMPTS).toBe(3)
     expect(fake.attachCalls).toEqual([42, 42, 42])
-    expect(result).toMatchObject({ ok: false, attempts: 3 })
   })
 
-  //+_+// 계단은 기존 BACKOFF_STEPS_MS 를 재사용한다. 새 상수를 만들지 않는다
-  it('waits the first two backoff steps between the three attempts', async () => {
+  //+_+// 재시도 간격은 호출자의 캡처 backoff 가 만든다. 여기서 재우면 슬롯이 5000 을 넘겨 잡힌다
+  it('calls attach exactly once per round and never sleeps', async () => {
     const fake = new FakeDebugger()
-    fake.attachRejections.push(new Error('a'), new Error('b'), new Error('c'))
-    const waits: number[] = []
-    const manager = new DebuggerSessionManager(fake, { wait: instantWait(waits) })
+    fake.attachRejections.push(new Error('a'))
+    const manager = makeManager(fake)
 
+    const before = Date.now()
     await manager.ensureAttached(42)
 
-    expect(waits).toEqual([2000, 5000])
+    expect(fake.attachCalls).toEqual([42])
+    expect(Date.now() - before).toBeLessThan(1000)
   })
 
-  it('succeeds on the third attempt without reporting a failure', async () => {
+  it('resets the accumulated count once an attach succeeds', async () => {
     const fake = new FakeDebugger()
     fake.attachRejections.push(new Error('a'), new Error('b'))
     const manager = makeManager(fake)
 
-    const result = await manager.ensureAttached(42)
+    await manager.ensureAttached(42)
+    await manager.ensureAttached(42)
+    expect(await manager.ensureAttached(42)).toEqual({ ok: true, reused: false })
+    await manager.release(42)
 
-    expect(result).toEqual({ ok: true, reused: false })
-    expect(manager.attachFailures).toHaveLength(2)
-    expect(manager.isAttached(42)).toBe(true)
+    fake.attachRejections.push(new Error('again'))
+    expect(await manager.ensureAttached(42)).toMatchObject({ attempts: 1, exhausted: false })
+    expect(manager.attachFailures).toHaveLength(3)
   })
 
   it('maps the exhausted attach to the ERROR tile status', () => {

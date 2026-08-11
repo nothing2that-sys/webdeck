@@ -3,6 +3,7 @@ import {
   BACKOFF_STEPS_MS,
   CAPTURE_INTERVAL_MS,
   CAPTURE_TIMEOUT_MS,
+  DEGRADED_INTERVAL_MS,
   MAX_CONCURRENT_CAPTURES,
   STALE_AFTER_MULTIPLIER,
   canEnqueue,
@@ -161,13 +162,19 @@ describe('v1 25.1 item 11 - capture backoff', () => {
   })
 })
 
-describe('TASK-P3-01 item 03 - the seventh and eighth constants', () => {
+describe('TASK-P3-01 item 03 - the constants added after the original six', () => {
   it('caps a single capture call at 5000 ms', () => {
     expect(CAPTURE_TIMEOUT_MS).toBe(5000)
   })
 
   it('declares a tile stale after three missed intervals', () => {
     expect(STALE_AFTER_MULTIPLIER).toBe(3)
+  })
+
+  //+_+// D7. dashboardHidden 과 값은 같으나 정책이 다르다. 리터럴을 공유하지 않는다
+  it('names the degraded interval separately from the hidden dashboard interval', () => {
+    expect(DEGRADED_INTERVAL_MS).toBe(45000)
+    expect(CAPTURE_INTERVAL_MS.dashboardHidden).toBe(45000)
   })
 
   //+_+// L13 갱신은 기존 6개를 유지하라고 판정했다. 신설은 2개뿐이다

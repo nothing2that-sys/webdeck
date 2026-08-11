@@ -22,6 +22,11 @@ export const CAPTURE_TIMEOUT_MS = 5000
 //+_+// 타일마다 주기가 다르므로 절대값을 쓸 수 없다. 마지막 성공 이후 주기의 배수로 판정한다
 export const STALE_AFTER_MULTIPLIER = 3
 
+//+_+// 9번째 상수. 잠정값이다. backoff 4단을 소진한 타일의 강등 주기다
+//+_+// dashboardHidden 과 값이 같으나 정책이 다르다. 리터럴을 공유하지 않는다
+//+_+// hidden 정책이 Pause 로 바뀌어도(L17) 이 값은 따라 움직이지 않는다
+export const DEGRADED_INTERVAL_MS = 45000
+
 export interface CaptureQueueItem {
   tileId: string
   tabId: number

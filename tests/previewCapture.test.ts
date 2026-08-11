@@ -62,7 +62,12 @@ class FakeCaptureBackend implements DebuggerBackend {
   enableRejection: unknown = null
   private listener: ((tabId: number, reason: string) => void) | null = null
 
+  attachHangs = false
+
   attach(): Promise<void> {
+    if (this.attachHangs) {
+      return new Promise<void>(() => undefined)
+    }
     if (this.attachRejections.length > 0) {
       return Promise.reject(this.attachRejections.shift())
     }
@@ -106,7 +111,7 @@ function flush(): Promise<void> {
 function build(options: { quality?: number } = {}) {
   const backend = new FakeCaptureBackend()
   const clock = new FakeClock()
-  const sessions = new DebuggerSessionManager(backend, { wait: () => Promise.resolve() })
+  const sessions = new DebuggerSessionManager(backend)
   const manager = new PreviewCaptureManager(backend, sessions, clock, options)
   return { backend, clock, sessions, manager }
 }
@@ -544,17 +549,92 @@ describe('TASK-P3-01 item 20 - a timeout never becomes ERROR', () => {
     expect(manager.statusOf('a')).toBe('STALE')
   })
 
-  //+_+// ERROR 는 attach 3회 소진에서만 온다. TASK-P3-01 section 3.4
+  //+_+// ERROR 는 attach 3회 소진에서만 온다. 회차당 1회이므로 세 회차가 필요하다. D6
   it('goes to ERROR only when the three attach attempts are spent', async () => {
-    const { manager, backend } = build()
+    const { manager, clock, backend } = build()
     backend.attachRejections.push(new Error('a'), new Error('b'), new Error('c'))
     manager.register('a', 1, 2000)
 
     manager.tick()
     await flush()
+    expect(manager.statusOf('a')).not.toBe('ERROR')
+
+    clock.advance(2000)
+    manager.tick()
+    await flush()
+    expect(manager.statusOf('a')).not.toBe('ERROR')
+
+    clock.advance(5000)
+    manager.tick()
+    await flush()
 
     expect(manager.statusOf('a')).toBe('ERROR')
-    expect(manager.captureRecords[0]).toMatchObject({ outcome: 'failure', message: 'c' })
+    expect(manager.captureRecords[2]).toMatchObject({
+      outcome: 'failure',
+      message: 'c',
+      calledAt: null,
+    })
+  })
+})
+
+describe('TASK-P3-01 - the slot hold time is bounded by one constant', () => {
+  //+_+// D6. attach 가 지연되면 예전 구조에서는 마감이 시작되지도 않았다
+  it('frees the slot at 5000 ms even while the attach never settles', async () => {
+    const { manager, clock, backend } = build()
+    backend.attachHangs = true
+    manager.register('a', 1, 2000)
+
+    manager.tick()
+    await flush()
+    expect(manager.inFlightCount).toBe(1)
+
+    clock.advance(4999)
+    expect(manager.inFlightCount).toBe(1)
+
+    clock.advance(1)
+    expect(manager.inFlightCount).toBe(0)
+    expect(manager.captureRecords[0]).toMatchObject({
+      outcome: 'timeout',
+      startedAt: 0,
+      durationMs: 5000,
+      calledAt: null,
+    })
+  })
+
+  it('does not hold a second tab hostage while the first attach hangs', async () => {
+    const { manager, clock, backend } = build()
+    backend.attachHangs = true
+    manager.register('a', 1, 2000)
+    manager.register('b', 2, 2000)
+    manager.register('c', 3, 2000)
+
+    manager.tick()
+    await flush()
+    expect(manager.inFlightCount).toBe(2)
+    expect(manager.queueLength).toBe(1)
+
+    clock.advance(5000)
+    await flush()
+
+    expect(manager.inFlightCount).toBeLessThanOrEqual(2)
+    expect(manager.queueLength).toBe(0)
+  })
+
+  //+_+// 실패한 attach 는 슬롯을 즉시 놓는다. 마감까지 붙들지 않는다
+  it('frees the slot immediately when the attach fails outright', async () => {
+    const { manager, backend } = build()
+    backend.attachRejections.push(new Error('denied'))
+    manager.register('a', 1, 2000)
+
+    manager.tick()
+    await flush()
+
+    expect(manager.inFlightCount).toBe(0)
+    expect(manager.captureRecords[0]).toMatchObject({
+      outcome: 'failure',
+      message: 'denied',
+      durationMs: 0,
+    })
   })
 })
 
@@ -586,7 +666,6 @@ describe('TASK-P3-01 - status priority and detach faults', () => {
     const backend = new FakeCaptureBackend()
     const clock = new FakeClock()
     const sessions = new DebuggerSessionManager(backend, {
-      wait: () => Promise.resolve(),
       devtoolsDetachReasons: ['observed_devtools_reason'],
     })
     const manager = new PreviewCaptureManager(backend, sessions, clock)

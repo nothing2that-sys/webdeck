@@ -1,8 +1,8 @@
 import type { CaptureImageFormat } from '../shared/messages'
 import {
   BACKOFF_STEPS_MS,
-  CAPTURE_INTERVAL_MS,
   CAPTURE_TIMEOUT_MS,
+  DEGRADED_INTERVAL_MS,
   MAX_CONCURRENT_CAPTURES,
   STALE_AFTER_MULTIPLIER,
   canEnqueue,
@@ -46,12 +46,16 @@ export interface CapturedFrame {
 }
 
 //+_+// 타임아웃 행에도 startedAt 과 durationMs 가 있다. L23 이 그 공백을 지적했다
+//+_+// startedAt 은 회차 시작이고 durationMs 는 회차 전체다. 마감 기준이 회차이기 때문이다
+//+_+// calledAt 은 captureScreenshot 을 실제로 보낸 시각이다. 호출 자체의 소요는 여기서 뺀다
+//+_+// attach 나 Page.enable 에서 끝난 회차는 calledAt 이 null 이다
 export interface CaptureRecord {
   tileId: string
   tabId: number
   attemptToken: number
   attemptIndex: number
   startedAt: number
+  calledAt: number | null
   durationMs: number
   outcome: CaptureOutcome
   bytes: number | null
@@ -101,6 +105,7 @@ interface InFlightAttempt {
   token: number
   attemptIndex: number
   startedAt: number
+  calledAt: number | null
   cancelTimer: () => void
 }
 
@@ -276,6 +281,7 @@ export class PreviewCaptureManager {
     }
   }
 
+  //+_+// 슬롯 보유 상한은 CAPTURE_TIMEOUT_MS 하나다. attach 와 Page.enable 도 그 안에 든다. D6
   private async runCapture(item: CaptureQueueItem): Promise<void> {
     const state = this.tiles.get(item.tileId)
     if (state === undefined) {
@@ -284,46 +290,42 @@ export class PreviewCaptureManager {
       return
     }
 
+    const attempt = this.beginAttempt(state)
+
     //+_+// 리스는 타일이 등록돼 있는 동안 유지한다. 캡처마다 attach 와 detach 를 반복하지 않는다
     if (!state.holdsLease) {
       const attached = await this.sessions.ensureAttached(state.tabId)
+      if (this.isAbandoned(attempt)) {
+        return
+      }
       if (!attached.ok) {
-        this.settleWithoutCall(state, attached.message, tileStatusForDebuggerError(attached.errorCode))
+        //+_+// 누적 시도가 소진됐을 때만 ERROR 다. 한두 번 실패는 계단만 올린다
+        this.settle(attempt, { outcome: 'failure', bytes: null, message: attached.message }, {
+          fault: attached.exhausted ? tileStatusForDebuggerError(attached.errorCode) : null,
+        })
         return
       }
       state.holdsLease = true
     }
 
+    //+_+// Page.enable 이 정말 필요한지 확인되지 않았다. POC 가 보냈으므로 같은 순서를 유지한다
+    //+_+// 하네스가 생략 변형과 대조한다. 확인 전까지 뺄 근거가 없다
     if (!state.pageEnabled) {
       try {
         await this.backend.sendCommand(state.tabId, 'Page.enable')
         state.pageEnabled = true
       } catch (error) {
-        this.settleWithoutCall(state, errorMessage(error), null)
+        if (!this.isAbandoned(attempt)) {
+          this.settle(attempt, { outcome: 'failure', bytes: null, message: errorMessage(error) })
+        }
+        return
+      }
+      if (this.isAbandoned(attempt)) {
         return
       }
     }
 
-    this.startTimedCapture(state)
-  }
-
-  //+_+// startedAt 은 호출 직전에 기록한다. 타임아웃 경로에서도 이 값이 남는다
-  private startTimedCapture(state: TileState): void {
-    this.nextToken += 1
-    state.attemptCount += 1
-    const attempt: InFlightAttempt = {
-      tileId: state.tileId,
-      tabId: state.tabId,
-      token: this.nextToken,
-      attemptIndex: state.attemptCount - 1,
-      startedAt: this.clock.now(),
-      cancelTimer: () => undefined,
-    }
-    attempt.cancelTimer = this.clock.schedule(CAPTURE_TIMEOUT_MS, () => {
-      this.onTimeout(attempt)
-    })
-    this.inFlight.set(state.tileId, attempt)
-
+    attempt.calledAt = this.clock.now()
     this.backend
       .sendCommand(state.tabId, 'Page.captureScreenshot', {
         format: this.format,
@@ -339,34 +341,42 @@ export class PreviewCaptureManager {
       )
   }
 
+  //+_+// startedAt 은 회차 시작이고 마감의 기준이다. 타임아웃 경로에서도 남는다. L23
+  private beginAttempt(state: TileState): InFlightAttempt {
+    this.nextToken += 1
+    state.attemptCount += 1
+    const attempt: InFlightAttempt = {
+      tileId: state.tileId,
+      tabId: state.tabId,
+      token: this.nextToken,
+      attemptIndex: state.attemptCount - 1,
+      startedAt: this.clock.now(),
+      calledAt: null,
+      cancelTimer: () => undefined,
+    }
+    attempt.cancelTimer = this.clock.schedule(CAPTURE_TIMEOUT_MS, () => {
+      this.onTimeout(attempt)
+    })
+    this.inFlight.set(state.tileId, attempt)
+    return attempt
+  }
+
+  private isAbandoned(attempt: InFlightAttempt): boolean {
+    return this.inFlight.get(attempt.tileId)?.token !== attempt.token
+  }
+
   //+_+// 슬롯을 그 자리에서 반납한다. sendCommand 는 취소할 수 없으므로 응답을 기다리지 않는다
   private onTimeout(attempt: InFlightAttempt): void {
-    if (this.inFlight.get(attempt.tileId)?.token !== attempt.token) {
+    if (this.isAbandoned(attempt)) {
       return
     }
-    this.inFlight.delete(attempt.tileId)
-    this.slots.delete(attempt.tileId)
-    const now = this.clock.now()
-    this.record(attempt, {
-      outcome: 'timeout',
-      durationMs: now - attempt.startedAt,
-      bytes: null,
-      message: null,
-    })
-    const state = this.tiles.get(attempt.tileId)
-    if (state !== undefined) {
-      this.applyFailure(state, now, null)
-    }
-    this.pump()
+    this.settle(attempt, { outcome: 'timeout', bytes: null, message: null })
   }
 
   private onResponse(attempt: InFlightAttempt, data: string | null, failure: string | null): void {
-    const now = this.clock.now()
-    const current = this.inFlight.get(attempt.tileId)
-
     //+_+// 이미 포기한 회차다. 프레임으로 채택하지 않는다. 다음 회차의 결과로 섞이지 않는다
-    if (current === undefined || current.token !== attempt.token) {
-      const durationMs = now - attempt.startedAt
+    if (this.isAbandoned(attempt)) {
+      const durationMs = this.clock.now() - attempt.startedAt
       this.lateArrivalLog.push({
         tileId: attempt.tileId,
         tabId: attempt.tabId,
@@ -379,23 +389,12 @@ export class PreviewCaptureManager {
       return
     }
 
-    attempt.cancelTimer()
-    this.inFlight.delete(attempt.tileId)
-    this.slots.delete(attempt.tileId)
-    const durationMs = now - attempt.startedAt
-    const state = this.tiles.get(attempt.tileId)
-
     if (data === null) {
-      this.record(attempt, {
+      this.settle(attempt, {
         outcome: 'failure',
-        durationMs,
         bytes: null,
         message: failure ?? 'empty screenshot payload',
       })
-      if (state !== undefined) {
-        this.applyFailure(state, now, null)
-      }
-      this.pump()
       return
     }
 
@@ -404,36 +403,50 @@ export class PreviewCaptureManager {
       format: this.format,
       bytes: base64ByteLength(data),
     }
-    this.frames.set(attempt.tileId, frame)
-    if (state !== undefined) {
-      state.lastFrameAt = now
-      state.consecutiveFailures = 0
-      state.demoted = false
-      state.fault = null
-      state.nextDueAt = now + state.baseIntervalMs
-    }
-    this.record(attempt, { outcome: 'success', durationMs, bytes: frame.bytes, message: null }, frame)
-    this.pump()
+    this.settle(attempt, { outcome: 'success', bytes: frame.bytes, message: null }, { frame })
   }
 
-  //+_+// 캡처 호출에 이르지 못한 실패다. 회차 기록을 남기지 않고 실패 계단만 올린다
-  private settleWithoutCall(state: TileState, message: string, fault: TileStatus | null): void {
+  //+_+// 회차를 끝내는 유일한 자리다. 슬롯 반납과 기록과 다음 만기를 한 곳에서 처리한다
+  private settle(
+    attempt: InFlightAttempt,
+    settled: Pick<CaptureRecord, 'outcome' | 'bytes' | 'message'>,
+    extra: { frame?: CapturedFrame; fault?: TileStatus | null } = {},
+  ): void {
+    attempt.cancelTimer()
+    this.inFlight.delete(attempt.tileId)
+    this.slots.delete(attempt.tileId)
+
     const now = this.clock.now()
-    this.slots.delete(state.tileId)
-    this.nextToken += 1
-    state.attemptCount += 1
-    this.record(
-      {
-        tileId: state.tileId,
-        tabId: state.tabId,
-        token: this.nextToken,
-        attemptIndex: state.attemptCount - 1,
-        startedAt: now,
-        cancelTimer: () => undefined,
-      },
-      { outcome: 'failure', durationMs: 0, bytes: null, message },
-    )
-    this.applyFailure(state, now, fault)
+    const state = this.tiles.get(attempt.tileId)
+    const frame = extra.frame ?? null
+
+    if (frame !== null) {
+      this.frames.set(attempt.tileId, frame)
+    }
+    if (state !== undefined) {
+      if (frame === null) {
+        this.applyFailure(state, now, extra.fault ?? null)
+      } else {
+        state.lastFrameAt = now
+        state.consecutiveFailures = 0
+        state.demoted = false
+        state.fault = null
+        state.nextDueAt = now + state.baseIntervalMs
+      }
+    }
+
+    const entry: CaptureRecord = {
+      tileId: attempt.tileId,
+      tabId: attempt.tabId,
+      attemptToken: attempt.token,
+      attemptIndex: attempt.attemptIndex,
+      startedAt: attempt.startedAt,
+      calledAt: attempt.calledAt,
+      durationMs: now - attempt.startedAt,
+      ...settled,
+    }
+    this.captureLog.push(entry)
+    this.onCaptureSettled?.(entry, frame)
     this.pump()
   }
 
@@ -445,30 +458,12 @@ export class PreviewCaptureManager {
     }
     if (state.consecutiveFailures > BACKOFF_STEPS_MS.length) {
       //+_+// 계단을 소진해도 재시도를 멈추지 않는다. 주기만 강등한다
-      //+_+// 값이 dashboardHidden 과 같으나 별개의 정책이다. 새 상수를 만들지 않으려고 재사용한다
       state.demoted = true
-      state.nextDueAt = now + CAPTURE_INTERVAL_MS.dashboardHidden
+      state.nextDueAt = now + DEGRADED_INTERVAL_MS
       return
     }
     state.demoted = false
     state.nextDueAt = now + nextDelayMs(state.consecutiveFailures, state.baseIntervalMs)
-  }
-
-  private record(
-    attempt: InFlightAttempt,
-    settled: Pick<CaptureRecord, 'outcome' | 'durationMs' | 'bytes' | 'message'>,
-    frame: CapturedFrame | null = null,
-  ): void {
-    const entry: CaptureRecord = {
-      tileId: attempt.tileId,
-      tabId: attempt.tabId,
-      attemptToken: attempt.token,
-      attemptIndex: attempt.attemptIndex,
-      startedAt: attempt.startedAt,
-      ...settled,
-    }
-    this.captureLog.push(entry)
-    this.onCaptureSettled?.(entry, frame)
   }
 
   //+_+// 세션이 끊기면 다음 캡처에서 다시 붙인다. 그 사이에 무한 retry 를 돌리지 않는다
