@@ -240,6 +240,27 @@ export class PreviewCaptureManager {
     }
   }
 
+  //+_+// v1 section 5.2 조건 9 는 navigation 후 캡처가 복구되는지 확인하라고만 정한다
+  //+_+// 세션이 navigation 을 넘겨 살아남는지는 확인되지 않았다. 리스를 놓지 않는다
+  //+_+// Page.enable 만 다시 보낸다. 세션이 실제로 죽었으면 다음 캡처가 실패해 계단이 처리한다
+  noteNavigation(tabId: number): void {
+    for (const state of this.tiles.values()) {
+      if (state.tabId === tabId) {
+        state.pageEnabled = false
+      }
+    }
+  }
+
+  //+_+// 탭이 닫히면 그 탭에 걸린 타일을 전부 내린다. 리스도 함께 놓는다
+  async releaseTab(tabId: number): Promise<void> {
+    const tileIds = [...this.tiles.values()]
+      .filter((state) => state.tabId === tabId)
+      .map((state) => state.tileId)
+    for (const tileId of tileIds) {
+      await this.unregister(tileId)
+    }
+  }
+
   statusOf(tileId: string): TileStatus | null {
     const state = this.tiles.get(tileId)
     if (state === undefined) {

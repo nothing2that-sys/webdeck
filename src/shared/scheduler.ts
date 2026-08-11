@@ -63,6 +63,44 @@ export function canEnqueue(
   return !inFlight.some(collides) && !queued.some(collides)
 }
 
+//+_+// 기록 전용이다. 스케줄 결정은 이 값을 입력으로 받지 않는다
+//+_+// average 를 계산하지도 노출하지도 않는다. 분포가 이봉형이라 평균이 대표값이 아니다. L22
+export interface CaptureStats {
+  attempts: number
+  p50: number | null
+  p95: number | null
+  timeoutRate: number
+  lateArrivalRate: number
+}
+
+export interface CaptureStatsInput {
+  successDurationsMs: readonly number[]
+  attempts: number
+  timeouts: number
+  lateArrivals: number
+}
+
+//+_+// nearest-rank 다. 보간하지 않는다. 보간값은 관측되지 않은 수를 만든다
+export function percentile(sorted: readonly number[], fraction: number): number | null {
+  if (sorted.length === 0) {
+    return null
+  }
+  const rank = Math.min(Math.max(Math.ceil(fraction * sorted.length), 1), sorted.length)
+  return sorted[rank - 1]
+}
+
+export function captureStats(input: CaptureStatsInput): CaptureStats {
+  const sorted = [...input.successDurationsMs].sort((a, b) => a - b)
+  return {
+    attempts: input.attempts,
+    p50: percentile(sorted, 0.5),
+    p95: percentile(sorted, 0.95),
+    timeoutRate: input.attempts === 0 ? 0 : input.timeouts / input.attempts,
+    //+_+// 분모는 타임아웃 수다. 포기한 호출이 나중에라도 돌아왔는지를 본다. L21 의 질문이다
+    lateArrivalRate: input.timeouts === 0 ? 0 : input.lateArrivals / input.timeouts,
+  }
+}
+
 //+_+// 마지막 계단에서 고정한다. 무한히 커지지 않는다. 성공 시 원래 주기로 복귀한다
 export function nextDelayMs(consecutiveFailures: number, baseIntervalMs: number): number {
   if (consecutiveFailures <= 0) {
