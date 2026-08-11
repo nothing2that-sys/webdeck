@@ -12,6 +12,7 @@ import type {
   IdleMode,
   TabSummary,
 } from './protocol'
+import { TICK_MS } from './config'
 import { buildReport, fnv1a } from './report'
 import type {
   AttachStageRow,
@@ -33,11 +34,10 @@ declare const __HARNESS_COMMIT__: string | null
 
 const SW_KEY = 'harnessSwStarts'
 const DEBUGGER_PROTOCOL_VERSION = '1.3'
-const TICK_MS = 1000
 const ONE_PIXEL_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 
-const measuredAt = new Date().toISOString()
+let measuredAt = new Date().toISOString()
 const captures: CaptureRow[] = []
 const lateArrivalRows: LateArrivalRow[] = []
 const attachStages: AttachStageRow[] = []
@@ -479,6 +479,23 @@ function startDriver(): void {
   }
 }
 
+//+_+// 라운드 경계를 만든다. r1b 가 r1a 의 315행을 그대로 안고 나왔다
+//+_+// swStarts 와 portLog 는 비우지 않는다. 워커 생존 관측이 끊긴다
+//+_+// reencode 와 environment 도 비우지 않는다. 라운드와 무관한 1회성 관측이다
+async function resetRound(): Promise<void> {
+  //+_+// 캡처를 먼저 멈춘다. 남겨 두면 attemptIndex 가 0 에서 다시 시작하지 않는다
+  await stopCapture()
+  captures.length = 0
+  lateArrivalRows.length = 0
+  injections.length = 0
+  detachRows.length = 0
+  attachStages.length = 0
+  attachAttempts.length = 0
+  frames.clear()
+  idleTransition = null
+  measuredAt = nowIso()
+}
+
 function snapshot(): HarnessSnapshot {
   collectLateArrivals()
   return {
@@ -558,6 +575,11 @@ async function handle(request: HarnessRequest): Promise<HarnessResponse> {
 
   if (request.type === 'SNAPSHOT') {
     return { ok: true, type: 'SNAPSHOT', snapshot: snapshot() }
+  }
+
+  if (request.type === 'RESET_ROUND') {
+    await resetRound()
+    return { ok: true, type: 'ACK' }
   }
 
   collectLateArrivals()

@@ -8,7 +8,9 @@ import {
   reportFileName,
 } from '../harness/p3/report'
 import type { CaptureRow, ReportInput } from '../harness/p3/report'
-import { captureStats } from '../src/shared/scheduler'
+import { TICK_MS as HARNESS_TICK_MS } from '../harness/p3/config'
+import { DRIVER_TICK_MS } from '../src/background/serviceWorker'
+import { CAPTURE_INTERVAL_MS, captureStats } from '../src/shared/scheduler'
 
 function row(overrides: Partial<CaptureRow>): CaptureRow {
   return {
@@ -180,5 +182,18 @@ describe('TASK-P3-01-S5 - runtime attach is recorded too', () => {
     //+_+// L24. 사유 원문이 단계별 시험 밖에서도 남아야 한다
     expect(runtime?.errors[0]).toContain('Another debugger is already attached')
     expect(report.attach.filter((entry) => typeof entry.stage === 'number')).toHaveLength(1)
+  })
+})
+
+describe('P3-D16 - the tick constant is duplicated on purpose', () => {
+  //+_+// 상수를 합치거나 옮기지 않는다. 값이 같은지만 테스트로 묶는다
+  it('keeps the harness tick equal to the product driver tick', () => {
+    expect(HARNESS_TICK_MS).toBe(DRIVER_TICK_MS)
+  })
+
+  //+_+// tick 은 가장 짧은 캡처 주기보다 촘촘해야 만기를 놓치지 않는다. P3-D11
+  it('stays finer than the shortest capture interval', () => {
+    expect(HARNESS_TICK_MS).toBeLessThan(CAPTURE_INTERVAL_MS.spanLarge)
+    expect(DRIVER_TICK_MS).toBeLessThan(CAPTURE_INTERVAL_MS.spanLarge)
   })
 })

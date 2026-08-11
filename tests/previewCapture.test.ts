@@ -3,7 +3,9 @@ import { DebuggerSessionManager } from '../src/background/debuggerSessionManager
 import type { DebuggerBackend } from '../src/background/debuggerSessionManager'
 import {
   PreviewCaptureManager,
+  SESSION_LOST_MESSAGES,
   base64ByteLength,
+  isSessionLost,
   isStale,
   resolveTileStatus,
   selectDueTiles,
@@ -60,6 +62,7 @@ interface Deferred {
 }
 
 class FakeCaptureBackend implements DebuggerBackend {
+  readonly attachCalls: number[] = []
   readonly commands: { tabId: number; method: string }[] = []
   readonly captures: Deferred[] = []
   readonly attachRejections: unknown[] = []
@@ -68,7 +71,8 @@ class FakeCaptureBackend implements DebuggerBackend {
 
   attachHangs = false
 
-  attach(): Promise<void> {
+  attach(tabId: number): Promise<void> {
+    this.attachCalls.push(tabId)
     if (this.attachHangs) {
       return new Promise<void>(() => undefined)
     }
@@ -883,5 +887,110 @@ describe('TASK-P3-01-S5 - the record schema after P3-D9', () => {
     expect(Object.hasOwn(late as object, 'durationMs')).toBe(false)
     expect(late?.roundDurationMs).toBe(5000)
     expect(late?.attemptIndex).toBe(0)
+  })
+})
+
+describe('TASK-P3-01-S5 - a lost session is reattached on the next round', () => {
+  //+_+// r1b 에서 강제 detach 뒤 끝까지 복구되지 않았다. L3 가 처음 실행돼 실패한 항목이다
+  it('reattaches on the next round after a not-attached failure', async () => {
+    const { manager, clock, backend } = build()
+    manager.register('a', 1, 2000)
+
+    manager.tick()
+    await flush()
+    expect(backend.attachCalls).toEqual([1])
+
+    backend.captures[0]?.reject(new Error('Debugger is not attached to the tab with id: 1'))
+    await flush()
+    expect(manager.captureRecords[0]?.outcome).toBe('captureFailed')
+
+    clock.advance(2000)
+    manager.tick()
+    await flush()
+
+    expect(backend.attachCalls).toEqual([1, 1])
+    expect(backend.commands.map((entry) => entry.method)).toEqual([
+      'Page.enable',
+      'Page.captureScreenshot',
+      'Page.enable',
+      'Page.captureScreenshot',
+    ])
+  })
+
+  it('treats the in flight detach message as a lost session too', async () => {
+    const { manager, clock, backend } = build()
+    manager.register('a', 1, 2000)
+
+    manager.tick()
+    await flush()
+    backend.captures[0]?.reject(new Error('Detached while handling command.'))
+    await flush()
+
+    clock.advance(2000)
+    manager.tick()
+    await flush()
+
+    expect(backend.attachCalls).toEqual([1, 1])
+  })
+
+  //+_+// 대조군이다. 세션과 무관한 오류로 리스를 버리면 불필요한 재attach 가 생긴다
+  it('keeps the lease when the failure is not about the session', async () => {
+    const { manager, clock, backend } = build()
+    manager.register('a', 1, 2000)
+
+    manager.tick()
+    await flush()
+    backend.captures[0]?.reject(new Error('Some other CDP error'))
+    await flush()
+
+    clock.advance(2000)
+    manager.tick()
+    await flush()
+
+    expect(backend.attachCalls).toEqual([1])
+  })
+
+  //+_+// 무한 재attach 루프를 만들지 않는다. 회차당 1회이고 간격은 backoff 계단이 만든다
+  it('reattaches once per round and follows the backoff steps', async () => {
+    const { manager, clock, backend } = build()
+    manager.register('a', 1, 2000)
+
+    const lose = async (index: number): Promise<void> => {
+      backend.captures[index]?.reject(new Error('Debugger is not attached to the tab with id: 1'))
+      await flush()
+    }
+
+    manager.tick()
+    await flush()
+    await lose(0)
+
+    clock.advance(1999)
+    manager.tick()
+    await flush()
+    expect(backend.attachCalls).toEqual([1])
+
+    clock.advance(1)
+    manager.tick()
+    await flush()
+    await lose(1)
+
+    clock.advance(4999)
+    manager.tick()
+    await flush()
+    expect(backend.attachCalls).toEqual([1, 1])
+
+    clock.advance(1)
+    manager.tick()
+    await flush()
+    expect(backend.attachCalls).toEqual([1, 1, 1])
+  })
+
+  it('classifies only the observed strings as a lost session', () => {
+    expect(isSessionLost('Debugger is not attached to the tab with id: 9')).toBe(true)
+    expect(isSessionLost('Detached while handling command.')).toBe(true)
+    expect(isSessionLost('DETACHED WHILE HANDLING COMMAND.')).toBe(true)
+    expect(isSessionLost('empty screenshot payload')).toBe(false)
+    expect(isSessionLost(null)).toBe(false)
+    expect(SESSION_LOST_MESSAGES).toHaveLength(2)
   })
 })

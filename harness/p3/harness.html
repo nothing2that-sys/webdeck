@@ -113,6 +113,10 @@
     <div id="detachReasons"></div>
 
     <h2>attach 단계 · L8 / L24 / M7</h2>
+    <p class="warn">
+      단계별 attach 를 누르기 전에 캡처를 정지한다. 두 계열이 섞이면 attach[] 의 단계 행과
+      runtime 행을 가를 수 없다.
+    </p>
     <div id="stages"></div>
 
     <h2>재인코딩 · L7 / M6</h2>
@@ -126,6 +130,12 @@
     <div id="observations"></div>
 
     <h2>report</h2>
+    <p>
+      라운드 초기화는 capture / lateArrivals / injections / detachEvents / attach 를 비우고
+      measuredAt 을 다시 찍는다. 캡처도 멈추므로 새 라운드는 다시 시작해야 한다.
+      swStarts · portLog · reencode · environment 는 비우지 않는다.
+    </p>
+    <button id="resetRound">라운드 초기화</button>
     <button id="download">리포트 내려받기</button>
     <div id="status"></div>
     <div id="log"></div>

@@ -252,6 +252,15 @@ function wire(): void {
     })
   })
 
+  el('resetRound').addEventListener('click', () => {
+    void (async () => {
+      await send({ type: 'RESET_ROUND' })
+      el('reencodeOut').textContent = ''
+      log('라운드 초기화. 캡처가 멈췄다. 새 라운드를 시작해라')
+      await refresh()
+    })()
+  })
+
   el('download').addEventListener('click', () => {
     void (async () => {
       const version = el<HTMLInputElement>('chromeVersion').value.trim()

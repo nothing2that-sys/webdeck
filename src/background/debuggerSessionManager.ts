@@ -169,6 +169,13 @@ export class DebuggerSessionManager {
     }
   }
 
+  //+_+// 세션이 이미 사라졌을 때 장부만 지운다. detach 를 부르지 않는다
+  //+_+// onDetach 가 발화하지 않는 경로가 있다. 외부에서 detach 하면 리스가 남아 재attach 가 막힌다
+  //+_+// 시도 카운터는 건드리지 않는다. 무한 재attach 를 막는 상한이 그대로 유지돼야 한다
+  invalidate(tabId: number): void {
+    this.leases.delete(tabId)
+  }
+
   //+_+// detach 실패는 삼킨다. 세션은 어차피 놓는다. 기록만 남긴다
   async release(tabId: number): Promise<void> {
     const held = this.leases.get(tabId)

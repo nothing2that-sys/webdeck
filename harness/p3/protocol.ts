@@ -28,6 +28,7 @@ export type HarnessRequest =
   | { type: 'IDLE'; mode: IdleMode }
   | { type: 'SET_OBSERVATION'; key: string; value: string }
   | { type: 'BUILD_REPORT'; chromeFullVersion: string; round: string }
+  | { type: 'RESET_ROUND' }
   | { type: 'SNAPSHOT' }
 
 export interface HarnessSnapshot {

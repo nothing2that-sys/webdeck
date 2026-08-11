@@ -155,6 +155,23 @@ export function isStale(now: number, lastFrameAt: number, baseIntervalMs: number
   return now - lastFrameAt > baseIntervalMs * STALE_AFTER_MULTIPLIER
 }
 
+//+_+// r1b 에서 실제로 관측된 문자열이다. 추측이 아니다
+//+_+// 06:07:23 강제 detach 직후 "Detached while handling command."
+//+_+// 그 뒤 "Debugger is not attached to the tab with id: N" 이 끝까지 반복됐다
+//+_+// onDetach 가 발화하지 않는 경로가 있어 리스가 남고 ensureAttached 가 통과시킨다
+export const SESSION_LOST_MESSAGES: readonly string[] = [
+  'detached while handling command',
+  'debugger is not attached',
+]
+
+export function isSessionLost(message: string | null): boolean {
+  if (message === null) {
+    return false
+  }
+  const lower = message.toLowerCase()
+  return SESSION_LOST_MESSAGES.some((needle) => lower.includes(needle))
+}
+
 function screenshotData(result: unknown): string | null {
   if (typeof result !== 'object' || result === null) {
     return null
@@ -471,6 +488,11 @@ export class PreviewCaptureManager {
     }
     if (state !== undefined) {
       if (frame === null) {
+        //+_+// 세션이 사라졌으면 리스를 무효화한다. 그러지 않으면 다음 회차도 재attach 하지 않는다
+        //+_+// 재시도 간격과 시도 상한은 기존 backoff 계단과 시도 카운터가 그대로 맡는다
+        if (isSessionLost(settled.message)) {
+          this.dropSession(state)
+        }
         this.applyFailure(state, now, extra.fault ?? null)
       } else {
         state.lastFrameAt = now
@@ -483,6 +505,13 @@ export class PreviewCaptureManager {
 
     this.write(attempt, settled, frame)
     this.pump()
+  }
+
+  //+_+// detach 를 부르지 않는다. 세션은 이미 없다. 다음 회차가 ensureAttached 로 다시 붙인다
+  private dropSession(state: TileState): void {
+    state.holdsLease = false
+    state.pageEnabled = false
+    this.sessions.invalidate(state.tabId)
   }
 
   //+_+// 기록만 한다. 상태 갱신과 슬롯 반납은 부르는 쪽 책임이다
