@@ -99,7 +99,11 @@
     <button id="stop">캡처 정지</button>
 
     <h2>idle · L1 3조건 (M4)</h2>
-    <p>일방 전이다. 누르면 포트를 끊고 이후 통신하지 않는다.</p>
+    <p>
+      일방 전이다. 누르면 포트를 끊고 이후 통신하지 않는다. 페이지를 다시 열어도 재연결하지 않는다.
+    </p>
+    <div id="idleState" class="row"></div>
+    <button id="releaseIdle">유휴 관측 해제하고 다시 연결</button>
     <button id="idleA">IDLE-A 캡처만 정지</button>
     <button id="idleB">IDLE-B + tabs 리스너 해제</button>
     <button id="idleC">IDLE-C + clearInterval</button>

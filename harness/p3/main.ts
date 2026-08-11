@@ -14,6 +14,10 @@ const OBSERVATION_KEYS = [
   'anythingElse',
 ]
 
+//+_+// 전이 사실을 페이지 메모리 밖에 남긴다. 페이지를 다시 열어도 재연결하지 않아야 한다
+//+_+// localStorage 는 확장 API 가 아니므로 이 쓰기가 워커를 깨우지 않는다
+const IDLE_KEY = 'harnessIdleTransition'
+
 let tabList: TabSummary[] = []
 let port: chrome.runtime.Port | null = null
 let idleReached = false
@@ -25,6 +29,32 @@ function el<T extends HTMLElement>(id: string): T {
     throw new Error(`missing element ${id}`)
   }
   return node as T
+}
+
+function storedIdle(): string | null {
+  try {
+    return localStorage.getItem(IDLE_KEY)
+  } catch {
+    return null
+  }
+}
+
+//+_+// 눌렀는지 사용자가 알 수 없다는 신고에 대한 표시다
+function renderIdleState(): void {
+  const host = el('idleState')
+  const value = storedIdle()
+  if (value === null) {
+    host.textContent = 'idle 전이 없음 · 포트 연결됨'
+    host.className = ''
+    return
+  }
+  const [mode, iso] = value.split(' at ')
+  const clock =
+    iso === undefined ? '시각 불명' : new Date(iso).toLocaleTimeString('ko-KR', { hour12: false })
+  host.textContent =
+    `${mode ?? 'IDLE'} 전이됨 ${clock} · 포트를 연결하지 않는다. 워커를 깨우지 않는다. ` +
+    '리포트를 받으려면 아래 해제 버튼을 누른다'
+  host.className = 'warn'
 }
 
 function log(text: string): void {
@@ -146,12 +176,18 @@ async function refresh(): Promise<void> {
 async function goIdle(mode: 'IDLE-A' | 'IDLE-B' | 'IDLE-C'): Promise<void> {
   await send({ type: 'IDLE', mode })
   idleReached = true
+  try {
+    localStorage.setItem(IDLE_KEY, `${mode} at ${new Date().toISOString()}`)
+  } catch {
+    log('localStorage 에 전이 기록을 남기지 못했다. 페이지를 다시 열면 재연결된다')
+  }
   if (pollHandle !== null) {
     clearInterval(pollHandle)
     pollHandle = null
   }
   port?.disconnect()
   port = null
+  renderIdleState()
   el('status').textContent = `${mode} 전이 완료. 이 페이지는 더 이상 워커와 통신하지 않는다`
   log(`${mode} 전이. 포트를 끊었다`)
 }
@@ -252,6 +288,16 @@ function wire(): void {
     })
   })
 
+  //+_+// 워커를 깨우는 것은 여기서만 일어난다. 자동 재연결 경로를 두지 않는다
+  el('releaseIdle').addEventListener('click', () => {
+    try {
+      localStorage.removeItem(IDLE_KEY)
+    } catch {
+      log('localStorage 를 비우지 못했다')
+    }
+    location.reload()
+  })
+
   el('resetRound').addEventListener('click', () => {
     void (async () => {
       await send({ type: 'RESET_ROUND' })
@@ -280,10 +326,16 @@ function wire(): void {
   })
 }
 
-port = chrome.runtime.connect({ name: 'harness' })
 wire()
 renderObservations()
-pollHandle = setInterval(() => {
+
+//+_+// 전이 기록이 남아 있으면 연결도 폴링도 하지 않는다. 폴링 자체가 워커를 2초마다 깨운다
+idleReached = storedIdle() !== null
+renderIdleState()
+if (!idleReached) {
+  port = chrome.runtime.connect({ name: 'harness' })
+  pollHandle = setInterval(() => {
+    void refresh()
+  }, 2000)
   void refresh()
-}, 2000)
-void refresh()
+}
