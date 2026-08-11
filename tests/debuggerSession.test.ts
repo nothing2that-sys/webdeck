@@ -33,6 +33,10 @@ class FakeDebugger implements DebuggerBackend {
     return Promise.resolve()
   }
 
+  sendCommand(): Promise<unknown> {
+    return Promise.resolve({})
+  }
+
   onDetach(listener: (tabId: number, reason: string) => void): void {
     this.listener = listener
   }

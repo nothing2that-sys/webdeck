@@ -22,6 +22,7 @@ export const DEVTOOLS_DETACH_REASONS: readonly string[] = []
 export interface DebuggerBackend {
   attach(tabId: number): Promise<void>
   detach(tabId: number): Promise<void>
+  sendCommand(tabId: number, method: string, params?: Record<string, unknown>): Promise<unknown>
   onDetach(listener: (tabId: number, reason: string) => void): void
 }
 
@@ -96,6 +97,7 @@ export class DebuggerSessionManager {
   private readonly attachFailureLog: AttachFailureRecord[] = []
   private readonly detachEventLog: DetachEventRecord[] = []
   private readonly detachFailureLog: DetachFailureRecord[] = []
+  private readonly detachListeners: ((event: DetachEventRecord) => void)[] = []
 
   constructor(backend: DebuggerBackend, options: DebuggerSessionManagerOptions = {}) {
     this.backend = backend
@@ -116,6 +118,11 @@ export class DebuggerSessionManager {
 
   get detachFailures(): readonly DetachFailureRecord[] {
     return this.detachFailureLog
+  }
+
+  //+_+// 분류된 detach 를 한 곳에서만 만든다. 구독자는 reason 을 다시 해석하지 않는다
+  addDetachListener(listener: (event: DetachEventRecord) => void): void {
+    this.detachListeners.push(listener)
   }
 
   isAttached(tabId: number): boolean {
@@ -178,11 +185,15 @@ export class DebuggerSessionManager {
 
   //+_+// reason 원문을 그대로 남긴다. 분류는 관측 후에 확정한다
   private handleDetach(tabId: number, reason: string): void {
-    this.detachEventLog.push({
+    const event: DetachEventRecord = {
       tabId,
       reason,
       errorCode: classifyDetachReason(reason, this.devtoolsDetachReasons),
-    })
+    }
+    this.detachEventLog.push(event)
     this.leases.delete(tabId)
+    for (const listener of this.detachListeners) {
+      listener(event)
+    }
   }
 }
