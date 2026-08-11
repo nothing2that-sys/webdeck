@@ -8,7 +8,11 @@ import {
   resolveTileStatus,
   selectDueTiles,
 } from '../src/background/previewCaptureManager'
-import type { Clock } from '../src/background/previewCaptureManager'
+import type {
+  CaptureRecord,
+  Clock,
+  PreviewCaptureManagerOptions,
+} from '../src/background/previewCaptureManager'
 
 interface FakeTimer {
   at: number
@@ -108,7 +112,7 @@ function flush(): Promise<void> {
   return new Promise<void>((resolve) => setTimeout(resolve, 0))
 }
 
-function build(options: { quality?: number } = {}) {
+function build(options: PreviewCaptureManagerOptions = {}) {
   const backend = new FakeCaptureBackend()
   const clock = new FakeClock()
   const sessions = new DebuggerSessionManager(backend)
@@ -256,7 +260,7 @@ describe('TASK-P3-01 item 13 - a late response is never used as a frame', () => 
       tileId: 'a',
       tabId: 1,
       startedAt: 0,
-      durationMs: 6200,
+      roundDurationMs: 6200,
       lateByMs: 1200,
       settledAs: 'success',
     })
@@ -481,8 +485,8 @@ describe('TASK-P3-01 item 18 - a success returns STALE to LIVE', () => {
 })
 
 describe('TASK-P3-01 item 19 - the timeout row carries the time axis', () => {
-  //+_+// L23 은 타임아웃 4행이 startedAt 과 durationMs 를 모두 잃은 사건이다
-  it('records startedAt and durationMs on the timeout row', async () => {
+  //+_+// L23 은 타임아웃 4행이 startedAt 과 소요 시간을 모두 잃은 사건이다
+  it('records startedAt and roundDurationMs on the timeout row', async () => {
     const { manager, clock } = build()
     manager.register('a', 1, 2000)
 
@@ -496,13 +500,13 @@ describe('TASK-P3-01 item 19 - the timeout row carries the time axis', () => {
       tabId: 1,
       outcome: 'timeout',
       startedAt: 1234,
-      durationMs: 5000,
+      roundDurationMs: 5000,
       attemptIndex: 0,
       bytes: null,
     })
   })
 
-  it('records startedAt and durationMs on the success row', async () => {
+  it('records startedAt and roundDurationMs on the success row', async () => {
     const { manager, clock, backend } = build()
     manager.register('a', 1, 2000)
 
@@ -515,7 +519,8 @@ describe('TASK-P3-01 item 19 - the timeout row carries the time axis', () => {
     expect(manager.captureRecords[0]).toMatchObject({
       outcome: 'success',
       startedAt: 500,
-      durationMs: 80,
+      roundDurationMs: 80,
+      callDurationMs: 80,
       bytes: 5,
     })
   })
@@ -570,7 +575,7 @@ describe('TASK-P3-01 item 20 - a timeout never becomes ERROR', () => {
 
     expect(manager.statusOf('a')).toBe('ERROR')
     expect(manager.captureRecords[2]).toMatchObject({
-      outcome: 'failure',
+      outcome: 'attachFailed',
       message: 'c',
       calledAt: null,
     })
@@ -596,7 +601,7 @@ describe('TASK-P3-01 - the slot hold time is bounded by one constant', () => {
     expect(manager.captureRecords[0]).toMatchObject({
       outcome: 'timeout',
       startedAt: 0,
-      durationMs: 5000,
+      roundDurationMs: 5000,
       calledAt: null,
     })
   })
@@ -631,9 +636,10 @@ describe('TASK-P3-01 - the slot hold time is bounded by one constant', () => {
 
     expect(manager.inFlightCount).toBe(0)
     expect(manager.captureRecords[0]).toMatchObject({
-      outcome: 'failure',
+      outcome: 'attachFailed',
       message: 'denied',
-      durationMs: 0,
+      roundDurationMs: 0,
+      callDurationMs: null,
     })
   })
 })
@@ -733,7 +739,7 @@ describe('TASK-P3-01 - queue order and capture command', () => {
 
     expect(manager.latestFrame('a')).toBeNull()
     expect(manager.captureRecords[0]).toMatchObject({
-      outcome: 'failure',
+      outcome: 'captureFailed',
       message: 'empty screenshot payload',
     })
   })
@@ -748,5 +754,134 @@ describe('TASK-P3-01 - queue order and capture command', () => {
 
     expect(backend.openCaptures).toBe(0)
     expect(manager.statusOf('a')).toBeNull()
+  })
+})
+
+describe('TASK-P3-01-S5 - the record schema after P3-D9', () => {
+  //+_+// durationMs 라는 이름을 어디에도 남기지 않는다. 같은 이름이 다른 것을 가리키면 안 된다
+  it('names no durationMs field on a capture record', async () => {
+    const { manager, clock, backend } = build()
+    manager.register('a', 1, 2000)
+
+    manager.tick()
+    await flush()
+    clock.advance(90)
+    await settleCapture(backend, 0, 'aGVsbG8=')
+
+    const record = manager.captureRecords[0]
+    expect(record).toBeDefined()
+    expect(Object.hasOwn(record as object, 'durationMs')).toBe(false)
+
+    const keys: Record<keyof CaptureRecord, true> = {
+      tileId: true,
+      tabId: true,
+      attemptToken: true,
+      attemptIndex: true,
+      startedAt: true,
+      calledAt: true,
+      roundDurationMs: true,
+      callDurationMs: true,
+      outcome: true,
+      bytes: true,
+      message: true,
+      pageEnableSent: true,
+    }
+    expect(Object.keys(record as object).sort()).toEqual(Object.keys(keys).sort())
+  })
+
+  //+_+// 회차 소요는 attach 와 Page.enable 을 포함하고 호출 소요는 포함하지 않는다
+  it('separates the round duration from the call duration', async () => {
+    const { manager, clock, backend } = build()
+    manager.register('a', 1, 2000)
+
+    manager.tick()
+    await flush()
+    clock.advance(90)
+    await settleCapture(backend, 0)
+
+    expect(manager.captureRecords[0]).toMatchObject({
+      startedAt: 0,
+      calledAt: 0,
+      roundDurationMs: 90,
+      callDurationMs: 90,
+    })
+  })
+
+  it('leaves calledAt and callDurationMs null when the round never reached the command', async () => {
+    const { manager, backend } = build()
+    backend.attachRejections.push(new Error('denied'))
+    manager.register('a', 1, 2000)
+
+    manager.tick()
+    await flush()
+
+    expect(manager.captureRecords[0]).toMatchObject({
+      outcome: 'attachFailed',
+      calledAt: null,
+      callDurationMs: null,
+    })
+  })
+
+  it('splits failure into attachFailed, captureFailed and tabGone', async () => {
+    const attach = build()
+    attach.backend.attachRejections.push(new Error('denied'))
+    attach.manager.register('a', 1, 2000)
+    attach.manager.tick()
+    await flush()
+    expect(attach.manager.captureRecords[0]?.outcome).toBe('attachFailed')
+
+    const capture = build()
+    capture.manager.register('a', 1, 2000)
+    capture.manager.tick()
+    await flush()
+    capture.backend.captures[0]?.reject(new Error('cdp error'))
+    await flush()
+    expect(capture.manager.captureRecords[0]?.outcome).toBe('captureFailed')
+
+    const gone = build()
+    gone.manager.register('a', 1, 2000)
+    gone.manager.tick()
+    await flush()
+    await gone.manager.releaseTab(1)
+    expect(gone.manager.captureRecords[0]?.outcome).toBe('tabGone')
+  })
+
+  //+_+// M8 변형이다. pageEnableSent 로 두 무리를 나눌 수 있어야 한다
+  it('marks pageEnableSent so the M8 variants can be split', async () => {
+    const withEnable = build()
+    withEnable.manager.register('a', 1, 2000)
+    withEnable.manager.tick()
+    await flush()
+    await settleCapture(withEnable.backend, 0)
+
+    const without = build({ pageEnable: false })
+    without.manager.register('a', 1, 2000)
+    without.manager.tick()
+    await flush()
+    await settleCapture(without.backend, 0)
+
+    expect(withEnable.backend.commands.map((entry) => entry.method)).toEqual([
+      'Page.enable',
+      'Page.captureScreenshot',
+    ])
+    expect(without.backend.commands.map((entry) => entry.method)).toEqual(['Page.captureScreenshot'])
+    expect(withEnable.manager.captureRecords[0]?.pageEnableSent).toBe(true)
+    expect(without.manager.captureRecords[0]?.pageEnableSent).toBe(false)
+  })
+
+  it('names no durationMs field on a late arrival either', async () => {
+    const { manager, clock, backend } = build()
+    manager.register('a', 1, 2000)
+
+    manager.tick()
+    await flush()
+    clock.advance(5000)
+    await settleCapture(backend, 0)
+
+    const late = manager.lateArrivals[0]
+    expect(late).toBeDefined()
+    expect(Object.hasOwn(late as object, 'durationMs')).toBe(false)
+    expect(late?.roundDurationMs).toBe(5000)
+    expect(late?.attemptIndex).toBe(0)
   })
 })

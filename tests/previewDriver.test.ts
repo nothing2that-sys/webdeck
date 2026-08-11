@@ -117,19 +117,25 @@ describe('TASK-P3-01 item 21 - the schedule decision takes no duration statistic
 
 describe('TASK-P3-01 item 22 - capture statistics without an average', () => {
   const stats = captureStats({
-    successDurationsMs: [45, 47, 49, 52, 763, 800, 1004],
+    roundDurationsMs: [45, 47, 49, 52, 763, 800, 1004],
+    callDurationsMs: [40, 42, 44, 47, 758, 795, 999],
     attempts: 10,
+    successes: 7,
     timeouts: 3,
     lateArrivals: 1,
   })
 
-  it('exposes exactly attempts, p50, p95, timeoutRate and lateArrivalRate', () => {
+  it('exposes exactly the declared fields and nothing else', () => {
     const keys: Record<keyof CaptureStats, true> = {
       attempts: true,
-      p50: true,
-      p95: true,
+      successes: true,
+      timeouts: true,
+      lateArrivals: true,
+      roundDuration: true,
+      callDuration: true,
       timeoutRate: true,
       lateArrivalRate: true,
+      rateDenominators: true,
     }
 
     expect(Object.keys(stats).sort()).toEqual(Object.keys(keys).sort())
@@ -139,30 +145,54 @@ describe('TASK-P3-01 item 22 - capture statistics without an average', () => {
   it('names no average field under any spelling', () => {
     for (const name of ['average', 'avg', 'mean']) {
       expect(Object.hasOwn(stats, name)).toBe(false)
+      expect(Object.hasOwn(stats.roundDuration, name)).toBe(false)
+      expect(Object.hasOwn(stats.callDuration, name)).toBe(false)
     }
   })
 
+  //+_+// P3-D9. 회차 소요와 호출 소요를 하나로 합치지 않는다
+  it('reports the two duration series separately', () => {
+    expect(stats.roundDuration).toEqual({ p50: 52, p95: 1004 })
+    expect(stats.callDuration).toEqual({ p50: 47, p95: 999 })
+  })
+
   it('reports percentiles by nearest rank without interpolating', () => {
-    expect(stats.p50).toBe(52)
-    expect(stats.p95).toBe(1004)
     expect(percentile([1, 2, 3, 4], 0.5)).toBe(2)
     expect(percentile([], 0.5)).toBeNull()
   })
 
-  it('reports the timeout rate against every attempt', () => {
+  //+_+// P3-D10. 모든 비율이 원시 개수로부터 재계산 가능해야 한다
+  it('carries the raw counts that every rate is computed from', () => {
     expect(stats.attempts).toBe(10)
-    expect(stats.timeoutRate).toBeCloseTo(0.3)
+    expect(stats.successes).toBe(7)
+    expect(stats.timeouts).toBe(3)
+    expect(stats.lateArrivals).toBe(1)
+    expect(stats.timeoutRate).toBeCloseTo(stats.timeouts / stats.attempts)
+    expect(stats.lateArrivalRate).toBeCloseTo(stats.lateArrivals / stats.timeouts)
   })
 
   //+_+// 분모가 타임아웃 수다. 포기한 호출이 나중에라도 돌아왔는지가 L21 의 질문이다
-  it('reports the late arrival rate against the timeouts', () => {
-    expect(stats.lateArrivalRate).toBeCloseTo(1 / 3)
+  it('records which denominator each rate used', () => {
+    expect(stats.rateDenominators).toEqual({
+      timeoutRate: 'attempts',
+      lateArrivalRate: 'timeouts',
+    })
   })
 
   it('returns zero rates and null percentiles for an empty round', () => {
-    expect(
-      captureStats({ successDurationsMs: [], attempts: 0, timeouts: 0, lateArrivals: 0 }),
-    ).toEqual({ attempts: 0, p50: null, p95: null, timeoutRate: 0, lateArrivalRate: 0 })
+    const empty = captureStats({
+      roundDurationsMs: [],
+      callDurationsMs: [],
+      attempts: 0,
+      successes: 0,
+      timeouts: 0,
+      lateArrivals: 0,
+    })
+
+    expect(empty.roundDuration).toEqual({ p50: null, p95: null })
+    expect(empty.callDuration).toEqual({ p50: null, p95: null })
+    expect(empty.timeoutRate).toBe(0)
+    expect(empty.lateArrivalRate).toBe(0)
   })
 })
 

@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "WebDeck harness - TASK-P3-01-S5",
+  "version": "0.0.1",
+  "description": "Phase 3 measurement harness. Throwaway code, not the WebDeck product.",
+  "permissions": ["tabs", "storage", "debugger", "alarms"],
+  "background": {
+    "service_worker": "worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open WebDeck harness"
+  }
+}

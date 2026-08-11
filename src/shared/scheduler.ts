@@ -63,19 +63,33 @@ export function canEnqueue(
   return !inFlight.some(collides) && !queued.some(collides)
 }
 
-//+_+// 기록 전용이다. 스케줄 결정은 이 값을 입력으로 받지 않는다
-//+_+// average 를 계산하지도 노출하지도 않는다. 분포가 이봉형이라 평균이 대표값이 아니다. L22
-export interface CaptureStats {
-  attempts: number
+//+_+// 회차 소요와 호출 소요를 합치지 않는다. 서로 다른 값이다. P3-D9
+export interface DurationPercentiles {
   p50: number | null
   p95: number | null
+}
+
+//+_+// 기록 전용이다. 스케줄 결정은 이 값을 입력으로 받지 않는다
+//+_+// average 를 계산하지도 노출하지도 않는다. 분포가 이봉형이라 평균이 대표값이 아니다. L22
+//+_+// 비율에는 분모의 원시 개수를 같이 싣는다. 모든 비율이 재계산 가능해야 한다. P3-D10
+export interface CaptureStats {
+  attempts: number
+  successes: number
+  timeouts: number
+  lateArrivals: number
+  roundDuration: DurationPercentiles
+  callDuration: DurationPercentiles
   timeoutRate: number
   lateArrivalRate: number
+  //+_+// JSON 에 주석을 달 수 없으므로 분모를 데이터로 싣는다
+  rateDenominators: { timeoutRate: 'attempts'; lateArrivalRate: 'timeouts' }
 }
 
 export interface CaptureStatsInput {
-  successDurationsMs: readonly number[]
+  roundDurationsMs: readonly number[]
+  callDurationsMs: readonly number[]
   attempts: number
+  successes: number
   timeouts: number
   lateArrivals: number
 }
@@ -89,15 +103,23 @@ export function percentile(sorted: readonly number[], fraction: number): number 
   return sorted[rank - 1]
 }
 
+function percentilesOf(values: readonly number[]): DurationPercentiles {
+  const sorted = [...values].sort((a, b) => a - b)
+  return { p50: percentile(sorted, 0.5), p95: percentile(sorted, 0.95) }
+}
+
 export function captureStats(input: CaptureStatsInput): CaptureStats {
-  const sorted = [...input.successDurationsMs].sort((a, b) => a - b)
   return {
     attempts: input.attempts,
-    p50: percentile(sorted, 0.5),
-    p95: percentile(sorted, 0.95),
+    successes: input.successes,
+    timeouts: input.timeouts,
+    lateArrivals: input.lateArrivals,
+    roundDuration: percentilesOf(input.roundDurationsMs),
+    callDuration: percentilesOf(input.callDurationsMs),
     timeoutRate: input.attempts === 0 ? 0 : input.timeouts / input.attempts,
     //+_+// 분모는 타임아웃 수다. 포기한 호출이 나중에라도 돌아왔는지를 본다. L21 의 질문이다
     lateArrivalRate: input.timeouts === 0 ? 0 : input.lateArrivals / input.timeouts,
+    rateDenominators: { timeoutRate: 'attempts', lateArrivalRate: 'timeouts' },
   }
 }
 

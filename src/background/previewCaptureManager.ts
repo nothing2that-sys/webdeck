@@ -37,7 +37,13 @@ export const systemClock: Clock = {
   },
 }
 
-export type CaptureOutcome = 'success' | 'timeout' | 'failure'
+//+_+// failure 를 세 갈래로 나눈다. 리포트가 attach 실패와 캡처 실패를 구분해야 한다
+export type CaptureOutcome =
+  | 'success'
+  | 'timeout'
+  | 'attachFailed'
+  | 'captureFailed'
+  | 'tabGone'
 
 export interface CapturedFrame {
   imageBase64: string
@@ -45,10 +51,11 @@ export interface CapturedFrame {
   bytes: number
 }
 
-//+_+// 타임아웃 행에도 startedAt 과 durationMs 가 있다. L23 이 그 공백을 지적했다
-//+_+// startedAt 은 회차 시작이고 durationMs 는 회차 전체다. 마감 기준이 회차이기 때문이다
-//+_+// calledAt 은 captureScreenshot 을 실제로 보낸 시각이다. 호출 자체의 소요는 여기서 뺀다
-//+_+// attach 나 Page.enable 에서 끝난 회차는 calledAt 이 null 이다
+//+_+// 타임아웃 행에도 startedAt 과 roundDurationMs 가 있다. L23 이 그 공백을 지적했다
+//+_+// durationMs 라는 이름을 쓰지 않는다. 회차 소요와 호출 소요는 다른 값이다. P3-D9
+//+_+// startedAt 은 회차 시작이고 roundDurationMs 는 회차 전체다. 마감 기준이 회차이기 때문이다
+//+_+// calledAt 은 captureScreenshot 을 실제로 보낸 시각이다. 거기서부터가 callDurationMs 다
+//+_+// attach 나 Page.enable 에서 끝난 회차는 calledAt 과 callDurationMs 가 둘 다 null 이다
 export interface CaptureRecord {
   tileId: string
   tabId: number
@@ -56,10 +63,12 @@ export interface CaptureRecord {
   attemptIndex: number
   startedAt: number
   calledAt: number | null
-  durationMs: number
+  roundDurationMs: number
+  callDurationMs: number | null
   outcome: CaptureOutcome
   bytes: number | null
   message: string | null
+  pageEnableSent: boolean
 }
 
 //+_+// 타임아웃 뒤에 도착한 응답이다. 프레임으로 쓰지 않고 기록만 한다
@@ -67,8 +76,9 @@ export interface LateArrivalRecord {
   tileId: string
   tabId: number
   attemptToken: number
+  attemptIndex: number
   startedAt: number
-  durationMs: number
+  roundDurationMs: number
   lateByMs: number
   settledAs: 'success' | 'failure'
 }
@@ -76,6 +86,8 @@ export interface LateArrivalRecord {
 export interface PreviewCaptureManagerOptions {
   format?: CaptureImageFormat
   quality?: number
+  //+_+// M8 변형이다. false 면 Page.enable 을 한 번도 보내지 않는다
+  pageEnable?: boolean
   onCaptureSettled?: (record: CaptureRecord, frame: CapturedFrame | null) => void
 }
 
@@ -106,6 +118,7 @@ interface InFlightAttempt {
   attemptIndex: number
   startedAt: number
   calledAt: number | null
+  pageEnableSent: boolean
   cancelTimer: () => void
 }
 
@@ -156,6 +169,7 @@ export class PreviewCaptureManager {
   private readonly clock: Clock
   private readonly format: CaptureImageFormat
   private readonly quality: number
+  private readonly pageEnable: boolean
   private readonly onCaptureSettled: ((record: CaptureRecord, frame: CapturedFrame | null) => void) | null
   private readonly tiles = new Map<string, TileState>()
   private readonly queue: CaptureQueueItem[] = []
@@ -178,6 +192,7 @@ export class PreviewCaptureManager {
     this.clock = clock
     this.format = options.format ?? CAPTURE_FORMAT
     this.quality = options.quality ?? CAPTURE_QUALITY
+    this.pageEnable = options.pageEnable ?? true
     this.onCaptureSettled = options.onCaptureSettled ?? null
     this.sessions.addDetachListener((event) => {
       this.applyDetach(event)
@@ -230,10 +245,13 @@ export class PreviewCaptureManager {
     this.tiles.delete(tileId)
     this.dropQueued(tileId)
     this.slots.delete(tileId)
+
+    //+_+// 진행 중이던 회차는 tabGone 으로 닫는다. 조용히 사라지면 회차 수가 맞지 않는다
     const attempt = this.inFlight.get(tileId)
     if (attempt !== undefined) {
       attempt.cancelTimer()
       this.inFlight.delete(tileId)
+      this.write(attempt, { outcome: 'tabGone', bytes: null, message: null })
     }
     if (state.holdsLease) {
       await this.sessions.release(state.tabId)
@@ -321,7 +339,7 @@ export class PreviewCaptureManager {
       }
       if (!attached.ok) {
         //+_+// 누적 시도가 소진됐을 때만 ERROR 다. 한두 번 실패는 계단만 올린다
-        this.settle(attempt, { outcome: 'failure', bytes: null, message: attached.message }, {
+        this.settle(attempt, { outcome: 'attachFailed', bytes: null, message: attached.message }, {
           fault: attached.exhausted ? tileStatusForDebuggerError(attached.errorCode) : null,
         })
         return
@@ -330,14 +348,18 @@ export class PreviewCaptureManager {
     }
 
     //+_+// Page.enable 이 정말 필요한지 확인되지 않았다. POC 가 보냈으므로 같은 순서를 유지한다
-    //+_+// 하네스가 생략 변형과 대조한다. 확인 전까지 뺄 근거가 없다
-    if (!state.pageEnabled) {
+    //+_+// 하네스가 M8 에서 생략 변형과 대조한다. 확인 전까지 뺄 근거가 없다
+    if (this.pageEnable && !state.pageEnabled) {
       try {
         await this.backend.sendCommand(state.tabId, 'Page.enable')
         state.pageEnabled = true
       } catch (error) {
         if (!this.isAbandoned(attempt)) {
-          this.settle(attempt, { outcome: 'failure', bytes: null, message: errorMessage(error) })
+          this.settle(attempt, {
+            outcome: 'captureFailed',
+            bytes: null,
+            message: errorMessage(error),
+          })
         }
         return
       }
@@ -346,6 +368,7 @@ export class PreviewCaptureManager {
       }
     }
 
+    attempt.pageEnableSent = state.pageEnabled
     attempt.calledAt = this.clock.now()
     this.backend
       .sendCommand(state.tabId, 'Page.captureScreenshot', {
@@ -373,6 +396,7 @@ export class PreviewCaptureManager {
       attemptIndex: state.attemptCount - 1,
       startedAt: this.clock.now(),
       calledAt: null,
+      pageEnableSent: false,
       cancelTimer: () => undefined,
     }
     attempt.cancelTimer = this.clock.schedule(CAPTURE_TIMEOUT_MS, () => {
@@ -397,14 +421,15 @@ export class PreviewCaptureManager {
   private onResponse(attempt: InFlightAttempt, data: string | null, failure: string | null): void {
     //+_+// 이미 포기한 회차다. 프레임으로 채택하지 않는다. 다음 회차의 결과로 섞이지 않는다
     if (this.isAbandoned(attempt)) {
-      const durationMs = this.clock.now() - attempt.startedAt
+      const roundDurationMs = this.clock.now() - attempt.startedAt
       this.lateArrivalLog.push({
         tileId: attempt.tileId,
         tabId: attempt.tabId,
         attemptToken: attempt.token,
+        attemptIndex: attempt.attemptIndex,
         startedAt: attempt.startedAt,
-        durationMs,
-        lateByMs: durationMs - CAPTURE_TIMEOUT_MS,
+        roundDurationMs,
+        lateByMs: roundDurationMs - CAPTURE_TIMEOUT_MS,
         settledAs: data === null ? 'failure' : 'success',
       })
       return
@@ -412,7 +437,7 @@ export class PreviewCaptureManager {
 
     if (data === null) {
       this.settle(attempt, {
-        outcome: 'failure',
+        outcome: 'captureFailed',
         bytes: null,
         message: failure ?? 'empty screenshot payload',
       })
@@ -456,6 +481,17 @@ export class PreviewCaptureManager {
       }
     }
 
+    this.write(attempt, settled, frame)
+    this.pump()
+  }
+
+  //+_+// 기록만 한다. 상태 갱신과 슬롯 반납은 부르는 쪽 책임이다
+  private write(
+    attempt: InFlightAttempt,
+    settled: Pick<CaptureRecord, 'outcome' | 'bytes' | 'message'>,
+    frame: CapturedFrame | null = null,
+  ): void {
+    const now = this.clock.now()
     const entry: CaptureRecord = {
       tileId: attempt.tileId,
       tabId: attempt.tabId,
@@ -463,12 +499,13 @@ export class PreviewCaptureManager {
       attemptIndex: attempt.attemptIndex,
       startedAt: attempt.startedAt,
       calledAt: attempt.calledAt,
-      durationMs: now - attempt.startedAt,
+      roundDurationMs: now - attempt.startedAt,
+      callDurationMs: attempt.calledAt === null ? null : now - attempt.calledAt,
+      pageEnableSent: attempt.pageEnableSent,
       ...settled,
     }
     this.captureLog.push(entry)
     this.onCaptureSettled?.(entry, frame)
-    this.pump()
   }
 
   //+_+// 타임아웃 1회로 ERROR 를 만들지 않는다. fault 는 세션 사유가 있을 때만 실린다
