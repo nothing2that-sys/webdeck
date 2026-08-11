@@ -1,0 +1,188 @@
+import { BACKOFF_STEPS_MS } from '../shared/scheduler'
+import type { TileStatus } from '../shared/types'
+
+//+_+// v1 section 21 line 1201~1213 의 이름을 그대로 쓴다. 캡처 자체의 실패는 이 모듈이 내지 않는다
+export type DebuggerErrorCode =
+  | 'DEBUGGER_ATTACH_FAILED'
+  | 'DEBUGGER_DETACHED'
+  | 'DEVTOOLS_CONFLICT'
+  | 'TAB_NOT_FOUND'
+  | 'TAB_CLOSED'
+  | 'RESTRICTED_URL'
+
+//+_+// v1 section 12 가 정한 값이다. BACKOFF_STEPS_MS 4단보다 작아야 계단 색인이 성립한다
+export const MAX_ATTACH_ATTEMPTS = 3
+
+//+_+// 비워 둔다. onDetach 의 reason 문자열은 아직 관측되지 않았다
+//+_+// chrome 타입 선언은 canceled_by_user 와 target_closed 둘만 적지만 그것을 근거로 삼지 않는다
+//+_+// 관측 후 이 목록을 채운다. 그때까지 모든 reason 은 DEBUGGER_DETACHED 로 간다
+export const DEVTOOLS_DETACH_REASONS: readonly string[] = []
+
+//+_+// chrome.debugger 를 직접 부르지 않는다. 어댑터는 serviceWorker 가 주입한다
+export interface DebuggerBackend {
+  attach(tabId: number): Promise<void>
+  detach(tabId: number): Promise<void>
+  onDetach(listener: (tabId: number, reason: string) => void): void
+}
+
+//+_+// L24 재발 방지. 실패 1건마다 원문 문자열을 남긴다. 요약하지 않는다
+export interface AttachFailureRecord {
+  tabId: number
+  attempt: number
+  message: string
+}
+
+export interface DetachEventRecord {
+  tabId: number
+  reason: string
+  errorCode: DebuggerErrorCode
+}
+
+export interface DetachFailureRecord {
+  tabId: number
+  message: string
+}
+
+export type AttachResult =
+  | { ok: true; reused: boolean }
+  | { ok: false; errorCode: DebuggerErrorCode; message: string; attempts: number }
+
+export interface DebuggerSessionManagerOptions {
+  wait?: (ms: number) => Promise<void>
+  devtoolsDetachReasons?: readonly string[]
+}
+
+function defaultWait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+//+_+// Error 가 아닌 값으로 reject 되어도 문자열을 잃지 않는다
+export function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
+}
+
+//+_+// 관측 전이므로 reason 을 문자열 매칭으로 추측하지 않는다. 목록에 있는 것만 DevTools 로 본다
+export function classifyDetachReason(
+  reason: string,
+  devtoolsReasons: readonly string[],
+): DebuggerErrorCode {
+  return devtoolsReasons.includes(reason) ? 'DEVTOOLS_CONFLICT' : 'DEBUGGER_DETACHED'
+}
+
+//+_+// TASK-P3-01 section 3.4 의 전이표다. 캡처 실패와 타임아웃은 여기에 오지 않는다
+export function tileStatusForDebuggerError(code: DebuggerErrorCode): TileStatus {
+  switch (code) {
+    case 'DEVTOOLS_CONFLICT':
+      return 'DEVTOOLS'
+    case 'DEBUGGER_DETACHED':
+    case 'TAB_NOT_FOUND':
+    case 'TAB_CLOSED':
+      return 'DETACHED'
+    case 'DEBUGGER_ATTACH_FAILED':
+    case 'RESTRICTED_URL':
+      return 'ERROR'
+  }
+}
+
+//+_+// lease 다. 같은 탭에 두 번 attach 하지 않고 참조 카운트가 0 일 때만 detach 한다
+export class DebuggerSessionManager {
+  private readonly backend: DebuggerBackend
+  private readonly wait: (ms: number) => Promise<void>
+  private readonly devtoolsDetachReasons: readonly string[]
+  private readonly leases = new Map<number, number>()
+  private readonly attachFailureLog: AttachFailureRecord[] = []
+  private readonly detachEventLog: DetachEventRecord[] = []
+  private readonly detachFailureLog: DetachFailureRecord[] = []
+
+  constructor(backend: DebuggerBackend, options: DebuggerSessionManagerOptions = {}) {
+    this.backend = backend
+    this.wait = options.wait ?? defaultWait
+    this.devtoolsDetachReasons = options.devtoolsDetachReasons ?? DEVTOOLS_DETACH_REASONS
+    this.backend.onDetach((tabId, reason) => {
+      this.handleDetach(tabId, reason)
+    })
+  }
+
+  get attachFailures(): readonly AttachFailureRecord[] {
+    return this.attachFailureLog
+  }
+
+  get detachEvents(): readonly DetachEventRecord[] {
+    return this.detachEventLog
+  }
+
+  get detachFailures(): readonly DetachFailureRecord[] {
+    return this.detachFailureLog
+  }
+
+  isAttached(tabId: number): boolean {
+    return this.leases.has(tabId)
+  }
+
+  refCount(tabId: number): number {
+    return this.leases.get(tabId) ?? 0
+  }
+
+  //+_+// 이미 붙어 있으면 attach 를 다시 부르지 않는다. L24 의 유력한 설명이 중복 attach 였다
+  async ensureAttached(tabId: number): Promise<AttachResult> {
+    const held = this.leases.get(tabId)
+    if (held !== undefined) {
+      this.leases.set(tabId, held + 1)
+      return { ok: true, reused: true }
+    }
+
+    let lastMessage = ''
+    for (let attempt = 1; attempt <= MAX_ATTACH_ATTEMPTS; attempt += 1) {
+      if (attempt > 1) {
+        await this.wait(BACKOFF_STEPS_MS[attempt - 2])
+      }
+      try {
+        await this.backend.attach(tabId)
+        this.leases.set(tabId, 1)
+        return { ok: true, reused: false }
+      } catch (error) {
+        lastMessage = errorMessage(error)
+        this.attachFailureLog.push({ tabId, attempt, message: lastMessage })
+      }
+    }
+
+    return {
+      ok: false,
+      errorCode: 'DEBUGGER_ATTACH_FAILED',
+      message: lastMessage,
+      attempts: MAX_ATTACH_ATTEMPTS,
+    }
+  }
+
+  //+_+// detach 실패는 삼킨다. 세션은 어차피 놓는다. 기록만 남긴다
+  async release(tabId: number): Promise<void> {
+    const held = this.leases.get(tabId)
+    if (held === undefined) {
+      return
+    }
+    if (held > 1) {
+      this.leases.set(tabId, held - 1)
+      return
+    }
+
+    this.leases.delete(tabId)
+    try {
+      await this.backend.detach(tabId)
+    } catch (error) {
+      this.detachFailureLog.push({ tabId, message: errorMessage(error) })
+    }
+  }
+
+  //+_+// reason 원문을 그대로 남긴다. 분류는 관측 후에 확정한다
+  private handleDetach(tabId: number, reason: string): void {
+    this.detachEventLog.push({
+      tabId,
+      reason,
+      errorCode: classifyDetachReason(reason, this.devtoolsDetachReasons),
+    })
+    this.leases.delete(tabId)
+  }
+}
