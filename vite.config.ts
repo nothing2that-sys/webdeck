@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import react from '@vitejs/plugin-react'
 import type { Plugin } from 'vite'
 import { defineConfig } from 'vitest/config'
+import type { ViteUserConfig } from 'vitest/config'
 
 const projectRoot = import.meta.dirname
 
@@ -33,7 +35,8 @@ function harnessCommit(): string | null {
 }
 
 //+_+// 하네스는 버릴 코드다. 제품 dist 를 오염시키지 않도록 산출물을 분리한다
-export default defineConfig(({ mode }) => {
+//+_+// 반환형을 명시한다. 두 분기의 엔트리 맵이 union 으로 합쳐지면 키가 optional undefined 로 섞인다
+export default defineConfig(({ mode }): ViteUserConfig => {
   if (mode === 'harness') {
     return {
       root: resolve(projectRoot, 'harness/p3'),
@@ -61,12 +64,25 @@ export default defineConfig(({ mode }) => {
   return {
     root: resolve(projectRoot, 'src/dashboard'),
     publicDir: false,
-    plugins: [emitManifest(resolve(projectRoot, 'manifest.json'))],
+    //+_+// 확장 페이지는 chrome-extension 스킴에서 열린다. 상대 경로로 내보내 스킴 가정을 없앤다
+    base: './',
+    plugins: [react(), emitManifest(resolve(projectRoot, 'manifest.json'))],
     build: {
       outDir: resolve(projectRoot, 'dist'),
       emptyOutDir: true,
       rollupOptions: {
-        input: resolve(projectRoot, 'src/dashboard/dashboard.html'),
+        //+_+// 엔트리 2개다. 서비스 워커가 제품 그래프에 들어가야 L10 이 닫힌다
+        input: {
+          dashboard: resolve(projectRoot, 'src/dashboard/dashboard.html'),
+          serviceWorker: resolve(projectRoot, 'src/background/serviceWorker.ts'),
+        },
+        //+_+// manifest 의 background.service_worker 가 고정 경로를 가리켜야 하므로 해시를 붙이지 않는다
+        //+_+// harness 분기와 같은 방식이다. 이름 규칙을 두 곳에서 다르게 두지 않는다
+        output: {
+          entryFileNames: '[name].js',
+          chunkFileNames: '[name].js',
+          assetFileNames: '[name][extname]',
+        },
       },
     },
     test: {

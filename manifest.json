@@ -4,6 +4,13 @@
   "version": "0.2.0",
   "description": "Group Chrome tabs into projects and preview them live in a grid",
   "permissions": ["tabs", "storage", "debugger", "alarms"],
+  "background": {
+    "service_worker": "serviceWorker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "WebDeck Dashboard"
+  },
   "commands": {
     "focus-dashboard": {
       "suggested_key": {
