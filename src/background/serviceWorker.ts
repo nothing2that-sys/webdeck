@@ -37,10 +37,6 @@ export function createPreviewEngine(
     void captures.releaseTab(tabId)
   })
 
-  tabs.onTabNavigated((tabId) => {
-    captures.noteNavigation(tabId)
-  })
-
   return {
     sessions,
     captures,

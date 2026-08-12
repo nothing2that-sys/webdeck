@@ -66,7 +66,6 @@ class FakeCaptureBackend implements DebuggerBackend {
   readonly commands: { tabId: number; method: string }[] = []
   readonly captures: Deferred[] = []
   readonly attachRejections: unknown[] = []
-  enableRejection: unknown = null
   private listener: ((tabId: number, reason: string) => void) | null = null
 
   attachHangs = false
@@ -88,11 +87,6 @@ class FakeCaptureBackend implements DebuggerBackend {
 
   sendCommand(tabId: number, method: string): Promise<unknown> {
     this.commands.push({ tabId, method })
-    if (method === 'Page.enable') {
-      return this.enableRejection === null
-        ? Promise.resolve({})
-        : Promise.reject(this.enableRejection)
-    }
     return new Promise<unknown>((resolve, reject) => {
       this.captures.push({ resolve, reject })
     })
@@ -713,7 +707,8 @@ describe('TASK-P3-01 - queue order and capture command', () => {
     expect(selectDueTiles(tiles, 50)).toEqual([])
   })
 
-  it('enables the page once and then captures on each later round', async () => {
+  //+_+// P3-D17. 회차마다 captureScreenshot 하나뿐이다. 앞에 붙는 CDP 명령이 없다
+  it('sends only captureScreenshot on each round', async () => {
     const { manager, clock, backend } = build()
     manager.register('a', 1, 2000)
 
@@ -726,7 +721,6 @@ describe('TASK-P3-01 - queue order and capture command', () => {
     await flush()
 
     expect(backend.commands.map((entry) => entry.method)).toEqual([
-      'Page.enable',
       'Page.captureScreenshot',
       'Page.captureScreenshot',
     ])
@@ -788,12 +782,11 @@ describe('TASK-P3-01-S5 - the record schema after P3-D9', () => {
       outcome: true,
       bytes: true,
       message: true,
-      pageEnableSent: true,
     }
     expect(Object.keys(record as object).sort()).toEqual(Object.keys(keys).sort())
   })
 
-  //+_+// 회차 소요는 attach 와 Page.enable 을 포함하고 호출 소요는 포함하지 않는다
+  //+_+// 회차 소요는 attach 를 포함하고 호출 소요는 포함하지 않는다
   it('separates the round duration from the call duration', async () => {
     const { manager, clock, backend } = build()
     manager.register('a', 1, 2000)
@@ -850,29 +843,6 @@ describe('TASK-P3-01-S5 - the record schema after P3-D9', () => {
     expect(gone.manager.captureRecords[0]?.outcome).toBe('tabGone')
   })
 
-  //+_+// M8 변형이다. pageEnableSent 로 두 무리를 나눌 수 있어야 한다
-  it('marks pageEnableSent so the M8 variants can be split', async () => {
-    const withEnable = build()
-    withEnable.manager.register('a', 1, 2000)
-    withEnable.manager.tick()
-    await flush()
-    await settleCapture(withEnable.backend, 0)
-
-    const without = build({ pageEnable: false })
-    without.manager.register('a', 1, 2000)
-    without.manager.tick()
-    await flush()
-    await settleCapture(without.backend, 0)
-
-    expect(withEnable.backend.commands.map((entry) => entry.method)).toEqual([
-      'Page.enable',
-      'Page.captureScreenshot',
-    ])
-    expect(without.backend.commands.map((entry) => entry.method)).toEqual(['Page.captureScreenshot'])
-    expect(withEnable.manager.captureRecords[0]?.pageEnableSent).toBe(true)
-    expect(without.manager.captureRecords[0]?.pageEnableSent).toBe(false)
-  })
-
   it('names no durationMs field on a late arrival either', async () => {
     const { manager, clock, backend } = build()
     manager.register('a', 1, 2000)
@@ -910,9 +880,7 @@ describe('TASK-P3-01-S5 - a lost session is reattached on the next round', () =>
 
     expect(backend.attachCalls).toEqual([1, 1])
     expect(backend.commands.map((entry) => entry.method)).toEqual([
-      'Page.enable',
       'Page.captureScreenshot',
-      'Page.enable',
       'Page.captureScreenshot',
     ])
   })

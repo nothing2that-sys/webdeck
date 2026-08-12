@@ -55,7 +55,7 @@ export interface CapturedFrame {
 //+_+// durationMs 라는 이름을 쓰지 않는다. 회차 소요와 호출 소요는 다른 값이다. P3-D9
 //+_+// startedAt 은 회차 시작이고 roundDurationMs 는 회차 전체다. 마감 기준이 회차이기 때문이다
 //+_+// calledAt 은 captureScreenshot 을 실제로 보낸 시각이다. 거기서부터가 callDurationMs 다
-//+_+// attach 나 Page.enable 에서 끝난 회차는 calledAt 과 callDurationMs 가 둘 다 null 이다
+//+_+// attach 에서 끝난 회차는 calledAt 과 callDurationMs 가 둘 다 null 이다
 export interface CaptureRecord {
   tileId: string
   tabId: number
@@ -68,7 +68,6 @@ export interface CaptureRecord {
   outcome: CaptureOutcome
   bytes: number | null
   message: string | null
-  pageEnableSent: boolean
 }
 
 //+_+// 타임아웃 뒤에 도착한 응답이다. 프레임으로 쓰지 않고 기록만 한다
@@ -86,8 +85,6 @@ export interface LateArrivalRecord {
 export interface PreviewCaptureManagerOptions {
   format?: CaptureImageFormat
   quality?: number
-  //+_+// M8 변형이다. false 면 Page.enable 을 한 번도 보내지 않는다
-  pageEnable?: boolean
   onCaptureSettled?: (record: CaptureRecord, frame: CapturedFrame | null) => void
 }
 
@@ -107,7 +104,6 @@ interface TileState {
   demoted: boolean
   lastFrameAt: number
   holdsLease: boolean
-  pageEnabled: boolean
   fault: TileStatus | null
 }
 
@@ -118,7 +114,6 @@ interface InFlightAttempt {
   attemptIndex: number
   startedAt: number
   calledAt: number | null
-  pageEnableSent: boolean
   //+_+// 마감 타이머가 실제로 끝난 시각이다. 그 밖의 사유로 포기한 회차는 null 로 남는다
   timedOutAt: number | null
   cancelTimer: () => void
@@ -188,7 +183,6 @@ export class PreviewCaptureManager {
   private readonly clock: Clock
   private readonly format: CaptureImageFormat
   private readonly quality: number
-  private readonly pageEnable: boolean
   private readonly onCaptureSettled: ((record: CaptureRecord, frame: CapturedFrame | null) => void) | null
   private readonly tiles = new Map<string, TileState>()
   private readonly queue: CaptureQueueItem[] = []
@@ -211,7 +205,6 @@ export class PreviewCaptureManager {
     this.clock = clock
     this.format = options.format ?? CAPTURE_FORMAT
     this.quality = options.quality ?? CAPTURE_QUALITY
-    this.pageEnable = options.pageEnable ?? true
     this.onCaptureSettled = options.onCaptureSettled ?? null
     this.sessions.addDetachListener((event) => {
       this.applyDetach(event)
@@ -251,7 +244,6 @@ export class PreviewCaptureManager {
       demoted: false,
       lastFrameAt: now,
       holdsLease: false,
-      pageEnabled: false,
       fault: null,
     })
   }
@@ -274,17 +266,6 @@ export class PreviewCaptureManager {
     }
     if (state.holdsLease) {
       await this.sessions.release(state.tabId)
-    }
-  }
-
-  //+_+// v1 section 5.2 조건 9 는 navigation 후 캡처가 복구되는지 확인하라고만 정한다
-  //+_+// 세션이 navigation 을 넘겨 살아남는지는 확인되지 않았다. 리스를 놓지 않는다
-  //+_+// Page.enable 만 다시 보낸다. 세션이 실제로 죽었으면 다음 캡처가 실패해 계단이 처리한다
-  noteNavigation(tabId: number): void {
-    for (const state of this.tiles.values()) {
-      if (state.tabId === tabId) {
-        state.pageEnabled = false
-      }
     }
   }
 
@@ -339,7 +320,7 @@ export class PreviewCaptureManager {
     }
   }
 
-  //+_+// 슬롯 보유 상한은 CAPTURE_TIMEOUT_MS 하나다. attach 와 Page.enable 도 그 안에 든다. D6
+  //+_+// 슬롯 보유 상한은 CAPTURE_TIMEOUT_MS 하나다. attach 도 그 안에 든다. D6
   private async runCapture(item: CaptureQueueItem): Promise<void> {
     const state = this.tiles.get(item.tileId)
     if (state === undefined) {
@@ -366,28 +347,6 @@ export class PreviewCaptureManager {
       state.holdsLease = true
     }
 
-    //+_+// Page.enable 이 정말 필요한지 확인되지 않았다. POC 가 보냈으므로 같은 순서를 유지한다
-    //+_+// 하네스가 M8 에서 생략 변형과 대조한다. 확인 전까지 뺄 근거가 없다
-    if (this.pageEnable && !state.pageEnabled) {
-      try {
-        await this.backend.sendCommand(state.tabId, 'Page.enable')
-        state.pageEnabled = true
-      } catch (error) {
-        if (!this.isAbandoned(attempt)) {
-          this.settle(attempt, {
-            outcome: 'captureFailed',
-            bytes: null,
-            message: errorMessage(error),
-          })
-        }
-        return
-      }
-      if (this.isAbandoned(attempt)) {
-        return
-      }
-    }
-
-    attempt.pageEnableSent = state.pageEnabled
     attempt.calledAt = this.clock.now()
     this.backend
       .sendCommand(state.tabId, 'Page.captureScreenshot', {
@@ -415,7 +374,6 @@ export class PreviewCaptureManager {
       attemptIndex: state.attemptCount - 1,
       startedAt: this.clock.now(),
       calledAt: null,
-      pageEnableSent: false,
       timedOutAt: null,
       cancelTimer: () => undefined,
     }
@@ -519,7 +477,6 @@ export class PreviewCaptureManager {
   //+_+// detach 를 부르지 않는다. 세션은 이미 없다. 다음 회차가 ensureAttached 로 다시 붙인다
   private dropSession(state: TileState): void {
     state.holdsLease = false
-    state.pageEnabled = false
     this.sessions.invalidate(state.tabId)
   }
 
@@ -539,7 +496,6 @@ export class PreviewCaptureManager {
       calledAt: attempt.calledAt,
       roundDurationMs: now - attempt.startedAt,
       callDurationMs: attempt.calledAt === null ? null : now - attempt.calledAt,
-      pageEnableSent: attempt.pageEnableSent,
       ...settled,
     }
     this.captureLog.push(entry)
@@ -569,7 +525,6 @@ export class PreviewCaptureManager {
         continue
       }
       state.holdsLease = false
-      state.pageEnabled = false
       state.fault = tileStatusForDebuggerError(event.errorCode)
     }
   }

@@ -15,7 +15,6 @@ export interface CaptureRow {
   outcome: string
   bytes: number | null
   frameHash: string | null
-  pageEnableSent: boolean
   message: string | null
 }
 

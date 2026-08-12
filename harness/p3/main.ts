@@ -244,7 +244,6 @@ function wire(): void {
         type: 'START_CAPTURE',
         tabIds,
         intervalMs: Number(el<HTMLInputElement>('interval').value),
-        pageEnable: el<HTMLInputElement>('pageEnable').checked,
       })
       log(`캡처 시작. 탭 ${String(tabIds.length)}개`)
     })()

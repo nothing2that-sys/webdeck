@@ -24,7 +24,6 @@ function row(overrides: Partial<CaptureRow>): CaptureRow {
     outcome: 'success',
     bytes: 1000,
     frameHash: 'abc',
-    pageEnableSent: true,
     message: null,
     ...overrides,
   }

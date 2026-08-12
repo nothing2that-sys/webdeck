@@ -297,7 +297,8 @@ describe('TASK-P3-01 section 3.6 - the driver is separate from the decision', ()
   })
 
   //+_+// v1 section 5.2 조건 9. navigation 뒤에도 캡처가 복구되어야 한다
-  it('sends Page.enable again after a navigation', async () => {
+  //+_+// M9 로 세션이 이동을 넘어 사는 것이 확인됐다. 재전송할 것이 없다. P3-D17 / J4
+  it('keeps capturing after a navigation without resending anything', async () => {
     const clock = new StubClock()
     const tabs = new StubTabs()
     const backend = new StubDebugger()
@@ -312,10 +313,9 @@ describe('TASK-P3-01 section 3.6 - the driver is separate from the decision', ()
     engine.captures.tick()
     await flush()
 
+    expect(engine.sessions.isAttached(7)).toBe(true)
     expect(backend.commands.map((entry) => entry.method)).toEqual([
-      'Page.enable',
       'Page.captureScreenshot',
-      'Page.enable',
       'Page.captureScreenshot',
     ])
   })

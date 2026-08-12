@@ -150,11 +150,10 @@ const tabsBackend = harnessTabsBackend()
 const sessions = new DebuggerSessionManager(debuggerBackend)
 const tabs = new TabManager(tabsBackend)
 
-let captureManager = makeCaptureManager(true)
+let captureManager = makeCaptureManager()
 
-function makeCaptureManager(pageEnable: boolean): PreviewCaptureManager {
+function makeCaptureManager(): PreviewCaptureManager {
   return new PreviewCaptureManager(debuggerBackend, sessions, systemClock, {
-    pageEnable,
     onCaptureSettled: (record, frame) => {
       captures.push({
         tileId: record.tileId,
@@ -167,7 +166,6 @@ function makeCaptureManager(pageEnable: boolean): PreviewCaptureManager {
         outcome: record.outcome,
         bytes: record.bytes,
         frameHash: frame === null ? null : fnv1a(frame.imageBase64),
-        pageEnableSent: record.pageEnableSent,
         message: record.message,
       })
       if (frame !== null) {
@@ -192,10 +190,6 @@ sessions.addDetachListener((event) => {
 
 tabs.onTabRemoved((tabId) => {
   void captureManager.releaseTab(tabId)
-})
-
-tabs.onTabNavigated((tabId) => {
-  captureManager.noteNavigation(tabId)
 })
 
 //+_+// 유일한 storage 쓰기다. 워커 시작당 1회. Phase 1 은 초당 0.547회를 썼고 그것이 L1 용의자 1 이다
@@ -528,7 +522,7 @@ async function handle(request: HarnessRequest): Promise<HarnessResponse> {
 
   if (request.type === 'START_CAPTURE') {
     await stopCapture()
-    captureManager = makeCaptureManager(request.pageEnable)
+    captureManager = makeCaptureManager()
     request.tabIds.forEach((tabId, index) => {
       const tileId = `t${String(index + 1)}`
       captureManager.register(tileId, tabId, request.intervalMs)

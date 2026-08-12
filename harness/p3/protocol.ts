@@ -19,7 +19,7 @@ export interface TabSummary {
 
 export type HarnessRequest =
   | { type: 'LIST_TABS' }
-  | { type: 'START_CAPTURE'; tabIds: number[]; intervalMs: number; pageEnable: boolean }
+  | { type: 'START_CAPTURE'; tabIds: number[]; intervalMs: number }
   | { type: 'STOP_CAPTURE' }
   | { type: 'ATTACH_STAGE'; stage: number; tabIds: number[] }
   | { type: 'INJECT'; name: InjectionName; tabId: number }
