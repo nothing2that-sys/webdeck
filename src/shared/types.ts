@@ -57,6 +57,7 @@ export interface TileRuntimeState {
   favIconUrl?: string
   status: TileStatus
   lastCaptureAt?: number
-  lastCaptureDurationMs?: number
+  //+_+// P4-D9. 회차 소요다. P3-D9 가 회차와 호출을 나눈 뒤로 이름이 어긋나 있었다
+  lastRoundDurationMs?: number
   consecutiveCaptureFailures: number
 }

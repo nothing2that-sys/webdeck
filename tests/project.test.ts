@@ -46,7 +46,7 @@ const RUNTIME_KEYS = [
   'favIconUrl',
   'status',
   'lastCaptureAt',
-  'lastCaptureDurationMs',
+  'lastRoundDurationMs',
   'consecutiveCaptureFailures',
 ]
 
@@ -98,7 +98,7 @@ describe('v1 25.1 item 5 - project serialization', () => {
       favIconUrl: 'https://example.com/icon.png',
       status: 'LIVE',
       lastCaptureAt: 1234,
-      lastCaptureDurationMs: 56,
+      lastRoundDurationMs: 56,
       consecutiveCaptureFailures: 3,
     }
     const dirty = { ...project([]), tiles: [dirtyTile] }
