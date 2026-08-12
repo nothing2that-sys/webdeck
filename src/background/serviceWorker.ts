@@ -1,9 +1,25 @@
+import { DEFAULT_PROJECT_ID, assertNever } from '../shared/messages'
+import type {
+  DashboardFailure,
+  DashboardRequest,
+  DashboardRequestType,
+  DashboardResponse,
+  TileFrame,
+} from '../shared/messages'
 import { effectiveIntervalMs } from '../shared/scheduler'
-import type { BrowserTabInfo, WebTile } from '../shared/types'
-import { DebuggerSessionManager } from './debuggerSessionManager'
+import type { BrowserTabInfo, Project, TileRuntimeState, WebTile } from '../shared/types'
+import { DebuggerSessionManager, errorMessage } from './debuggerSessionManager'
 import type { DebuggerBackend } from './debuggerSessionManager'
 import { PreviewCaptureManager, systemClock } from './previewCaptureManager'
 import type { Clock, PreviewCaptureManagerOptions } from './previewCaptureManager'
+import {
+  EMPTY_CAPTURE_SUMMARY,
+  applyCaptureRecord,
+  buildRuntimeState,
+  newTile,
+  resolveRuntimeStatus,
+} from './projectState'
+import type { TileCaptureSummary } from './projectState'
 import { TabManager } from './tabManager'
 import type { TabsBackend } from './tabManager'
 
@@ -56,6 +72,151 @@ export function startPreviewDriver(engine: PreviewEngine, intervalMs = DRIVER_TI
   }, intervalMs)
   return () => {
     clearInterval(handle)
+  }
+}
+
+//+_+// Phase 4 의 프로젝트는 워커 메모리에 1개다. 저장은 WEBDECK_PLAN section 7 이 Phase 5 다
+//+_+// 워커가 종료되면 타일이 사라진다. 영구화가 없으므로 복구할 곳이 없다
+export function emptyProject(): Project {
+  return {
+    id: DEFAULT_PROJECT_ID,
+    name: 'WebDeck',
+    gridColumns: 4,
+    gridRows: 4,
+    keepManagedTabsAlive: false,
+    tiles: [],
+  }
+}
+
+export interface DashboardHost {
+  engine: PreviewEngine
+  //+_+// senderWindowId 는 요청을 보낸 Dashboard 탭의 창이다. 없으면 마지막으로 포커스된 창을 쓴다
+  handle(request: DashboardRequest, senderWindowId?: number): Promise<DashboardResponse>
+}
+
+export type ListTabs = (windowId: number | undefined) => Promise<BrowserTabInfo[]>
+
+function failure(
+  type: DashboardRequestType,
+  errorCode: string,
+  message: string,
+): DashboardFailure {
+  return { ok: false, type, errorCode, message }
+}
+
+//+_+// Dashboard 요청 처리기다. chrome 전역을 직접 부르지 않으므로 주입한 backend 로 시험할 수 있다
+//+_+// 엔진을 여기서 만든다. 정산 훅이 엔진 생성 시점에 필요하고 요약을 이 안에서 접기 때문이다
+export function createDashboardHost(
+  debuggerBackend: DebuggerBackend,
+  tabsBackend: TabsBackend,
+  listTabs: ListTabs,
+  clock: Clock = systemClock,
+): DashboardHost {
+  const project = emptyProject()
+  const bindings = new Map<string, number>()
+  const summaries = new Map<string, TileCaptureSummary>()
+
+  const engine = createPreviewEngine(debuggerBackend, tabsBackend, clock, {
+    onCaptureSettled: (record) => {
+      summaries.set(
+        record.tileId,
+        applyCaptureRecord(summaries.get(record.tileId) ?? EMPTY_CAPTURE_SUMMARY, record),
+      )
+    },
+  })
+
+  async function projectState(): Promise<DashboardResponse> {
+    const runtimeStates: TileRuntimeState[] = []
+    const frames: TileFrame[] = []
+
+    for (const tile of project.tiles) {
+      const tabId = bindings.get(tile.id)
+      const tab = tabId === undefined ? null : await engine.tabs.info(tabId)
+      const summary = summaries.get(tile.id) ?? EMPTY_CAPTURE_SUMMARY
+      const status = resolveRuntimeStatus(
+        engine.captures.statusOf(tile.id),
+        tabId,
+        tab,
+        summary.lastCaptureAt !== undefined,
+      )
+      runtimeStates.push(buildRuntimeState(tile.id, tabId, tab, status, summary))
+
+      //+_+// 타일당 최신 1장만 싣는다. 이력을 만들지 않는다. v1 section 6.2 는 저장도 금지한다
+      const frame = engine.captures.latestFrame(tile.id)
+      if (frame !== null) {
+        frames.push({
+          tileId: tile.id,
+          imageBase64: frame.imageBase64,
+          format: frame.format,
+          bytes: frame.bytes,
+        })
+      }
+    }
+
+    return { ok: true, type: 'GET_PROJECT_STATE', project, runtimeStates, frames }
+  }
+
+  //+_+// P4-D2. 모르는 tileId 면 첫 빈 자리에 1x1 타일을 만든다. 아는 tileId 면 탭만 다시 건다
+  //+_+// 새 메시지 이름을 만들지 않기 위해 v1 section 19 의 BIND_TILE 하나로 둘을 처리한다
+  async function bindTile(tileId: string, tabId: number): Promise<DashboardResponse> {
+    const tab = await engine.tabs.info(tabId)
+    if (tab === null) {
+      return failure('BIND_TILE', 'TAB_NOT_FOUND', `No tab with id ${String(tabId)}`)
+    }
+
+    const existing = project.tiles.find((tile) => tile.id === tileId)
+    const tile = existing ?? newTile(tileId, tab.currentUrl, project.tiles)
+    if (tile === null) {
+      return failure('BIND_TILE', 'GRID_FULL', 'The 4x4 grid has no empty slot left')
+    }
+
+    //+_+// 다른 탭에 걸려 있던 타일이면 먼저 내린다. 그러지 않으면 이전 탭의 리스가 남는다
+    if (bindings.get(tileId) !== undefined && bindings.get(tileId) !== tabId) {
+      await engine.captures.unregister(tileId)
+    }
+    if (existing === undefined) {
+      project.tiles.push(tile)
+    }
+    bindings.set(tileId, tabId)
+    summaries.delete(tileId)
+
+    //+_+// dashboardVisible 을 true 로 고정한다. 표시 상태를 나르는 메시지가 없다
+    //+_+// hidden 주기 45000 은 이번 범위에서 도달하지 않는다
+    engine.registerTile(tile, tabId, true)
+    return { ok: true, type: 'BIND_TILE' }
+  }
+
+  return {
+    engine,
+    handle: async (request, senderWindowId) => {
+      switch (request.type) {
+        case 'GET_PROJECT_STATE':
+          if (request.projectId !== project.id) {
+            return failure(
+              request.type,
+              'PROJECT_NOT_FOUND',
+              `Unknown projectId ${request.projectId}`,
+            )
+          }
+          return projectState()
+        case 'LIST_BROWSER_TABS':
+          return { ok: true, type: 'LIST_BROWSER_TABS', tabs: await listTabs(senderWindowId) }
+        case 'BIND_TILE':
+          return bindTile(request.tileId, request.tabId)
+        //+_+// P4-D8. 핸들러를 만들지 않는다. 프레임은 GET_PROJECT_STATE 가 나른다. 타입은 남긴다
+        case 'CAPTURE_TILE':
+          return failure(request.type, 'NOT_IMPLEMENTED', 'CAPTURE_TILE has no handler (P4-D8)')
+        //+_+// TASK-P4-01 S3 다. 이번 범위가 아니다
+        case 'FOCUS_TILE':
+          return failure(request.type, 'NOT_IMPLEMENTED', 'FOCUS_TILE is TASK-P4-01 S3')
+        //+_+// WEBDECK_PLAN section 7 이 Reopen 과 Keep Alive 를 Phase 5 에 배정했다
+        case 'RELOAD_TILE':
+        case 'SET_TILE_KEEP_ALIVE':
+          return failure(request.type, 'NOT_IMPLEMENTED', `${request.type} is Phase 5`)
+        default:
+          return assertNever(request)
+      }
+    },
   }
 }
 
@@ -115,8 +276,54 @@ export function chromeTabsBackend(): TabsBackend {
   }
 }
 
-//+_+// 서비스 워커는 최상위에서 스스로 시작한다. 아직 manifest 에 등록돼 있지 않다
-//+_+// 등록은 dashboard 가 생기는 Phase 4 다. 그때까지 이 파일은 조립만 검증된다
+export const DASHBOARD_PAGE = 'dashboard.html'
+
+//+_+// 요청을 보낸 창의 탭만 돌려준다. 창을 모르면 마지막으로 포커스된 창을 쓴다
+//+_+// 확장 자신의 페이지는 뺀다. Dashboard 를 자기 자신에 걸면 자기 화면을 재귀로 캡처한다
+function chromeListTabs(): ListTabs {
+  return async (windowId) => {
+    const query: chrome.tabs.QueryInfo =
+      windowId === undefined ? { currentWindow: true } : { windowId }
+    const own = chrome.runtime.getURL('')
+    const tabs = await chrome.tabs.query(query)
+    return tabs
+      .map(toTabInfo)
+      .filter((tab): tab is BrowserTabInfo => tab !== null && !tab.currentUrl.startsWith(own))
+  }
+}
+
+//+_+// P4-D3. 찾아서 활성화하고 없으면 만든다. 중복 생성 방지 강화는 Phase 5 다
+//+_+// v1 section 13 line 849 가 탭과 창을 함께 활성화하라고 요구한다
+export async function openDashboard(): Promise<void> {
+  const url = chrome.runtime.getURL(DASHBOARD_PAGE)
+  const existing = await chrome.tabs.query({ url })
+  const first = existing[0]
+  if (first?.id !== undefined) {
+    await chrome.tabs.update(first.id, { active: true })
+    await chrome.windows.update(first.windowId, { focused: true })
+    return
+  }
+  await chrome.tabs.create({ url })
+}
+
+//+_+// 서비스 워커는 최상위에서 스스로 시작한다. 리스너 등록도 최상위여야 한다
+//+_+// chrome 이 없는 환경에서는 아무것도 하지 않는다. 그래서 단위 테스트가 이 파일을 import 할 수 있다
 if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
-  startPreviewDriver(createPreviewEngine(chromeDebuggerBackend(), chromeTabsBackend()))
+  const host = createDashboardHost(chromeDebuggerBackend(), chromeTabsBackend(), chromeListTabs())
+  startPreviewDriver(host.engine)
+
+  chrome.runtime.onMessage.addListener((message: DashboardRequest, sender, sendResponse) => {
+    host.handle(message, sender.tab?.windowId).then(sendResponse, (error: unknown) => {
+      sendResponse(failure(message.type, 'HANDLER_THREW', errorMessage(error)))
+    })
+    //+_+// 비동기 응답이다. true 를 돌려주지 않으면 채널이 먼저 닫힌다
+    return true
+  })
+
+  //+_+// v1 section 13 line 855. Action 버튼으로도 Dashboard 를 열거나 활성화한다
+  chrome.action.onClicked.addListener(() => {
+    void openDashboard().catch((error: unknown) => {
+      console.error('[webdeck] openDashboard failed', errorMessage(error))
+    })
+  })
 }
