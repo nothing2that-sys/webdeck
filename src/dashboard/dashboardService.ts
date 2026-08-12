@@ -1,0 +1,37 @@
+import { DEFAULT_PROJECT_ID } from '../shared/messages'
+import type { DashboardRequest, DashboardResponse } from '../shared/messages'
+
+//+_+// P4-D7 이 정한 폴링 주기다. 워커의 캡처 주기와 별개이며 서로를 참조하지 않는다
+export const POLL_INTERVAL_MS = 2000
+
+//+_+// v1 section 20. UI 컴포넌트는 chrome.* 를 부르지 않는다. 이 파일이 유일한 호출 지점이다
+//+_+// 워커가 없거나 응답 전에 죽으면 sendMessage 가 reject 한다. 실패도 union 으로 돌려준다
+async function send(request: DashboardRequest): Promise<DashboardResponse> {
+  try {
+    return (await chrome.runtime.sendMessage(request)) as DashboardResponse
+  } catch (error) {
+    return {
+      ok: false,
+      type: request.type,
+      errorCode: 'SEND_FAILED',
+      message: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+export async function fetchProjectState(): Promise<DashboardResponse> {
+  return send({ type: 'GET_PROJECT_STATE', projectId: DEFAULT_PROJECT_ID })
+}
+
+export async function listBrowserTabs(): Promise<DashboardResponse> {
+  return send({ type: 'LIST_BROWSER_TABS' })
+}
+
+export async function bindTile(tileId: string, tabId: number): Promise<DashboardResponse> {
+  return send({ type: 'BIND_TILE', tileId, tabId })
+}
+
+//+_+// 타일 id 는 요청하는 쪽이 만든다. BIND_TILE 이 tileId 를 받는 형태이기 때문이다
+export function newTileId(): string {
+  return crypto.randomUUID()
+}
