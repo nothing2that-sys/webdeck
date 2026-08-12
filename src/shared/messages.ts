@@ -1,5 +1,9 @@
 import type { BrowserTabInfo, Project, TileRuntimeState } from './types'
 
+//+_+// Phase 4 의 프로젝트는 워커 메모리에 1개다. 양쪽이 같은 값을 써야 하므로 프로토콜에 둔다
+//+_+// 프로젝트 CRUD 는 WEBDECK_PLAN section 7 이 Phase 5 에 배정했다. 그때 이 상수는 사라진다
+export const DEFAULT_PROJECT_ID = 'webdeck.default'
+
 //+_+// v1 section 19 line 1143~1150 의 7개. WORKSPACE 계열만 PROJECT 로 치환했다
 export type DashboardRequest =
   | { type: 'GET_PROJECT_STATE'; projectId: string }
@@ -25,8 +29,23 @@ export type CaptureImageFormat = 'jpeg' | 'png'
 
 //+_+// 전송은 base64 문자열이다. L12 확정. ArrayBuffer / Blob / ImageBitmap 은 확장 메시징이 나르지 못한다
 //+_+// bytes 는 디코드된 이미지의 바이트 수다. base64 문자열 길이가 아니다
+export interface TileFrame {
+  tileId: string
+  imageBase64: string
+  format: CaptureImageFormat
+  bytes: number
+}
+
+//+_+// P4-D7. 프레임은 GET_PROJECT_STATE 응답에 얹는다. union 구성원 수를 늘리지 않는다
+//+_+// 타일당 최신 1장만이다. 워커가 보유한 것을 그대로 옮기고 이력을 만들지 않는다
 export type DashboardResponse =
-  | { ok: true; type: 'GET_PROJECT_STATE'; project: Project; runtimeStates: TileRuntimeState[] }
+  | {
+      ok: true
+      type: 'GET_PROJECT_STATE'
+      project: Project
+      runtimeStates: TileRuntimeState[]
+      frames: TileFrame[]
+    }
   | { ok: true; type: 'LIST_BROWSER_TABS'; tabs: BrowserTabInfo[] }
   | { ok: true; type: 'BIND_TILE' }
   | {
