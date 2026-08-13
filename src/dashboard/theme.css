@@ -118,6 +118,7 @@ body {
 .tile--editing {
   cursor: grab;
   touch-action: none;
+  user-select: none;
 }
 
 .tile--dragging {

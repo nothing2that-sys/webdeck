@@ -184,6 +184,12 @@ export function App(): React.JSX.Element {
     await poll()
   }, [drag, poll])
 
+  //+_+// F1. 브라우저가 포인터를 가져가면 pointerup 대신 이것이 온다. 이동 상태를 여기서 끝낸다
+  //+_+// 아무것도 요청하지 않는다. 취소된 이동은 원래 자리로 되돌아가는 것이 맞다
+  const cancelDrag = useCallback(() => {
+    setDrag(null)
+  }, [])
+
   const toggleEditing = useCallback(() => {
     setDrag(null)
     setEditing((current) => !current)
@@ -253,6 +259,7 @@ export function App(): React.JSX.Element {
             }}
             onDragMove={moveDrag}
             onDragEnd={() => void endDrag()}
+            onDragCancel={cancelDrag}
           />
         ))}
         {indicator === null ? null : (

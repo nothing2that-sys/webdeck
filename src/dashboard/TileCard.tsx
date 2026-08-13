@@ -11,6 +11,7 @@ export interface TileCardProps {
   onDragStart: (mode: DragMode, event: React.PointerEvent) => void
   onDragMove: (event: React.PointerEvent) => void
   onDragEnd: () => void
+  onDragCancel: () => void
 }
 
 //+_+// Resize Handle 위에서 시작한 것만 크기 변경이다. 그 밖에서 시작한 것은 이동이다
@@ -31,6 +32,7 @@ export function TileCard({
   onDragStart,
   onDragMove,
   onDragEnd,
+  onDragCancel,
 }: TileCardProps): React.JSX.Element {
   const className = ['tile', selected ? 'tile--selected' : '', editing ? 'tile--editing' : '', dragClassName]
     .filter((part) => part.length > 0)
@@ -45,18 +47,23 @@ export function TileCard({
       onPointerDown={
         editing
           ? (event) => {
+              //+_+// F1. 기본 동작을 막는다. 그러지 않으면 브라우저가 이미지 드래그와 텍스트 선택을 가져간다
+              //+_+// 포인터를 브라우저가 가져가면 pointerup 이 오지 않고 pointercancel 만 온다
+              event.preventDefault()
               onDragStart(dragModeFor(event), event)
             }
           : undefined
       }
       onPointerMove={editing ? onDragMove : undefined}
       onPointerUp={editing ? onDragEnd : undefined}
+      onPointerCancel={editing ? onDragCancel : undefined}
     >
       <header className="tile-head">
         {view.favIconUrl === null ? (
           <span className="tile-favicon tile-favicon--empty" />
         ) : (
-          <img className="tile-favicon" src={view.favIconUrl} alt="" />
+          //+_+// F1. img 는 draggable 기본값이 true 다. 끄지 않으면 네이티브 드래그가 먼저 발동한다
+          <img className="tile-favicon" src={view.favIconUrl} alt="" draggable={false} />
         )}
         <span className="tile-title" title={view.title}>
           {view.title}
@@ -68,7 +75,7 @@ export function TileCard({
         {view.previewDataUrl === null ? (
           <span className="tile-preview-empty">no preview</span>
         ) : (
-          <img className="tile-preview-image" src={view.previewDataUrl} alt="" />
+          <img className="tile-preview-image" src={view.previewDataUrl} alt="" draggable={false} />
         )}
       </div>
 
