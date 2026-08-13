@@ -43,12 +43,18 @@ export function defaultRefreshIntervalMs(w: number, h: number): number {
   return CAPTURE_INTERVAL_MS.spanSmall
 }
 
+//+_+// P5-D16. 사용자 지정값이 span 자동 배정을 이긴다. P5-D21 이 별도 필드로 정했다
+export function tileIntervalMs(tile: WebTile): number {
+  return tile.refreshIntervalOverrideMs ?? tile.refreshIntervalMs
+}
+
 //+_+// hidden 은 타일 값을 무시하는 별도 정책이다. v1 section 6 line 414~417
+//+_+// 사용자 지정값도 이 정책을 이기지 못한다. 지정값은 전경 주기만 정한다
 export function effectiveIntervalMs(tile: WebTile, dashboardVisible: boolean): number {
   if (!dashboardVisible) {
     return CAPTURE_INTERVAL_MS.dashboardHidden
   }
-  return tile.refreshIntervalMs
+  return tileIntervalMs(tile)
 }
 
 //+_+// 탭 단위로 판정한다. v1 section 6.1 line 451 이 동일 탭 중복 투입을 금지한다

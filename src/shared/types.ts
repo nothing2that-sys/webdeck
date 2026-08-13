@@ -25,6 +25,9 @@ export interface WebTile {
   w: number
   h: number
   refreshIntervalMs: number
+  //+_+// P5-D21. 사용자 지정 주기다. v1 section 8 에 없는 유일한 추가 필드이며 P5-D16 의 구현 형태다
+  //+_+// refreshIntervalMs 의 의미를 바꾸지 않는다. 그쪽은 span 자동 배정이 계속 소유한다
+  refreshIntervalOverrideMs?: number
   fitMode: TileFitMode
   keepAlive: boolean
 }

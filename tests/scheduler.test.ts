@@ -11,6 +11,7 @@ import {
   effectiveIntervalMs,
   nextDelayMs,
   nextDueAtFrom,
+  tileIntervalMs,
 } from '../src/shared/scheduler'
 import type { CaptureQueueItem } from '../src/shared/scheduler'
 import type { WebTile } from '../src/shared/types'
@@ -31,6 +32,33 @@ function tile(w: number, h: number, refreshIntervalMs: number): WebTile {
 }
 
 const SPANS = [1, 2, 3, 4]
+
+//+_+// P5-D16. 사용자 지정값이 span 자동 배정을 이긴다. P5-D21 이 별도 필드로 구현 형태를 정했다
+describe('P5-D16 - the per tile override wins over the span assignment', () => {
+  it('uses refreshIntervalMs when no override is set', () => {
+    expect(tileIntervalMs(tile(1, 1, 4000))).toBe(4000)
+  })
+
+  it('uses the override when it is set', () => {
+    expect(tileIntervalMs({ ...tile(1, 1, 4000), refreshIntervalOverrideMs: 9000 })).toBe(9000)
+  })
+
+  it('lets the override reach the effective interval while the dashboard is visible', () => {
+    const overridden = { ...tile(2, 2, 2000), refreshIntervalOverrideMs: 9000 }
+    expect(effectiveIntervalMs(overridden, true)).toBe(9000)
+  })
+
+  //+_+// hidden 은 타일 값을 무시하는 별도 정책이다. 사용자 지정값도 이기지 못한다. v1 section 6
+  it('still loses to the hidden dashboard policy', () => {
+    const overridden = { ...tile(2, 2, 2000), refreshIntervalOverrideMs: 9000 }
+    expect(effectiveIntervalMs(overridden, false)).toBe(CAPTURE_INTERVAL_MS.dashboardHidden)
+  })
+
+  it('does not treat the span assignment as an override', () => {
+    const resized = { ...tile(2, 2, 2000), refreshIntervalOverrideMs: 9000, refreshIntervalMs: 2500 }
+    expect(tileIntervalMs(resized)).toBe(9000)
+  })
+})
 
 describe('v1 25.1 item 9 - scheduler priority', () => {
   it('gives a visible 2x2 tile the 2000 ms interval', () => {
