@@ -22,7 +22,7 @@ import {
   resolveRuntimeStatus,
 } from './projectState'
 import type { TileCaptureSummary } from './projectState'
-import { logCaptureRound } from './roundLog'
+import { frameFingerprint, logCaptureRound } from './roundLog'
 import { TabManager } from './tabManager'
 import type { TabsBackend } from './tabManager'
 
@@ -131,13 +131,15 @@ export function createDashboardHost(
   let dashboardVisible = true
 
   const engine = createPreviewEngine(debuggerBackend, tabsBackend, clock, {
-    onCaptureSettled: (record) => {
+    onCaptureSettled: (record, frame) => {
       summaries.set(
         record.tileId,
         applyCaptureRecord(summaries.get(record.tileId) ?? EMPTY_CAPTURE_SUMMARY, record),
       )
 
       //+_+// F4. 계측 로그다. 정산이 끝난 뒤에 읽기만 한다. 캡처 경로의 판단에 참여하지 않는다
+      //+_+// N2. 해시는 여기서 만든다. write 가 roundDurationMs 와 callDurationMs 를 이미 계산한 뒤이고
+      //+_+// settle 이 nextDueAt 도 이미 정한 뒤다. 그래서 해시 비용이 측정값과 다음 만기에 섞이지 않는다
       //+_+// 로그가 던져도 정산이 달라지지 않아야 한다. 그래서 여기서 삼킨다
       try {
         const tile = project.tiles.find((item) => item.id === record.tileId) ?? null
@@ -148,8 +150,10 @@ export function createDashboardHost(
           h: tile?.h ?? null,
           intervalMs: tile === null ? null : effectiveIntervalMs(tile, dashboardVisible),
           roundDurationMs: record.roundDurationMs,
+          callDurationMs: record.callDurationMs,
           outcome: record.outcome,
           bytes: record.bytes,
+          frameHash: frame === null ? null : frameFingerprint(frame.imageBase64),
         })
       } catch {
         //+_+// 계측이 제품 동작을 바꾸지 않는다는 것이 F4 의 조건이다

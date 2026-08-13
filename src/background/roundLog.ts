@@ -13,8 +13,24 @@ export interface CaptureRoundLog {
   h: number | null
   intervalMs: number | null
   roundDurationMs: number
+  //+_+// N2. roundDurationMs 와 나란히 찍는다. 두 값이 갈리면 attach 가 회차 안에 든 것이다
+  //+_+// attach 에서 끝난 회차는 호출이 없었으므로 null 이다
+  callDurationMs: number | null
   outcome: CaptureOutcome
   bytes: number | null
+  //+_+// N2. 프레임이 그대로인지 바뀌었는지 본다. 바이트 크기로는 구분되지 않는다
+  frameHash: string | null
+}
+
+//+_+// FNV-1a 32비트다. 암호용이 아니고 충돌을 걱정하는 용도도 아니다
+//+_+// 연속한 회차가 같은 프레임을 돌려주는지만 눈으로 확인한다
+export function frameFingerprint(imageBase64: string): string {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < imageBase64.length; index += 1) {
+    hash ^= imageBase64.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
 }
 
 //+_+// 회차 간격을 눈으로 재려면 밀리초가 있어야 한다. 로컬 시각이다
@@ -39,6 +55,7 @@ export function formatCaptureRound(entry: CaptureRoundLog): string {
     `${orDash(entry.w)}x${orDash(entry.h)}`,
     `every ${orDash(entry.intervalMs)}ms`,
     `took ${String(entry.roundDurationMs)}ms`,
+    `call ${orDash(entry.callDurationMs)}ms`,
     entry.outcome,
   ].join(' ')
 
@@ -46,7 +63,8 @@ export function formatCaptureRound(entry: CaptureRoundLog): string {
   if (entry.bytes === null) {
     return head
   }
-  return `${head} ${(entry.bytes / 1024).toFixed(1)}kB`
+  const size = `${head} ${(entry.bytes / 1024).toFixed(1)}kB`
+  return entry.frameHash === null ? size : `${size} ${entry.frameHash}`
 }
 
 //+_+// console 호출은 이 한 곳이다. CLAUDE.md section 8 의 console.log 남발 금지 조항이다

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DebuggerBackend } from '../src/background/debuggerSessionManager'
 import type { Clock } from '../src/background/previewCaptureManager'
-import { ROUND_LOG_PREFIX, formatRoundClock } from '../src/background/roundLog'
+import { ROUND_LOG_PREFIX, formatRoundClock, frameFingerprint } from '../src/background/roundLog'
 import { createDashboardHost } from '../src/background/serviceWorker'
 import type { DashboardHost, FocusTab, ListTabs } from '../src/background/serviceWorker'
 import type { TabsBackend } from '../src/background/tabManager'
@@ -345,9 +345,10 @@ describe('F4 - every settled round leaves one console line', () => {
       })
 
       //+_+// 시각은 StubClock 의 0 이다. 로컬 시간대에 따라 달라지므로 같은 함수로 만든다
+      //+_+// N2. 해시는 응답 본문 AAAA 에서 나온다. 값을 손으로 적지 않고 같은 함수로 만든다
       expect(lines).toHaveLength(1)
       expect(lines[0][0]).toBe(
-        `${ROUND_LOG_PREFIX} ${formatRoundClock(0)} abcdef12 1x1 every ${String(CAPTURE_INTERVAL_MS.spanSmall)}ms took 0ms success 0.0kB`,
+        `${ROUND_LOG_PREFIX} ${formatRoundClock(0)} abcdef12 1x1 every ${String(CAPTURE_INTERVAL_MS.spanSmall)}ms took 0ms call 0ms success 0.0kB ${frameFingerprint('AAAA')}`,
       )
     } finally {
       spy.mockRestore()
