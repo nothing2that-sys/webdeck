@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { DebuggerBackend } from '../src/background/debuggerSessionManager'
 import type { Clock } from '../src/background/previewCaptureManager'
+import { ROUND_LOG_PREFIX, formatRoundClock } from '../src/background/roundLog'
 import { createDashboardHost } from '../src/background/serviceWorker'
 import type { DashboardHost, FocusTab, ListTabs } from '../src/background/serviceWorker'
 import type { TabsBackend } from '../src/background/tabManager'
@@ -324,6 +325,32 @@ describe('P4-D8 - the verbs without a Phase 4 handler fail loudly', () => {
 
     for (const response of [reload, keepAlive]) {
       expect(response).toMatchObject({ ok: false, errorCode: 'NOT_IMPLEMENTED' })
+    }
+  })
+})
+
+describe('F4 - every settled round leaves one console line', () => {
+  it('names the tile, its span, its interval, the duration and the outcome', async () => {
+    const lines: unknown[][] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      lines.push(args)
+    })
+
+    try {
+      const { host } = fixture()
+      await host.handle({ type: 'BIND_TILE', tileId: 'abcdef1234', tabId: 11 })
+      host.engine.captures.tick()
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0)
+      })
+
+      //+_+// 시각은 StubClock 의 0 이다. 로컬 시간대에 따라 달라지므로 같은 함수로 만든다
+      expect(lines).toHaveLength(1)
+      expect(lines[0][0]).toBe(
+        `${ROUND_LOG_PREFIX} ${formatRoundClock(0)} abcdef12 1x1 every ${String(CAPTURE_INTERVAL_MS.spanSmall)}ms took 0ms success 0.0kB`,
+      )
+    } finally {
+      spy.mockRestore()
     }
   })
 })

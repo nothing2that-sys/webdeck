@@ -22,6 +22,7 @@ import {
   resolveRuntimeStatus,
 } from './projectState'
 import type { TileCaptureSummary } from './projectState'
+import { logCaptureRound } from './roundLog'
 import { TabManager } from './tabManager'
 import type { TabsBackend } from './tabManager'
 
@@ -132,6 +133,24 @@ export function createDashboardHost(
         record.tileId,
         applyCaptureRecord(summaries.get(record.tileId) ?? EMPTY_CAPTURE_SUMMARY, record),
       )
+
+      //+_+// F4. 계측 로그다. 정산이 끝난 뒤에 읽기만 한다. 캡처 경로의 판단에 참여하지 않는다
+      //+_+// 로그가 던져도 정산이 달라지지 않아야 한다. 그래서 여기서 삼킨다
+      try {
+        const tile = project.tiles.find((item) => item.id === record.tileId) ?? null
+        logCaptureRound({
+          at: record.startedAt + record.roundDurationMs,
+          tileId: record.tileId,
+          w: tile?.w ?? null,
+          h: tile?.h ?? null,
+          intervalMs: tile === null ? null : effectiveIntervalMs(tile, dashboardVisible),
+          roundDurationMs: record.roundDurationMs,
+          outcome: record.outcome,
+          bytes: record.bytes,
+        })
+      } catch {
+        //+_+// 계측이 제품 동작을 바꾸지 않는다는 것이 F4 의 조건이다
+      }
     },
   })
 
