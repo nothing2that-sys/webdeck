@@ -123,6 +123,9 @@ export function createDashboardHost(
   const bindings = new Map<string, number>()
   const summaries = new Map<string, TileCaptureSummary>()
 
+  //+_+// P4-D11. 대시보드가 보내오는 표시 상태다. 요청이 오기 전에는 보이는 것으로 둔다
+  let dashboardVisible = true
+
   const engine = createPreviewEngine(debuggerBackend, tabsBackend, clock, {
     onCaptureSettled: (record) => {
       summaries.set(
@@ -131,6 +134,21 @@ export function createDashboardHost(
       )
     },
   })
+
+  //+_+// P4-D11. 값이 바뀐 회차에만 재등록한다. 매 폴링마다 재등록하면 만기가 now 로 되돌아 주기가 무너진다
+  //+_+// v1 section 6 line 414~417 의 hidden 주기는 타일 값을 무시하는 별도 정책이다
+  function applyDashboardVisible(next: boolean): void {
+    if (next === dashboardVisible) {
+      return
+    }
+    dashboardVisible = next
+    for (const tile of project.tiles) {
+      const tabId = bindings.get(tile.id)
+      if (tabId !== undefined) {
+        engine.registerTile(tile, tabId, dashboardVisible)
+      }
+    }
+  }
 
   async function projectState(): Promise<DashboardResponse> {
     const runtimeStates: TileRuntimeState[] = []
@@ -191,8 +209,7 @@ export function createDashboardHost(
     tile.refreshIntervalMs = defaultRefreshIntervalMs(rect.w, rect.h)
     const tabId = bindings.get(tileId)
     if (tabId !== undefined) {
-      //+_+// dashboardVisible 을 true 로 고정한다. bindTile 과 같은 이유다
-      engine.registerTile(tile, tabId, true)
+      engine.registerTile(tile, tabId, dashboardVisible)
     }
     return { ok: true, type: 'SET_TILE_RECT' }
   }
@@ -236,9 +253,8 @@ export function createDashboardHost(
     bindings.set(tileId, tabId)
     summaries.delete(tileId)
 
-    //+_+// dashboardVisible 을 true 로 고정한다. 표시 상태를 나르는 메시지가 없다
-    //+_+// hidden 주기 45000 은 이번 범위에서 도달하지 않는다
-    engine.registerTile(tile, tabId, true)
+    //+_+// P4-D11 이후로는 마지막 폴링이 알려 준 표시 상태를 쓴다
+    engine.registerTile(tile, tabId, dashboardVisible)
     return { ok: true, type: 'BIND_TILE' }
   }
 
@@ -254,6 +270,7 @@ export function createDashboardHost(
               `Unknown projectId ${request.projectId}`,
             )
           }
+          applyDashboardVisible(request.dashboardVisible)
           return projectState()
         case 'LIST_BROWSER_TABS':
           return { ok: true, type: 'LIST_BROWSER_TABS', tabs: await listTabs(senderWindowId) }

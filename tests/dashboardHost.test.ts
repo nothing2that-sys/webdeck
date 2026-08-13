@@ -113,8 +113,12 @@ function fixture(tabIds: number[] = [11, 12]): Fixture {
   }
 }
 
-async function projectState(host: DashboardHost) {
-  const response = await host.handle({ type: 'GET_PROJECT_STATE', projectId: DEFAULT_PROJECT_ID })
+async function projectState(host: DashboardHost, dashboardVisible = true) {
+  const response = await host.handle({
+    type: 'GET_PROJECT_STATE',
+    projectId: DEFAULT_PROJECT_ID,
+    dashboardVisible,
+  })
   if (!response.ok || response.type !== 'GET_PROJECT_STATE') {
     throw new Error(`unexpected response ${JSON.stringify(response)}`)
   }
@@ -134,6 +138,7 @@ describe('P4-D7 - GET_PROJECT_STATE carries the state and the frames together', 
     const response = await fixture().host.handle({
       type: 'GET_PROJECT_STATE',
       projectId: 'someone-else',
+      dashboardVisible: true,
     })
     expect(response).toMatchObject({ ok: false, errorCode: 'PROJECT_NOT_FOUND' })
   })
@@ -311,6 +316,67 @@ describe('P4-D8 - the verbs without a Phase 4 handler fail loudly', () => {
     for (const response of [reload, keepAlive]) {
       expect(response).toMatchObject({ ok: false, errorCode: 'NOT_IMPLEMENTED' })
     }
+  })
+})
+
+describe('P4-D11 - GET_PROJECT_STATE carries the dashboard visibility', () => {
+  //+_+// attach 와 캡처가 여러 microtask 를 지난다. 회차 수를 세는 시험은 큐가 빈 뒤에 읽어야 한다
+  async function settleRound(host: DashboardHost): Promise<number> {
+    host.engine.captures.tick()
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    return host.engine.captures.captureRecords.length
+  }
+
+  async function bindAndCapture(fixtureValue: Fixture): Promise<number> {
+    await fixtureValue.host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    return settleRound(fixtureValue.host)
+  }
+
+  it('keeps the tile interval while the dashboard stays visible', async () => {
+    const value = fixture()
+    expect(await bindAndCapture(value)).toBe(1)
+
+    value.clock.current = CAPTURE_INTERVAL_MS.spanSmall
+    expect(await settleRound(value.host)).toBe(2)
+  })
+
+  it('switches to the hidden interval on the poll that changed the value', async () => {
+    const value = fixture()
+    expect(await bindAndCapture(value)).toBe(1)
+    await projectState(value.host, false)
+
+    //+_+// 재등록이 만기를 now 로 되돌리므로 그 자리에서 한 회차가 더 돈다
+    expect(await settleRound(value.host)).toBe(2)
+
+    value.clock.current = CAPTURE_INTERVAL_MS.spanSmall
+    expect(await settleRound(value.host)).toBe(2)
+
+    value.clock.current = CAPTURE_INTERVAL_MS.dashboardHidden
+    expect(await settleRound(value.host)).toBe(3)
+  })
+
+  it('does not re-register on a poll that repeats the same value', async () => {
+    const value = fixture()
+    expect(await bindAndCapture(value)).toBe(1)
+
+    value.clock.current = 1000
+    await projectState(value.host, true)
+    expect(await settleRound(value.host)).toBe(1)
+  })
+
+  it('goes back to the tile interval when the dashboard is visible again', async () => {
+    const value = fixture()
+    expect(await bindAndCapture(value)).toBe(1)
+    await projectState(value.host, false)
+
+    value.clock.current = 1000
+    await projectState(value.host, true)
+    expect(await settleRound(value.host)).toBe(2)
+
+    value.clock.current = 1000 + CAPTURE_INTERVAL_MS.spanSmall
+    expect(await settleRound(value.host)).toBe(3)
   })
 })
 

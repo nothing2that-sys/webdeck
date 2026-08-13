@@ -6,6 +6,7 @@ import {
   POLL_INTERVAL_MS,
   bindTile,
   fetchProjectState,
+  isDashboardVisible,
   listBrowserTabs,
   newTileId,
 } from './dashboardService'
@@ -31,7 +32,7 @@ export function App(): React.JSX.Element {
 
   //+_+// P4-D7. 폴링 1개가 프로젝트 상태와 프레임을 함께 가져온다
   const poll = useCallback(async () => {
-    const response = await fetchProjectState()
+    const response = await fetchProjectState(isDashboardVisible())
     if (!response.ok) {
       setNotice(`${response.errorCode}: ${response.message}`)
       return

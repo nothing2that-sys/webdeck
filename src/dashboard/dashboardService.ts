@@ -19,8 +19,13 @@ async function send(request: DashboardRequest): Promise<DashboardResponse> {
   }
 }
 
-export async function fetchProjectState(): Promise<DashboardResponse> {
-  return send({ type: 'GET_PROJECT_STATE', projectId: DEFAULT_PROJECT_ID })
+//+_+// P4-D11. 표시 상태는 폴링에 얹어 보낸다. 이 값을 판정하는 곳은 워커다
+export function isDashboardVisible(): boolean {
+  return document.visibilityState === 'visible'
+}
+
+export async function fetchProjectState(dashboardVisible: boolean): Promise<DashboardResponse> {
+  return send({ type: 'GET_PROJECT_STATE', projectId: DEFAULT_PROJECT_ID, dashboardVisible })
 }
 
 export async function listBrowserTabs(): Promise<DashboardResponse> {

@@ -8,7 +8,8 @@ export const DEFAULT_PROJECT_ID = 'webdeck.default'
 //+_+// v1 section 19 line 1143~1150 의 7개. WORKSPACE 계열만 PROJECT 로 치환했다
 //+_+// P4-D12 의 SET_TILE_RECT 가 8번째다. v1 section 19 에 이름이 없어 새로 지은 유일한 요청이다
 export type DashboardRequest =
-  | { type: 'GET_PROJECT_STATE'; projectId: string }
+  //+_+// P4-D11. dashboardVisible 을 폴링마다 싣는다. 표시 상태 전용 요청을 만들지 않는다. J15
+  | { type: 'GET_PROJECT_STATE'; projectId: string; dashboardVisible: boolean }
   | { type: 'LIST_BROWSER_TABS' }
   | { type: 'BIND_TILE'; tileId: string; tabId: number }
   | { type: 'CAPTURE_TILE'; tileId: string }
