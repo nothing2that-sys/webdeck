@@ -96,6 +96,10 @@ export interface DashboardHost {
 
 export type ListTabs = (windowId: number | undefined) => Promise<BrowserTabInfo[]>
 
+//+_+// TabsBackend 에 넣지 않는다. harness/p3 가 그 인터페이스를 구현하고 Phase 3 산출물은 동결이다
+//+_+// ListTabs 와 같은 자리다. 캡처 엔진이 쓰지 않는 chrome 호출은 어댑터로 따로 주입한다
+export type FocusTab = (tabId: number, windowId: number) => Promise<void>
+
 function failure(
   type: DashboardRequestType,
   errorCode: string,
@@ -110,6 +114,7 @@ export function createDashboardHost(
   debuggerBackend: DebuggerBackend,
   tabsBackend: TabsBackend,
   listTabs: ListTabs,
+  focusTab: FocusTab,
   clock: Clock = systemClock,
 ): DashboardHost {
   const project = emptyProject()
@@ -154,6 +159,21 @@ export function createDashboardHost(
     }
 
     return { ok: true, type: 'GET_PROJECT_STATE', project, runtimeStates, frames }
+  }
+
+  //+_+// TASK-P4-01 S3. Focus 는 워커 경유다. v1 section 20 이 UI 의 chrome 직접 호출을 금지한다
+  //+_+// 바인딩이 없으면 활성화할 탭이 없다. 창은 탭 정보에서 읽는다. 화면이 보낸 값을 믿지 않는다
+  async function focusTile(tileId: string): Promise<DashboardResponse> {
+    const tabId = bindings.get(tileId)
+    if (tabId === undefined) {
+      return failure('FOCUS_TILE', 'TILE_NOT_BOUND', `Tile ${tileId} is not bound to a tab`)
+    }
+    const tab = await engine.tabs.info(tabId)
+    if (tab === null) {
+      return failure('FOCUS_TILE', 'TAB_NOT_FOUND', `No tab with id ${String(tabId)}`)
+    }
+    await focusTab(tabId, tab.windowId)
+    return { ok: true, type: 'FOCUS_TILE' }
   }
 
   //+_+// P4-D2. 모르는 tileId 면 첫 빈 자리에 1x1 타일을 만든다. 아는 tileId 면 탭만 다시 건다
@@ -206,9 +226,8 @@ export function createDashboardHost(
         //+_+// P4-D8. 핸들러를 만들지 않는다. 프레임은 GET_PROJECT_STATE 가 나른다. 타입은 남긴다
         case 'CAPTURE_TILE':
           return failure(request.type, 'NOT_IMPLEMENTED', 'CAPTURE_TILE has no handler (P4-D8)')
-        //+_+// TASK-P4-01 S3 다. 이번 범위가 아니다
         case 'FOCUS_TILE':
-          return failure(request.type, 'NOT_IMPLEMENTED', 'FOCUS_TILE is TASK-P4-01 S3')
+          return focusTile(request.tileId)
         //+_+// WEBDECK_PLAN section 7 이 Reopen 과 Keep Alive 를 Phase 5 에 배정했다
         case 'RELOAD_TILE':
         case 'SET_TILE_KEEP_ALIVE':
@@ -276,6 +295,15 @@ export function chromeTabsBackend(): TabsBackend {
   }
 }
 
+//+_+// v1 section 13 line 849. 탭을 활성화하고 그 탭이 든 창을 함께 올린다
+//+_+// 탭만 활성화하면 다른 창에 있는 탭은 화면에 나타나지 않는다
+function chromeFocusTab(): FocusTab {
+  return async (tabId, windowId) => {
+    await chrome.tabs.update(tabId, { active: true })
+    await chrome.windows.update(windowId, { focused: true })
+  }
+}
+
 export const DASHBOARD_PAGE = 'dashboard.html'
 
 //+_+// 요청을 보낸 창의 탭만 돌려준다. 창을 모르면 마지막으로 포커스된 창을 쓴다
@@ -309,7 +337,12 @@ export async function openDashboard(): Promise<void> {
 //+_+// 서비스 워커는 최상위에서 스스로 시작한다. 리스너 등록도 최상위여야 한다
 //+_+// chrome 이 없는 환경에서는 아무것도 하지 않는다. 그래서 단위 테스트가 이 파일을 import 할 수 있다
 if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
-  const host = createDashboardHost(chromeDebuggerBackend(), chromeTabsBackend(), chromeListTabs())
+  const host = createDashboardHost(
+    chromeDebuggerBackend(),
+    chromeTabsBackend(),
+    chromeListTabs(),
+    chromeFocusTab(),
+  )
   startPreviewDriver(host.engine)
 
   chrome.runtime.onMessage.addListener((message: DashboardRequest, sender, sendResponse) => {

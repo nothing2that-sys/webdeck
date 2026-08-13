@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { DebuggerBackend } from '../src/background/debuggerSessionManager'
 import type { Clock } from '../src/background/previewCaptureManager'
 import { createDashboardHost } from '../src/background/serviceWorker'
-import type { DashboardHost, ListTabs } from '../src/background/serviceWorker'
+import type { DashboardHost, FocusTab, ListTabs } from '../src/background/serviceWorker'
 import type { TabsBackend } from '../src/background/tabManager'
 import { DEFAULT_PROJECT_ID } from '../src/shared/messages'
 import { CAPTURE_INTERVAL_MS } from '../src/shared/scheduler'
@@ -79,6 +79,7 @@ interface Fixture {
   tabsBackend: StubTabs
   clock: StubClock
   listedWindowIds: (number | undefined)[]
+  activated: { tabId: number; windowId: number }[]
 }
 
 function fixture(tabIds: number[] = [11, 12]): Fixture {
@@ -86,6 +87,7 @@ function fixture(tabIds: number[] = [11, 12]): Fixture {
   const tabsBackend = new StubTabs()
   const clock = new StubClock()
   const listedWindowIds: (number | undefined)[] = []
+  const activated: { tabId: number; windowId: number }[] = []
 
   for (const tabId of tabIds) {
     tabsBackend.tabs.set(tabId, tabInfo(tabId, `https://example.com/${String(tabId)}`))
@@ -96,12 +98,18 @@ function fixture(tabIds: number[] = [11, 12]): Fixture {
     return Promise.resolve([...tabsBackend.tabs.values()])
   }
 
+  const focusTab: FocusTab = (tabId, windowId) => {
+    activated.push({ tabId, windowId })
+    return Promise.resolve()
+  }
+
   return {
-    host: createDashboardHost(debuggerBackend, tabsBackend, listTabs, clock),
+    host: createDashboardHost(debuggerBackend, tabsBackend, listTabs, focusTab, clock),
     debuggerBackend,
     tabsBackend,
     clock,
     listedWindowIds,
+    activated,
   }
 }
 
@@ -293,7 +301,6 @@ describe('P4-D8 - the verbs without a Phase 4 handler fail loudly', () => {
 
   it('refuses the verbs that later stages own', async () => {
     const { host } = fixture()
-    const focus = await host.handle({ type: 'FOCUS_TILE', tileId: 't1' })
     const reload = await host.handle({ type: 'RELOAD_TILE', tileId: 't1' })
     const keepAlive = await host.handle({
       type: 'SET_TILE_KEEP_ALIVE',
@@ -301,8 +308,48 @@ describe('P4-D8 - the verbs without a Phase 4 handler fail loudly', () => {
       enabled: true,
     })
 
-    for (const response of [focus, reload, keepAlive]) {
+    for (const response of [reload, keepAlive]) {
       expect(response).toMatchObject({ ok: false, errorCode: 'NOT_IMPLEMENTED' })
     }
+  })
+})
+
+describe('S3 - FOCUS_TILE activates the bound tab and its window', () => {
+  it('activates the tab the tile is bound to', async () => {
+    const { host, activated } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+
+    const response = await host.handle({ type: 'FOCUS_TILE', tileId: 't1' })
+    expect(response).toMatchObject({ ok: true, type: 'FOCUS_TILE' })
+    expect(activated).toEqual([{ tabId: 11, windowId: 1 }])
+  })
+
+  it('follows the rebind rather than the first tab', async () => {
+    const { host, activated } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 12 })
+    await host.handle({ type: 'FOCUS_TILE', tileId: 't1' })
+    expect(activated).toEqual([{ tabId: 12, windowId: 1 }])
+  })
+
+  it('refuses a tileId that is not bound', async () => {
+    const { host, activated } = fixture()
+    const response = await host.handle({ type: 'FOCUS_TILE', tileId: 'ghost' })
+    expect(response).toMatchObject({
+      ok: false,
+      type: 'FOCUS_TILE',
+      errorCode: 'TILE_NOT_BOUND',
+    })
+    expect(activated).toEqual([])
+  })
+
+  it('refuses once the bound tab is gone', async () => {
+    const { host, tabsBackend, activated } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    tabsBackend.tabs.delete(11)
+
+    const response = await host.handle({ type: 'FOCUS_TILE', tileId: 't1' })
+    expect(response).toMatchObject({ ok: false, errorCode: 'TAB_NOT_FOUND' })
+    expect(activated).toEqual([])
   })
 })
