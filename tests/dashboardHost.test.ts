@@ -49,13 +49,22 @@ class StubDebugger implements DebuggerBackend {
 
 class StubTabs implements TabsBackend {
   readonly tabs = new Map<number, BrowserTabInfo>()
+  private readonly removedListeners: ((tabId: number) => void)[] = []
 
   get(tabId: number): Promise<BrowserTabInfo | null> {
     return Promise.resolve(this.tabs.get(tabId) ?? null)
   }
 
-  onRemoved(): void {
-    return undefined
+  onRemoved(listener: (tabId: number) => void): void {
+    this.removedListeners.push(listener)
+  }
+
+  //+_+// F2. 사용자가 탭을 닫은 것을 재현한다. chrome.tabs.onRemoved 다음에 그 탭은 조회되지 않는다
+  closeTab(tabId: number): void {
+    this.tabs.delete(tabId)
+    for (const listener of this.removedListeners) {
+      listener(tabId)
+    }
   }
 
   onUpdated(): void {
@@ -316,6 +325,72 @@ describe('P4-D8 - the verbs without a Phase 4 handler fail loudly', () => {
     for (const response of [reload, keepAlive]) {
       expect(response).toMatchObject({ ok: false, errorCode: 'NOT_IMPLEMENTED' })
     }
+  })
+})
+
+describe('F2 - a tile whose tab was closed stays DETACHED', () => {
+  async function flush(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+  }
+
+  async function statusOf(host: DashboardHost, dashboardVisible: boolean): Promise<string> {
+    const state = await projectState(host, dashboardVisible)
+    return state.runtimeStates[0].status
+  }
+
+  async function boundTileWithFrame(): Promise<Fixture> {
+    const value = fixture()
+    await value.host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    value.host.engine.captures.tick()
+    await flush()
+    return value
+  }
+
+  it('reports DETACHED right after the user closed the tab', async () => {
+    const value = await boundTileWithFrame()
+    value.tabsBackend.closeTab(11)
+    await flush()
+
+    expect(await statusOf(value.host, true)).toBe('DETACHED')
+  })
+
+  it('stays DETACHED across a visibility flip and does not flash LIVE', async () => {
+    const value = await boundTileWithFrame()
+    value.tabsBackend.closeTab(11)
+    await flush()
+
+    expect(await statusOf(value.host, false)).toBe('DETACHED')
+    expect(await statusOf(value.host, true)).toBe('DETACHED')
+  })
+
+  it('does not re-attach the debugger to a tab that is gone', async () => {
+    const value = await boundTileWithFrame()
+    const attachedBefore = value.debuggerBackend.attached.length
+    value.tabsBackend.closeTab(11)
+    await flush()
+
+    await projectState(value.host, false)
+    await projectState(value.host, true)
+    value.host.engine.captures.tick()
+    await flush()
+
+    expect(value.debuggerBackend.attached).toHaveLength(attachedBefore)
+  })
+
+  it('stays DETACHED when a resize re-registers the tile', async () => {
+    const value = await boundTileWithFrame()
+    value.tabsBackend.closeTab(11)
+    await flush()
+
+    const response = await value.host.handle({
+      type: 'SET_TILE_RECT',
+      tileId: 't1',
+      rect: { x: 0, y: 0, w: 2, h: 2 },
+    })
+    expect(response).toMatchObject({ ok: true })
+    expect(await statusOf(value.host, true)).toBe('DETACHED')
   })
 })
 

@@ -135,18 +135,29 @@ export function createDashboardHost(
     },
   })
 
+  //+_+// F2. 재등록은 TileState 를 새로 만들어 fault 와 신선도 기준을 초기화한다
+  //+_+// 탭이 사라진 타일을 다시 등록하면 DETACHED 가 LIVE 로 뒤집히고 죽은 탭에 다시 attach 한다
+  //+_+// 탭 존재 여부의 권위는 워커의 tabs 층이다. 등록 전에 그 층에 물어본다
+  async function reregister(tile: WebTile): Promise<void> {
+    const tabId = bindings.get(tile.id)
+    if (tabId === undefined) {
+      return
+    }
+    if (!(await engine.tabs.exists(tabId))) {
+      return
+    }
+    engine.registerTile(tile, tabId, dashboardVisible)
+  }
+
   //+_+// P4-D11. 값이 바뀐 회차에만 재등록한다. 매 폴링마다 재등록하면 만기가 now 로 되돌아 주기가 무너진다
   //+_+// v1 section 6 line 414~417 의 hidden 주기는 타일 값을 무시하는 별도 정책이다
-  function applyDashboardVisible(next: boolean): void {
+  async function applyDashboardVisible(next: boolean): Promise<void> {
     if (next === dashboardVisible) {
       return
     }
     dashboardVisible = next
     for (const tile of project.tiles) {
-      const tabId = bindings.get(tile.id)
-      if (tabId !== undefined) {
-        engine.registerTile(tile, tabId, dashboardVisible)
-      }
+      await reregister(tile)
     }
   }
 
@@ -183,7 +194,7 @@ export function createDashboardHost(
 
   //+_+// P4-D12. 화면이 이미 판정했더라도 워커가 다시 판정한다. 같은 isPlacementValid 를 쓴다
   //+_+// 레이아웃은 워커 메모리에만 있다. 영구화는 WEBDECK_PLAN section 7 의 Phase 5 다
-  function setTileRect(tileId: string, rect: GridRect): DashboardResponse {
+  async function setTileRect(tileId: string, rect: GridRect): Promise<DashboardResponse> {
     const tile = project.tiles.find((item) => item.id === tileId)
     if (tile === undefined) {
       return failure('SET_TILE_RECT', 'TILE_NOT_FOUND', `Unknown tileId ${tileId}`)
@@ -207,10 +218,7 @@ export function createDashboardHost(
     }
 
     tile.refreshIntervalMs = defaultRefreshIntervalMs(rect.w, rect.h)
-    const tabId = bindings.get(tileId)
-    if (tabId !== undefined) {
-      engine.registerTile(tile, tabId, dashboardVisible)
-    }
+    await reregister(tile)
     return { ok: true, type: 'SET_TILE_RECT' }
   }
 
@@ -270,7 +278,7 @@ export function createDashboardHost(
               `Unknown projectId ${request.projectId}`,
             )
           }
-          applyDashboardVisible(request.dashboardVisible)
+          await applyDashboardVisible(request.dashboardVisible)
           return projectState()
         case 'LIST_BROWSER_TABS':
           return { ok: true, type: 'LIST_BROWSER_TABS', tabs: await listTabs(senderWindowId) }
