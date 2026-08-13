@@ -7,6 +7,8 @@ import type { DashboardHost, FocusTab, ListTabs } from '../src/background/servic
 import type { TabsBackend } from '../src/background/tabManager'
 import { DEFAULT_PROJECT_ID } from '../src/shared/messages'
 import { CAPTURE_INTERVAL_MS } from '../src/shared/scheduler'
+import { STORAGE_KEY } from '../src/shared/storage'
+import type { KeyValueBackend } from '../src/shared/storage'
 import type { BrowserTabInfo } from '../src/shared/types'
 
 class StubClock implements Clock {
@@ -83,16 +85,38 @@ function tabInfo(tabId: number, url: string): BrowserTabInfo {
   }
 }
 
+//+_+// S1. 워커의 영구화 배선을 시험한다. chrome.storage 어댑터 자체는 Chrome 실측 항목이다
+class StubStorage implements KeyValueBackend {
+  readonly store = new Map<string, unknown>()
+  writes = 0
+
+  get(key: string): Promise<unknown> {
+    return Promise.resolve(this.store.has(key) ? this.store.get(key) : undefined)
+  }
+
+  set(key: string, value: unknown): Promise<void> {
+    this.writes += 1
+    this.store.set(key, value)
+    return Promise.resolve()
+  }
+
+  remove(key: string): Promise<void> {
+    this.store.delete(key)
+    return Promise.resolve()
+  }
+}
+
 interface Fixture {
   host: DashboardHost
   debuggerBackend: StubDebugger
   tabsBackend: StubTabs
   clock: StubClock
+  storage: StubStorage
   listedWindowIds: (number | undefined)[]
   activated: { tabId: number; windowId: number }[]
 }
 
-function fixture(tabIds: number[] = [11, 12]): Fixture {
+function fixture(tabIds: number[] = [11, 12], storage = new StubStorage()): Fixture {
   const debuggerBackend = new StubDebugger()
   const tabsBackend = new StubTabs()
   const clock = new StubClock()
@@ -114,10 +138,11 @@ function fixture(tabIds: number[] = [11, 12]): Fixture {
   }
 
   return {
-    host: createDashboardHost(debuggerBackend, tabsBackend, listTabs, focusTab, clock),
+    host: createDashboardHost(debuggerBackend, tabsBackend, listTabs, focusTab, storage, clock),
     debuggerBackend,
     tabsBackend,
     clock,
+    storage,
     listedWindowIds,
     activated,
   }
@@ -609,5 +634,231 @@ describe('S3 - FOCUS_TILE activates the bound tab and its window', () => {
     const response = await host.handle({ type: 'FOCUS_TILE', tileId: 't1' })
     expect(response).toMatchObject({ ok: false, errorCode: 'TAB_NOT_FOUND' })
     expect(activated).toEqual([])
+  })
+})
+
+//+_+// P5-D23. v1 section 19 에 대응 항목이 없는 5개다. 명명 규칙만 따랐다
+describe('P5-D23 - project CRUD and switching', () => {
+  async function listProjects(host: DashboardHost) {
+    const response = await host.handle({ type: 'LIST_PROJECTS' })
+    if (!response.ok || response.type !== 'LIST_PROJECTS') {
+      throw new Error(`unexpected response ${JSON.stringify(response)}`)
+    }
+    return response
+  }
+
+  async function addProject(host: DashboardHost, name: string): Promise<string> {
+    const response = await host.handle({ type: 'CREATE_PROJECT', name })
+    if (!response.ok || response.type !== 'CREATE_PROJECT') {
+      throw new Error(`unexpected response ${JSON.stringify(response)}`)
+    }
+    return response.project.id
+  }
+
+  it('starts with the default project active', async () => {
+    const listed = await listProjects(fixture().host)
+    expect(listed.activeProjectId).toBe(DEFAULT_PROJECT_ID)
+    expect(listed.projects.map((project) => project.id)).toEqual([DEFAULT_PROJECT_ID])
+  })
+
+  //+_+// 생성은 생성만 한다. 전환은 SET_ACTIVE_PROJECT 다. J82
+  it('creates a project without switching to it', async () => {
+    const { host } = fixture()
+    const created = await addProject(host, 'Monitoring')
+
+    const listed = await listProjects(host)
+    expect(listed.projects.map((project) => project.name)).toEqual(['WebDeck', 'Monitoring'])
+    expect(created).not.toBe(DEFAULT_PROJECT_ID)
+    expect(listed.activeProjectId).toBe(DEFAULT_PROJECT_ID)
+  })
+
+  it('renames a project', async () => {
+    const { host } = fixture()
+    const response = await host.handle({
+      type: 'RENAME_PROJECT',
+      projectId: DEFAULT_PROJECT_ID,
+      name: 'Renamed',
+    })
+
+    expect(response).toMatchObject({ ok: true, type: 'RENAME_PROJECT' })
+    expect((await listProjects(host)).projects[0].name).toBe('Renamed')
+  })
+
+  it('refuses to rename a project it does not have', async () => {
+    const response = await fixture().host.handle({
+      type: 'RENAME_PROJECT',
+      projectId: 'ghost',
+      name: 'Renamed',
+    })
+    expect(response).toMatchObject({ ok: false, errorCode: 'PROJECT_NOT_FOUND' })
+  })
+
+  it('switches the active project', async () => {
+    const { host } = fixture()
+    const created = await addProject(host, 'Monitoring')
+
+    const response = await host.handle({ type: 'SET_ACTIVE_PROJECT', projectId: created })
+    expect(response).toMatchObject({ ok: true, type: 'SET_ACTIVE_PROJECT' })
+    expect((await listProjects(host)).activeProjectId).toBe(created)
+  })
+
+  it('refuses to switch to a project it does not have', async () => {
+    const response = await fixture().host.handle({
+      type: 'SET_ACTIVE_PROJECT',
+      projectId: 'ghost',
+    })
+    expect(response).toMatchObject({ ok: false, errorCode: 'PROJECT_NOT_FOUND' })
+  })
+
+  it('lets GET_PROJECT_STATE follow the project that is active', async () => {
+    const { host } = fixture()
+    const created = await addProject(host, 'Monitoring')
+    await host.handle({ type: 'SET_ACTIVE_PROJECT', projectId: created })
+
+    const stale = await host.handle({
+      type: 'GET_PROJECT_STATE',
+      projectId: DEFAULT_PROJECT_ID,
+      dashboardVisible: true,
+    })
+    expect(stale).toMatchObject({ ok: false, errorCode: 'PROJECT_NOT_FOUND' })
+
+    const fresh = await host.handle({
+      type: 'GET_PROJECT_STATE',
+      projectId: created,
+      dashboardVisible: true,
+    })
+    expect(fresh).toMatchObject({ ok: true, type: 'GET_PROJECT_STATE' })
+  })
+
+  it('deletes a project', async () => {
+    const { host } = fixture()
+    const created = await addProject(host, 'Monitoring')
+
+    const response = await host.handle({ type: 'DELETE_PROJECT', projectId: created })
+    expect(response).toMatchObject({ ok: true, type: 'DELETE_PROJECT' })
+    expect((await listProjects(host)).projects.map((project) => project.id)).toEqual([
+      DEFAULT_PROJECT_ID,
+    ])
+  })
+
+  //+_+// P5-D23. DELETE 를 거부하지 않는다. 목록이 비면 기본 프로젝트가 다시 선다. P5-D8
+  it('stands a fresh default project up after the last one is deleted', async () => {
+    const { host } = fixture()
+    const response = await host.handle({ type: 'DELETE_PROJECT', projectId: DEFAULT_PROJECT_ID })
+
+    expect(response).toMatchObject({ ok: true })
+    const listed = await listProjects(host)
+    expect(listed.projects.map((project) => project.id)).toEqual([DEFAULT_PROJECT_ID])
+    expect(listed.projects[0].tiles).toEqual([])
+    expect(listed.activeProjectId).toBe(DEFAULT_PROJECT_ID)
+  })
+
+  it('moves the active project when the active one was deleted', async () => {
+    const { host } = fixture()
+    const created = await addProject(host, 'Monitoring')
+    await host.handle({ type: 'DELETE_PROJECT', projectId: DEFAULT_PROJECT_ID })
+
+    expect((await listProjects(host)).activeProjectId).toBe(created)
+  })
+
+  it('refuses to delete a project it does not have', async () => {
+    const response = await fixture().host.handle({ type: 'DELETE_PROJECT', projectId: 'ghost' })
+    expect(response).toMatchObject({ ok: false, errorCode: 'PROJECT_NOT_FOUND' })
+  })
+})
+
+describe('S1 - the worker persists the project list', () => {
+  it('writes the state when a project is created', async () => {
+    const { host, storage } = fixture()
+    await host.handle({ type: 'CREATE_PROJECT', name: 'Monitoring' })
+
+    expect(storage.writes).toBeGreaterThan(0)
+    expect(storage.store.get(STORAGE_KEY)).toMatchObject({ schemaVersion: 2 })
+  })
+
+  it('restores the stored projects on load', async () => {
+    const storage = new StubStorage()
+    const seeded = fixture([11, 12], storage)
+    const created = await seeded.host.handle({ type: 'CREATE_PROJECT', name: 'Monitoring' })
+    if (!created.ok || created.type !== 'CREATE_PROJECT') {
+      throw new Error('create failed')
+    }
+    await seeded.host.handle({ type: 'SET_ACTIVE_PROJECT', projectId: created.project.id })
+
+    const restored = fixture([11, 12], storage)
+    await restored.host.load()
+
+    const response = await restored.host.handle({ type: 'LIST_PROJECTS' })
+    expect(response).toMatchObject({ ok: true, activeProjectId: created.project.id })
+  })
+
+  //+_+// P5-D8. 저장된 적이 없는 상태에서도 기본 프로젝트 1개가 선다
+  it('stands the default project up when storage is empty', async () => {
+    const { host } = fixture()
+    await host.load()
+
+    const response = await host.handle({ type: 'LIST_PROJECTS' })
+    expect(response).toMatchObject({ ok: true, activeProjectId: DEFAULT_PROJECT_ID })
+  })
+
+  //+_+// P5-D17. 거부된 저장값을 조용히 덮어쓰지 않는다. 기본 프로젝트로 서고 사실을 남긴다
+  it('falls back to the default project when the stored envelope is rejected', async () => {
+    const storage = new StubStorage()
+    storage.store.set(STORAGE_KEY, { schemaVersion: 1, projects: [] })
+
+    const { host } = fixture([11, 12], storage)
+    const result = await host.load()
+
+    expect(result).toMatchObject({ ok: false, errorCode: 'SCHEMA_VERSION_MISMATCH' })
+    const response = await host.handle({ type: 'LIST_PROJECTS' })
+    expect(response).toMatchObject({ ok: true, activeProjectId: DEFAULT_PROJECT_ID })
+  })
+
+  //+_+// S4 의 항목이다. 저장 함수는 만들되 SET_TILE_RECT 에서 부르지 않는다
+  it('does not persist a layout change yet', async () => {
+    const { host, storage } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    const before = storage.writes
+
+    await host.handle({ type: 'SET_TILE_RECT', tileId: 't1', rect: { x: 2, y: 2, w: 1, h: 1 } })
+    expect(storage.writes).toBe(before)
+  })
+})
+
+describe('S1 - switching a project stops capturing the one that left', () => {
+  async function switchTo(host: DashboardHost, name: string): Promise<string> {
+    const created = await host.handle({ type: 'CREATE_PROJECT', name })
+    if (!created.ok || created.type !== 'CREATE_PROJECT') {
+      throw new Error('create failed')
+    }
+    await host.handle({ type: 'SET_ACTIVE_PROJECT', projectId: created.project.id })
+    return created.project.id
+  }
+
+  it('unregisters the tiles of the outgoing project', async () => {
+    const { host } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    expect(host.engine.captures.statusOf('t1')).not.toBeNull()
+
+    await switchTo(host, 'Monitoring')
+    expect(host.engine.captures.statusOf('t1')).toBeNull()
+  })
+
+  it('registers the tiles of the incoming project again', async () => {
+    const { host } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+
+    await switchTo(host, 'Monitoring')
+    await host.handle({ type: 'SET_ACTIVE_PROJECT', projectId: DEFAULT_PROJECT_ID })
+
+    expect(host.engine.captures.statusOf('t1')).not.toBeNull()
+  })
+
+  it('unregisters the tiles of a project that was deleted', async () => {
+    const { host } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+
+    await host.handle({ type: 'DELETE_PROJECT', projectId: DEFAULT_PROJECT_ID })
+    expect(host.engine.captures.statusOf('t1')).toBeNull()
   })
 })

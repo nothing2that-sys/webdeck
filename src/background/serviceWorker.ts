@@ -1,6 +1,6 @@
 import { isPlacementValid } from '../shared/grid'
 import type { GridRect } from '../shared/grid'
-import { DEFAULT_PROJECT_ID, assertNever } from '../shared/messages'
+import { assertNever } from '../shared/messages'
 import type {
   DashboardFailure,
   DashboardRequest,
@@ -9,6 +9,8 @@ import type {
   TileFrame,
 } from '../shared/messages'
 import { defaultRefreshIntervalMs, effectiveIntervalMs } from '../shared/scheduler'
+import { loadState, saveState } from '../shared/storage'
+import type { KeyValueBackend, LoadResult } from '../shared/storage'
 import type { BrowserTabInfo, Project, TileRuntimeState, WebTile } from '../shared/types'
 import { DebuggerSessionManager, errorMessage } from './debuggerSessionManager'
 import type { DebuggerBackend } from './debuggerSessionManager'
@@ -18,7 +20,9 @@ import {
   EMPTY_CAPTURE_SUMMARY,
   applyCaptureRecord,
   buildRuntimeState,
+  createProject,
   newTile,
+  resolveProjects,
   resolveRuntimeStatus,
 } from './projectState'
 import type { TileCaptureSummary } from './projectState'
@@ -81,23 +85,12 @@ export function startPreviewDriver(engine: PreviewEngine, intervalMs = DRIVER_TI
   }
 }
 
-//+_+// Phase 4 의 프로젝트는 워커 메모리에 1개다. 저장은 WEBDECK_PLAN section 7 이 Phase 5 다
-//+_+// 워커가 종료되면 타일이 사라진다. 영구화가 없으므로 복구할 곳이 없다
-export function emptyProject(): Project {
-  return {
-    id: DEFAULT_PROJECT_ID,
-    name: 'WebDeck',
-    gridColumns: 4,
-    gridRows: 4,
-    keepManagedTabsAlive: false,
-    tiles: [],
-  }
-}
-
 export interface DashboardHost {
   engine: PreviewEngine
   //+_+// senderWindowId 는 요청을 보낸 Dashboard 탭의 창이다. 없으면 마지막으로 포커스된 창을 쓴다
   handle(request: DashboardRequest, senderWindowId?: number): Promise<DashboardResponse>
+  //+_+// S1. 워커 기동 시 1회다. 실패해도 던지지 않고 결과를 그대로 돌려준다
+  load(): Promise<LoadResult>
 }
 
 export type ListTabs = (windowId: number | undefined) => Promise<BrowserTabInfo[]>
@@ -121,11 +114,24 @@ export function createDashboardHost(
   tabsBackend: TabsBackend,
   listTabs: ListTabs,
   focusTab: FocusTab,
+  storage: KeyValueBackend,
   clock: Clock = systemClock,
 ): DashboardHost {
-  const project = emptyProject()
+  //+_+// P5-D8. 저장값을 읽기 전에도 활성 프로젝트가 하나 있다. load 가 있으면 그것으로 갈아 끼운다
+  const seeded = resolveProjects([], '')
+  let projects = seeded.projects
+  let activeProjectId = seeded.activeProjectId
   const bindings = new Map<string, number>()
   const summaries = new Map<string, TileCaptureSummary>()
+
+  //+_+// resolveProjects 가 활성 없음 상태를 만들지 않는다. 도달하면 배선이 깨진 것이다
+  function activeProject(): Project {
+    const found = projects.find((item) => item.id === activeProjectId)
+    if (found === undefined) {
+      throw new Error(`active project ${activeProjectId} is missing`)
+    }
+    return found
+  }
 
   //+_+// P4-D11. 대시보드가 보내오는 표시 상태다. 요청이 오기 전에는 보이는 것으로 둔다
   let dashboardVisible = true
@@ -142,7 +148,7 @@ export function createDashboardHost(
       //+_+// settle 이 nextDueAt 도 이미 정한 뒤다. 그래서 해시 비용이 측정값과 다음 만기에 섞이지 않는다
       //+_+// 로그가 던져도 정산이 달라지지 않아야 한다. 그래서 여기서 삼킨다
       try {
-        const tile = project.tiles.find((item) => item.id === record.tileId) ?? null
+        const tile = activeProject().tiles.find((item) => item.id === record.tileId) ?? null
         logCaptureRound({
           at: record.startedAt + record.roundDurationMs,
           tileId: record.tileId,
@@ -182,12 +188,41 @@ export function createDashboardHost(
       return
     }
     dashboardVisible = next
-    for (const tile of project.tiles) {
+    for (const tile of activeProject().tiles) {
       await reregister(tile)
     }
   }
 
+  async function persist(): Promise<void> {
+    await saveState(storage, projects, activeProjectId)
+  }
+
+  //+_+// 활성이 아닌 프로젝트의 타일은 캡처하지 않는다. 활성이 실제로 바뀐 회차에만 등록을 갈아 끼운다
+  //+_+// 이름 변경과 다른 프로젝트 삭제는 활성 객체를 그대로 두므로 만기가 흔들리지 않는다
+  async function applyProjects(nextProjects: Project[], nextActiveId: string): Promise<void> {
+    const resolved = resolveProjects(nextProjects, nextActiveId)
+    const previous = projects.find((item) => item.id === activeProjectId) ?? null
+    const next = resolved.projects.find((item) => item.id === resolved.activeProjectId) ?? null
+
+    projects = resolved.projects
+    activeProjectId = resolved.activeProjectId
+    if (previous === next) {
+      return
+    }
+    if (previous !== null) {
+      for (const tile of previous.tiles) {
+        await engine.captures.unregister(tile.id)
+      }
+    }
+    if (next !== null) {
+      for (const tile of next.tiles) {
+        await reregister(tile)
+      }
+    }
+  }
+
   async function projectState(): Promise<DashboardResponse> {
+    const project = activeProject()
     const runtimeStates: TileRuntimeState[] = []
     const frames: TileFrame[] = []
 
@@ -221,6 +256,7 @@ export function createDashboardHost(
   //+_+// P4-D12. 화면이 이미 판정했더라도 워커가 다시 판정한다. 같은 isPlacementValid 를 쓴다
   //+_+// 레이아웃은 워커 메모리에만 있다. 영구화는 WEBDECK_PLAN section 7 의 Phase 5 다
   async function setTileRect(tileId: string, rect: GridRect): Promise<DashboardResponse> {
+    const project = activeProject()
     const tile = project.tiles.find((item) => item.id === tileId)
     if (tile === undefined) {
       return failure('SET_TILE_RECT', 'TILE_NOT_FOUND', `Unknown tileId ${tileId}`)
@@ -266,6 +302,7 @@ export function createDashboardHost(
   //+_+// P4-D2. 모르는 tileId 면 첫 빈 자리에 1x1 타일을 만든다. 아는 tileId 면 탭만 다시 건다
   //+_+// 새 메시지 이름을 만들지 않기 위해 v1 section 19 의 BIND_TILE 하나로 둘을 처리한다
   async function bindTile(tileId: string, tabId: number): Promise<DashboardResponse> {
+    const project = activeProject()
     const tab = await engine.tabs.info(tabId)
     if (tab === null) {
       return failure('BIND_TILE', 'TAB_NOT_FOUND', `No tab with id ${String(tabId)}`)
@@ -292,12 +329,67 @@ export function createDashboardHost(
     return { ok: true, type: 'BIND_TILE' }
   }
 
+  //+_+// P5-D23. 생성은 생성만 한다. 전환은 SET_ACTIVE_PROJECT 가 따로 맡는다. J82
+  async function createNewProject(name: string): Promise<DashboardResponse> {
+    const created = createProject(crypto.randomUUID(), name)
+    await applyProjects([...projects, created], activeProjectId)
+    await persist()
+    return { ok: true, type: 'CREATE_PROJECT', project: created }
+  }
+
+  async function renameProject(projectId: string, name: string): Promise<DashboardResponse> {
+    const target = projects.find((item) => item.id === projectId)
+    if (target === undefined) {
+      return failure('RENAME_PROJECT', 'PROJECT_NOT_FOUND', `Unknown projectId ${projectId}`)
+    }
+    target.name = name
+    await persist()
+    return { ok: true, type: 'RENAME_PROJECT' }
+  }
+
+  //+_+// P5-D23. 마지막 하나여도 거부하지 않는다. 목록이 비면 resolveProjects 가 기본을 다시 세운다
+  //+_+// 지워지는 프로젝트의 타일은 활성 여부와 무관하게 캡처를 멈춘다
+  async function deleteProject(projectId: string): Promise<DashboardResponse> {
+    const target = projects.find((item) => item.id === projectId)
+    if (target === undefined) {
+      return failure('DELETE_PROJECT', 'PROJECT_NOT_FOUND', `Unknown projectId ${projectId}`)
+    }
+    for (const tile of target.tiles) {
+      await engine.captures.unregister(tile.id)
+    }
+    await applyProjects(
+      projects.filter((item) => item.id !== projectId),
+      activeProjectId,
+    )
+    await persist()
+    return { ok: true, type: 'DELETE_PROJECT' }
+  }
+
+  async function setActiveProject(projectId: string): Promise<DashboardResponse> {
+    if (!projects.some((item) => item.id === projectId)) {
+      return failure('SET_ACTIVE_PROJECT', 'PROJECT_NOT_FOUND', `Unknown projectId ${projectId}`)
+    }
+    await applyProjects(projects, projectId)
+    await persist()
+    return { ok: true, type: 'SET_ACTIVE_PROJECT' }
+  }
+
+  //+_+// 거부된 저장값을 덮어쓰지 않는다. 씨앗 상태를 그대로 두고 실패를 부르는 쪽에 돌려준다
+  async function load(): Promise<LoadResult> {
+    const result = await loadState(storage)
+    if (result.ok) {
+      await applyProjects(result.projects, result.activeProjectId)
+    }
+    return result
+  }
+
   return {
     engine,
+    load,
     handle: async (request, senderWindowId) => {
       switch (request.type) {
         case 'GET_PROJECT_STATE':
-          if (request.projectId !== project.id) {
+          if (request.projectId !== activeProjectId) {
             return failure(
               request.type,
               'PROJECT_NOT_FOUND',
@@ -317,10 +409,20 @@ export function createDashboardHost(
           return focusTile(request.tileId)
         case 'SET_TILE_RECT':
           return setTileRect(request.tileId, request.rect)
-        //+_+// WEBDECK_PLAN section 7 이 Reopen 과 Keep Alive 를 Phase 5 에 배정했다
+        case 'LIST_PROJECTS':
+          return { ok: true, type: 'LIST_PROJECTS', projects, activeProjectId }
+        case 'CREATE_PROJECT':
+          return createNewProject(request.name)
+        case 'RENAME_PROJECT':
+          return renameProject(request.projectId, request.name)
+        case 'DELETE_PROJECT':
+          return deleteProject(request.projectId)
+        case 'SET_ACTIVE_PROJECT':
+          return setActiveProject(request.projectId)
+        //+_+// P5-D5 가 Reload Page 를, P5-D3 이 Keep Alive 를 Phase 6 으로 두었다
         case 'RELOAD_TILE':
         case 'SET_TILE_KEEP_ALIVE':
-          return failure(request.type, 'NOT_IMPLEMENTED', `${request.type} is Phase 5`)
+          return failure(request.type, 'NOT_IMPLEMENTED', `${request.type} is Phase 6`)
         default:
           return assertNever(request)
       }
@@ -339,6 +441,20 @@ export function chromeDebuggerBackend(): DebuggerBackend {
           listener(source.tabId, reason)
         }
       })
+    },
+  }
+}
+
+//+_+// J78. local 이다. session 은 브라우저를 닫으면 사라져 v1 section 10 의 재시작 복원을 못 만족한다
+//+_+// sync 를 쓰지 않는다. 프로젝트 목록은 기기별 창 배치이고 v1 어디에도 동기화 요구가 없다
+export function chromeStorageBackend(): KeyValueBackend {
+  return {
+    get: async (key) => (await chrome.storage.local.get(key))[key],
+    set: async (key, value) => {
+      await chrome.storage.local.set({ [key]: value })
+    },
+    remove: async (key) => {
+      await chrome.storage.local.remove(key)
     },
   }
 }
@@ -434,8 +550,21 @@ if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
     chromeTabsBackend(),
     chromeListTabs(),
     chromeFocusTab(),
+    chromeStorageBackend(),
   )
   startPreviewDriver(host.engine)
+
+  //+_+// S1. 기동 시 1회다. 실패해도 씨앗 상태로 계속 돈다. 조용히 삼키지 않고 콘솔에 남긴다
+  host.load().then(
+    (result) => {
+      if (!result.ok) {
+        console.error('[webdeck] load failed', result.errorCode, result.message)
+      }
+    },
+    (error: unknown) => {
+      console.error('[webdeck] load threw', errorMessage(error))
+    },
+  )
 
   chrome.runtime.onMessage.addListener((message: DashboardRequest, sender, sendResponse) => {
     host.handle(message, sender.tab?.windowId).then(sendResponse, (error: unknown) => {

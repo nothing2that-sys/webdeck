@@ -1,7 +1,40 @@
 import { findFirstAvailablePosition } from '../shared/grid'
+import { DEFAULT_PROJECT_ID, DEFAULT_PROJECT_NAME } from '../shared/messages'
 import { defaultRefreshIntervalMs } from '../shared/scheduler'
-import type { BrowserTabInfo, TileRuntimeState, TileStatus, WebTile } from '../shared/types'
+import type { BrowserTabInfo, Project, TileRuntimeState, TileStatus, WebTile } from '../shared/types'
 import type { CaptureRecord } from './previewCaptureManager'
+
+//+_+// 빈 4x4 프로젝트 1개다. v1 section 8 의 Workspace 모델이며 이름만 Project 다. P5-D1
+//+_+// P5-D3. keepManagedTabsAlive 는 기존 필드이므로 기본값으로만 둔다. 동작을 만들지 않는다
+export function createProject(id: string, name: string): Project {
+  return {
+    id,
+    name,
+    gridColumns: 4,
+    gridRows: 4,
+    keepManagedTabsAlive: false,
+    tiles: [],
+  }
+}
+
+//+_+// P5-D8. 목록이 비면 기본 프로젝트 1개를 만든다. 저장 키 부재와 빈 목록을 구별하지 않는다
+//+_+// 활성 id 가 어느 프로젝트도 가리키지 않으면 첫 프로젝트로 되돌린다. 활성 없음 상태를 만들지 않는다
+export function resolveProjects(
+  projects: Project[],
+  activeProjectId: string,
+): { projects: Project[]; activeProjectId: string } {
+  const first = projects[0]
+  if (first === undefined) {
+    return {
+      projects: [createProject(DEFAULT_PROJECT_ID, DEFAULT_PROJECT_NAME)],
+      activeProjectId: DEFAULT_PROJECT_ID,
+    }
+  }
+  if (projects.some((project) => project.id === activeProjectId)) {
+    return { projects, activeProjectId }
+  }
+  return { projects, activeProjectId: first.id }
+}
 
 //+_+// P4-D2 의 개발 전용 바인딩이 만드는 타일이다. span 은 1x1 고정이다
 //+_+// 사용자 지정 span 은 S4 의 Resize 가 만든다. 생성 시점에 고르게 하지 않는다

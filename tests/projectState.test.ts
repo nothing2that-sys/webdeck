@@ -5,11 +5,14 @@ import {
   EMPTY_CAPTURE_SUMMARY,
   applyCaptureRecord,
   buildRuntimeState,
+  createProject,
   newTile,
+  resolveProjects,
   resolveRuntimeStatus,
 } from '../src/background/projectState'
+import { DEFAULT_PROJECT_ID } from '../src/shared/messages'
 import { CAPTURE_INTERVAL_MS } from '../src/shared/scheduler'
-import type { BrowserTabInfo, WebTile } from '../src/shared/types'
+import type { BrowserTabInfo, Project, WebTile } from '../src/shared/types'
 
 function tile(id: string, x: number, y: number, w = 1, h = 1): WebTile {
   return {
@@ -221,5 +224,73 @@ describe('P4 runtime state - optional fields stay absent when unknown', () => {
     expect(Object.hasOwn(state, 'lastCaptureAt')).toBe(false)
     expect(Object.hasOwn(state, 'lastRoundDurationMs')).toBe(false)
     expect(state.consecutiveCaptureFailures).toBe(0)
+  })
+})
+
+//+_+// P5-D8. 저장 키 부재와 빈 목록을 구별하는 수단을 만들지 않는다. 비면 기본 프로젝트가 선다
+//+_+// P5-D22. 기본 프로젝트의 id 는 DEFAULT_PROJECT_ID 다
+describe('P5-D8 - resolveProjects always yields one active project', () => {
+  function named(id: string): Project {
+    return createProject(id, `project ${id}`)
+  }
+
+  it('creates the default project when the list is empty', () => {
+    const resolved = resolveProjects([], '')
+
+    expect(resolved.projects).toHaveLength(1)
+    expect(resolved.projects[0]).toMatchObject({
+      id: DEFAULT_PROJECT_ID,
+      gridColumns: 4,
+      gridRows: 4,
+      tiles: [],
+    })
+    expect(resolved.activeProjectId).toBe(DEFAULT_PROJECT_ID)
+  })
+
+  it('creates the default project again after the last one was deleted', () => {
+    const resolved = resolveProjects([], 'p9')
+    expect(resolved.activeProjectId).toBe(DEFAULT_PROJECT_ID)
+    expect(resolved.projects.map((project) => project.id)).toEqual([DEFAULT_PROJECT_ID])
+  })
+
+  it('keeps the stored list and the stored active id when they agree', () => {
+    const projects = [named('p1'), named('p2')]
+    const resolved = resolveProjects(projects, 'p2')
+
+    expect(resolved.projects).toBe(projects)
+    expect(resolved.activeProjectId).toBe('p2')
+  })
+
+  it('falls back to the first project when the active id names none of them', () => {
+    const resolved = resolveProjects([named('p1'), named('p2')], 'gone')
+    expect(resolved.activeProjectId).toBe('p1')
+  })
+
+  it('falls back to the first project when the active id is empty', () => {
+    const resolved = resolveProjects([named('p1')], '')
+    expect(resolved.activeProjectId).toBe('p1')
+  })
+
+  it('does not add a second default project to a list that already has one', () => {
+    const resolved = resolveProjects([named(DEFAULT_PROJECT_ID)], DEFAULT_PROJECT_ID)
+    expect(resolved.projects).toHaveLength(1)
+  })
+})
+
+describe('P5-D22 - createProject builds an empty 4x4 project', () => {
+  it('uses the id and the name it was given', () => {
+    expect(createProject('p1', 'Monitoring')).toEqual({
+      id: 'p1',
+      name: 'Monitoring',
+      gridColumns: 4,
+      gridRows: 4,
+      keepManagedTabsAlive: false,
+      tiles: [],
+    })
+  })
+
+  //+_+// P5-D3. Keep Alive 를 새로 만들지 않는다. 기존 필드는 기본값으로만 남는다
+  it('leaves keepManagedTabsAlive off', () => {
+    expect(createProject('p1', 'Monitoring').keepManagedTabsAlive).toBe(false)
   })
 })
