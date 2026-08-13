@@ -361,6 +361,9 @@ function chromeFocusTab(): FocusTab {
 
 export const DASHBOARD_PAGE = 'dashboard.html'
 
+//+_+// manifest.json 의 commands 키와 같은 이름이어야 한다. 다르면 조용히 아무 일도 일어나지 않는다
+export const FOCUS_DASHBOARD_COMMAND = 'focus-dashboard'
+
 //+_+// 요청을 보낸 창의 탭만 돌려준다. 창을 모르면 마지막으로 포커스된 창을 쓴다
 //+_+// 확장 자신의 페이지는 뺀다. Dashboard 를 자기 자신에 걸면 자기 화면을 재귀로 캡처한다
 function chromeListTabs(): ListTabs {
@@ -410,6 +413,17 @@ if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
 
   //+_+// v1 section 13 line 855. Action 버튼으로도 Dashboard 를 열거나 활성화한다
   chrome.action.onClicked.addListener(() => {
+    void openDashboard().catch((error: unknown) => {
+      console.error('[webdeck] openDashboard failed', errorMessage(error))
+    })
+  })
+
+  //+_+// L20. Alt+Shift+D 다. Action 클릭과 같은 openDashboard 를 쓴다
+  //+_+// 중복 생성 방지 강화는 P4-D3 이 Phase 5 에 두었다. 여기서 만들지 않는다
+  chrome.commands.onCommand.addListener((command) => {
+    if (command !== FOCUS_DASHBOARD_COMMAND) {
+      return
+    }
     void openDashboard().catch((error: unknown) => {
       console.error('[webdeck] openDashboard failed', errorMessage(error))
     })
