@@ -314,6 +314,95 @@ describe('P4-D8 - the verbs without a Phase 4 handler fail loudly', () => {
   })
 })
 
+describe('P4-D12 - SET_TILE_RECT is judged again by the worker', () => {
+  it('moves a tile to an empty rect', async () => {
+    const { host } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+
+    const response = await host.handle({
+      type: 'SET_TILE_RECT',
+      tileId: 't1',
+      rect: { x: 2, y: 3, w: 1, h: 1 },
+    })
+    expect(response).toMatchObject({ ok: true, type: 'SET_TILE_RECT' })
+    expect((await projectState(host)).project.tiles[0]).toMatchObject({ x: 2, y: 3, w: 1, h: 1 })
+  })
+
+  it('resizes a tile and follows v1 6 for the new span interval', async () => {
+    const { host } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+
+    await host.handle({ type: 'SET_TILE_RECT', tileId: 't1', rect: { x: 0, y: 0, w: 2, h: 2 } })
+    expect((await projectState(host)).project.tiles[0]).toMatchObject({
+      w: 2,
+      h: 2,
+      refreshIntervalMs: CAPTURE_INTERVAL_MS.spanLarge,
+    })
+  })
+
+  it('keeps the interval when only the position changed', async () => {
+    const { host } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+
+    await host.handle({ type: 'SET_TILE_RECT', tileId: 't1', rect: { x: 1, y: 1, w: 1, h: 1 } })
+    expect((await projectState(host)).project.tiles[0]).toMatchObject({
+      refreshIntervalMs: CAPTURE_INTERVAL_MS.spanSmall,
+    })
+  })
+
+  it('refuses a rect that overlaps another tile and leaves the layout alone', async () => {
+    const { host } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', tileId: 't2', tabId: 12 })
+
+    const response = await host.handle({
+      type: 'SET_TILE_RECT',
+      tileId: 't1',
+      rect: { x: 1, y: 0, w: 1, h: 1 },
+    })
+    expect(response).toMatchObject({
+      ok: false,
+      type: 'SET_TILE_RECT',
+      errorCode: 'INVALID_LAYOUT',
+    })
+    expect((await projectState(host)).project.tiles[0]).toMatchObject({ x: 0, y: 0 })
+  })
+
+  it('refuses a rect that leaves the 4x4 grid', async () => {
+    const { host } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+
+    const response = await host.handle({
+      type: 'SET_TILE_RECT',
+      tileId: 't1',
+      rect: { x: 3, y: 0, w: 2, h: 1 },
+    })
+    expect(response).toMatchObject({ ok: false, errorCode: 'INVALID_LAYOUT' })
+    expect((await projectState(host)).project.tiles[0]).toMatchObject({ x: 0, w: 1 })
+  })
+
+  it('lets a tile grow over the cells it already owns', async () => {
+    const { host } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+
+    const response = await host.handle({
+      type: 'SET_TILE_RECT',
+      tileId: 't1',
+      rect: { x: 0, y: 0, w: 4, h: 4 },
+    })
+    expect(response).toMatchObject({ ok: true })
+  })
+
+  it('refuses a tileId the project does not have', async () => {
+    const response = await fixture().host.handle({
+      type: 'SET_TILE_RECT',
+      tileId: 'ghost',
+      rect: { x: 0, y: 0, w: 1, h: 1 },
+    })
+    expect(response).toMatchObject({ ok: false, errorCode: 'TILE_NOT_FOUND' })
+  })
+})
+
 describe('S3 - FOCUS_TILE activates the bound tab and its window', () => {
   it('activates the tab the tile is bound to', async () => {
     const { host, activated } = fixture()

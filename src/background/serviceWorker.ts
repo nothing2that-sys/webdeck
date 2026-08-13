@@ -1,3 +1,5 @@
+import { isPlacementValid } from '../shared/grid'
+import type { GridRect } from '../shared/grid'
 import { DEFAULT_PROJECT_ID, assertNever } from '../shared/messages'
 import type {
   DashboardFailure,
@@ -6,7 +8,7 @@ import type {
   DashboardResponse,
   TileFrame,
 } from '../shared/messages'
-import { effectiveIntervalMs } from '../shared/scheduler'
+import { defaultRefreshIntervalMs, effectiveIntervalMs } from '../shared/scheduler'
 import type { BrowserTabInfo, Project, TileRuntimeState, WebTile } from '../shared/types'
 import { DebuggerSessionManager, errorMessage } from './debuggerSessionManager'
 import type { DebuggerBackend } from './debuggerSessionManager'
@@ -161,6 +163,40 @@ export function createDashboardHost(
     return { ok: true, type: 'GET_PROJECT_STATE', project, runtimeStates, frames }
   }
 
+  //+_+// P4-D12. 화면이 이미 판정했더라도 워커가 다시 판정한다. 같은 isPlacementValid 를 쓴다
+  //+_+// 레이아웃은 워커 메모리에만 있다. 영구화는 WEBDECK_PLAN section 7 의 Phase 5 다
+  function setTileRect(tileId: string, rect: GridRect): DashboardResponse {
+    const tile = project.tiles.find((item) => item.id === tileId)
+    if (tile === undefined) {
+      return failure('SET_TILE_RECT', 'TILE_NOT_FOUND', `Unknown tileId ${tileId}`)
+    }
+    if (!isPlacementValid(rect, project.tiles, tileId)) {
+      return failure(
+        'SET_TILE_RECT',
+        'INVALID_LAYOUT',
+        `Rect overlaps another tile or leaves the ${String(project.gridColumns)}x${String(project.gridRows)} grid`,
+      )
+    }
+
+    //+_+// span 이 바뀌면 v1 section 6 의 주기 구간도 바뀐다. P4-D4 는 값을 그대로 두라고 했을 뿐이다
+    const resized = rect.w !== tile.w || rect.h !== tile.h
+    tile.x = rect.x
+    tile.y = rect.y
+    tile.w = rect.w
+    tile.h = rect.h
+    if (!resized) {
+      return { ok: true, type: 'SET_TILE_RECT' }
+    }
+
+    tile.refreshIntervalMs = defaultRefreshIntervalMs(rect.w, rect.h)
+    const tabId = bindings.get(tileId)
+    if (tabId !== undefined) {
+      //+_+// dashboardVisible 을 true 로 고정한다. bindTile 과 같은 이유다
+      engine.registerTile(tile, tabId, true)
+    }
+    return { ok: true, type: 'SET_TILE_RECT' }
+  }
+
   //+_+// TASK-P4-01 S3. Focus 는 워커 경유다. v1 section 20 이 UI 의 chrome 직접 호출을 금지한다
   //+_+// 바인딩이 없으면 활성화할 탭이 없다. 창은 탭 정보에서 읽는다. 화면이 보낸 값을 믿지 않는다
   async function focusTile(tileId: string): Promise<DashboardResponse> {
@@ -228,6 +264,8 @@ export function createDashboardHost(
           return failure(request.type, 'NOT_IMPLEMENTED', 'CAPTURE_TILE has no handler (P4-D8)')
         case 'FOCUS_TILE':
           return focusTile(request.tileId)
+        case 'SET_TILE_RECT':
+          return setTileRect(request.tileId, request.rect)
         //+_+// WEBDECK_PLAN section 7 이 Reopen 과 Keep Alive 를 Phase 5 에 배정했다
         case 'RELOAD_TILE':
         case 'SET_TILE_KEEP_ALIVE':
