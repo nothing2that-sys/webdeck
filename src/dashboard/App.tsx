@@ -5,7 +5,7 @@ import type { BrowserTabInfo, Project, WebTile } from '../shared/types'
 import { TileCard } from './TileCard'
 import {
   POLL_INTERVAL_MS,
-  bindTile,
+  addTile,
   createProject,
   deleteProject,
   fetchProjectState,
@@ -13,7 +13,6 @@ import {
   isDashboardVisible,
   listBrowserTabs,
   listProjects,
-  newTileId,
   renameProject,
   setActiveProject,
   setTileRect,
@@ -70,6 +69,7 @@ export function App(): React.JSX.Element {
   const [projectName, setProjectName] = useState('')
   const [tabs, setTabs] = useState<BrowserTabInfo[]>([])
   const [selectedTabId, setSelectedTabId] = useState<number | null>(null)
+  const [tileUrl, setTileUrl] = useState('')
   const [selectedTileId, setSelectedTileId] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -191,6 +191,7 @@ export function App(): React.JSX.Element {
     await loadProjects()
   }, [activeProjectId, loadProjects])
 
+  //+_+// P5-D12. 워커가 모든 창의 탭을 돌려준다. 목록은 시간이 지나면 낡으므로 다시 읽을 수 있게 둔다
   const loadTabs = useCallback(async () => {
     const response = await listBrowserTabs()
     if (!response.ok) {
@@ -201,24 +202,47 @@ export function App(): React.JSX.Element {
       return
     }
     setTabs(response.tabs)
-    setSelectedTabId(response.tabs[0]?.tabId ?? null)
-    setNotice(`${String(response.tabs.length)} tabs listed`)
+    setSelectedTabId((current) =>
+      response.tabs.some((tab) => tab.tabId === current) ? current : (response.tabs[0]?.tabId ?? null),
+    )
   }, [])
 
-  //+_+// P4-D2 의 개발 전용 바인딩이다. Phase 5 에서 v1 section 9.1 구현과 함께 지운다
-  const addTile = useCallback(async () => {
+  useEffect(() => {
+    void loadTabs()
+  }, [loadTabs])
+
+  //+_+// v1 section 9.1 의 (a) 경로다. 기존 탭을 걸기만 한다. reload 도 창 이동도 하지 않는다
+  const addTileFromTab = useCallback(async () => {
     if (selectedTabId === null) {
-      setNotice('먼저 dev 탭 목록에서 탭을 고른다')
+      setNotice('탭 목록에서 탭을 고른다')
       return
     }
-    const response = await bindTile(newTileId(), selectedTabId)
+    const response = await addTile({ kind: 'tab', tabId: selectedTabId })
     if (!response.ok) {
       setNotice(`${response.errorCode}: ${response.message}`)
       return
     }
-    setNotice(`tab ${String(selectedTabId)} bound`)
+    setNotice('')
     await poll()
   }, [poll, selectedTabId])
+
+  //+_+// v1 section 9.1 의 (b) 경로다. 탭 생성은 워커가 한다. 화면은 chrome.* 를 부르지 않는다
+  const addTileFromUrl = useCallback(async () => {
+    const url = tileUrl.trim()
+    if (url.length === 0) {
+      setNotice('URL 을 입력한다')
+      return
+    }
+    const response = await addTile({ kind: 'url', url })
+    if (!response.ok) {
+      setNotice(`${response.errorCode}: ${response.message}`)
+      return
+    }
+    setTileUrl('')
+    setNotice('')
+    await poll()
+    await loadTabs()
+  }, [loadTabs, poll, tileUrl])
 
   //+_+// v1 section 7.1. 더블클릭이 실제 탭으로 간다. 활성화는 워커가 한다
   const focus = useCallback(async (tileId: string) => {
@@ -336,9 +360,6 @@ export function App(): React.JSX.Element {
         >
           {editing ? 'Edit Layout · on' : 'Edit Layout'}
         </button>
-        <button type="button" onClick={() => void loadTabs()}>
-          dev · list tabs
-        </button>
         <select
           className="toolbar-select"
           value={selectedTabId === null ? '' : String(selectedTabId)}
@@ -353,8 +374,22 @@ export function App(): React.JSX.Element {
             </option>
           ))}
         </select>
-        <button type="button" onClick={() => void addTile()}>
-          dev · add tile
+        <button type="button" onClick={() => void loadTabs()}>
+          탭 새로고침
+        </button>
+        <button type="button" onClick={() => void addTileFromTab()}>
+          Add Tab
+        </button>
+        <input
+          className="toolbar-input"
+          value={tileUrl}
+          placeholder="https://"
+          onChange={(event) => {
+            setTileUrl(event.target.value)
+          }}
+        />
+        <button type="button" onClick={() => void addTileFromUrl()}>
+          Add URL
         </button>
       </header>
 

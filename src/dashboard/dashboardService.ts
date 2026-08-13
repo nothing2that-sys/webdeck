@@ -1,5 +1,5 @@
 import type { GridRect } from '../shared/grid'
-import type { DashboardRequest, DashboardResponse } from '../shared/messages'
+import type { AddTileSource, DashboardRequest, DashboardResponse } from '../shared/messages'
 
 //+_+// P4-D7 이 정한 폴링 주기다. 워커의 캡처 주기와 별개이며 서로를 참조하지 않는다
 export const POLL_INTERVAL_MS = 2000
@@ -56,6 +56,12 @@ export async function listBrowserTabs(): Promise<DashboardResponse> {
   return send({ type: 'LIST_BROWSER_TABS' })
 }
 
+//+_+// P5-D27. 타일 id 는 워커가 만들어 응답에 싣는다. 화면이 미리 만들지 않는다
+export async function addTile(source: AddTileSource): Promise<DashboardResponse> {
+  return send({ type: 'ADD_TILE', source })
+}
+
+//+_+// S5 의 Bind Existing Tab 이 쓴다. 이미 있는 타일을 다른 탭에 다시 거는 저수준 수단이다
 export async function bindTile(tileId: string, tabId: number): Promise<DashboardResponse> {
   return send({ type: 'BIND_TILE', tileId, tabId })
 }
@@ -66,9 +72,4 @@ export async function focusTile(tileId: string): Promise<DashboardResponse> {
 
 export async function setTileRect(tileId: string, rect: GridRect): Promise<DashboardResponse> {
   return send({ type: 'SET_TILE_RECT', tileId, rect })
-}
-
-//+_+// 타일 id 는 요청하는 쪽이 만든다. BIND_TILE 이 tileId 를 받는 형태이기 때문이다
-export function newTileId(): string {
-  return crypto.randomUUID()
 }
