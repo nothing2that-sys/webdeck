@@ -67,7 +67,8 @@ body {
 }
 
 .toolbar button,
-.toolbar-select {
+.toolbar-select,
+.toolbar-input {
   background: var(--surface-slot);
   color: var(--text-primary);
   border: 1px solid var(--border-soft);
@@ -78,6 +79,10 @@ body {
 
 .toolbar-select {
   max-width: 320px;
+}
+
+.toolbar-input {
+  width: 140px;
 }
 
 .toolbar-toggle--on {

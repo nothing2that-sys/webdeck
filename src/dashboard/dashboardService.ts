@@ -1,5 +1,4 @@
 import type { GridRect } from '../shared/grid'
-import { DEFAULT_PROJECT_ID } from '../shared/messages'
 import type { DashboardRequest, DashboardResponse } from '../shared/messages'
 
 //+_+// P4-D7 이 정한 폴링 주기다. 워커의 캡처 주기와 별개이며 서로를 참조하지 않는다
@@ -25,8 +24,32 @@ export function isDashboardVisible(): boolean {
   return document.visibilityState === 'visible'
 }
 
-export async function fetchProjectState(dashboardVisible: boolean): Promise<DashboardResponse> {
-  return send({ type: 'GET_PROJECT_STATE', projectId: DEFAULT_PROJECT_ID, dashboardVisible })
+//+_+// P5-D22. 활성 프로젝트 id 는 워커가 알려 준 값이다. 상수를 하드코딩하지 않는다
+export async function fetchProjectState(
+  projectId: string,
+  dashboardVisible: boolean,
+): Promise<DashboardResponse> {
+  return send({ type: 'GET_PROJECT_STATE', projectId, dashboardVisible })
+}
+
+export async function listProjects(): Promise<DashboardResponse> {
+  return send({ type: 'LIST_PROJECTS' })
+}
+
+export async function createProject(name: string): Promise<DashboardResponse> {
+  return send({ type: 'CREATE_PROJECT', name })
+}
+
+export async function renameProject(projectId: string, name: string): Promise<DashboardResponse> {
+  return send({ type: 'RENAME_PROJECT', projectId, name })
+}
+
+export async function deleteProject(projectId: string): Promise<DashboardResponse> {
+  return send({ type: 'DELETE_PROJECT', projectId })
+}
+
+export async function setActiveProject(projectId: string): Promise<DashboardResponse> {
+  return send({ type: 'SET_ACTIVE_PROJECT', projectId })
 }
 
 export async function listBrowserTabs(): Promise<DashboardResponse> {

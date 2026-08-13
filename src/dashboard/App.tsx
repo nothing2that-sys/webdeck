@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GRID_COLUMNS, GRID_ROWS } from '../shared/grid'
 import type { GridPosition } from '../shared/grid'
-import type { BrowserTabInfo, WebTile } from '../shared/types'
+import type { BrowserTabInfo, Project, WebTile } from '../shared/types'
 import { TileCard } from './TileCard'
 import {
   POLL_INTERVAL_MS,
   bindTile,
+  createProject,
+  deleteProject,
   fetchProjectState,
   focusTile,
   isDashboardVisible,
   listBrowserTabs,
+  listProjects,
   newTileId,
+  renameProject,
+  setActiveProject,
   setTileRect,
 } from './dashboardService'
 import {
@@ -60,6 +65,9 @@ function gridMetrics(element: HTMLElement): GridMetrics {
 export function App(): React.JSX.Element {
   const [views, setViews] = useState<TileViewModel[]>([])
   const [tiles, setTiles] = useState<WebTile[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
+  const [projectName, setProjectName] = useState('')
   const [tabs, setTabs] = useState<BrowserTabInfo[]>([])
   const [selectedTabId, setSelectedTabId] = useState<number | null>(null)
   const [selectedTileId, setSelectedTileId] = useState<string | null>(null)
@@ -68,11 +76,37 @@ export function App(): React.JSX.Element {
   const [notice, setNotice] = useState('')
   const gridRef = useRef<HTMLElement | null>(null)
 
+  //+_+// P5-D22. 활성 프로젝트 id 는 워커가 정본이다. 화면은 목록을 읽어 따라간다
+  const loadProjects = useCallback(async () => {
+    const response = await listProjects()
+    if (!response.ok) {
+      setNotice(`${response.errorCode}: ${response.message}`)
+      return
+    }
+    if (response.type !== 'LIST_PROJECTS') {
+      return
+    }
+    setProjects(response.projects)
+    setActiveProjectId(response.activeProjectId)
+  }, [])
+
+  useEffect(() => {
+    void loadProjects()
+  }, [loadProjects])
+
   //+_+// P4-D7. 폴링 1개가 프로젝트 상태와 프레임을 함께 가져온다
   //+_+// P4-D11. 표시 상태를 같은 요청에 싣는다
   const poll = useCallback(async () => {
-    const response = await fetchProjectState(isDashboardVisible())
+    if (activeProjectId === null) {
+      return
+    }
+    const response = await fetchProjectState(activeProjectId, isDashboardVisible())
     if (!response.ok) {
+      //+_+// 워커의 활성 프로젝트가 화면이 아는 것과 다르다. 목록을 다시 읽어 따라간다
+      if (response.errorCode === 'PROJECT_NOT_FOUND') {
+        await loadProjects()
+        return
+      }
       setNotice(`${response.errorCode}: ${response.message}`)
       return
     }
@@ -81,7 +115,7 @@ export function App(): React.JSX.Element {
     }
     setTiles(response.project.tiles)
     setViews(buildTileViews(response.project, response.runtimeStates, response.frames))
-  }, [])
+  }, [activeProjectId, loadProjects])
 
   useEffect(() => {
     void poll()
@@ -92,6 +126,70 @@ export function App(): React.JSX.Element {
       clearInterval(handle)
     }
   }, [poll])
+
+  //+_+// 전환 직후의 한 폴링 동안 이전 프로젝트의 타일이 남지 않게 비운다
+  const switchProject = useCallback(
+    async (projectId: string) => {
+      const response = await setActiveProject(projectId)
+      if (!response.ok) {
+        setNotice(`${response.errorCode}: ${response.message}`)
+        return
+      }
+      setTiles([])
+      setViews([])
+      await loadProjects()
+    },
+    [loadProjects],
+  )
+
+  //+_+// J82. 생성은 생성만 한다. 만든 프로젝트로 옮기는 것은 화면이 이어서 요청한다
+  const addProject = useCallback(async () => {
+    const name = projectName.trim()
+    if (name.length === 0) {
+      setNotice('프로젝트 이름을 입력한다')
+      return
+    }
+    const response = await createProject(name)
+    if (!response.ok) {
+      setNotice(`${response.errorCode}: ${response.message}`)
+      return
+    }
+    if (response.type !== 'CREATE_PROJECT') {
+      return
+    }
+    setProjectName('')
+    await switchProject(response.project.id)
+  }, [projectName, switchProject])
+
+  const renameActiveProject = useCallback(async () => {
+    const name = projectName.trim()
+    if (activeProjectId === null || name.length === 0) {
+      setNotice('바꿀 이름을 입력한다')
+      return
+    }
+    const response = await renameProject(activeProjectId, name)
+    if (!response.ok) {
+      setNotice(`${response.errorCode}: ${response.message}`)
+      return
+    }
+    setProjectName('')
+    await loadProjects()
+  }, [activeProjectId, loadProjects, projectName])
+
+  //+_+// P5-D23. 마지막 하나여도 워커가 거부하지 않는다. 기본 프로젝트가 다시 선다
+  const removeActiveProject = useCallback(async () => {
+    if (activeProjectId === null) {
+      return
+    }
+    const response = await deleteProject(activeProjectId)
+    if (!response.ok) {
+      setNotice(`${response.errorCode}: ${response.message}`)
+      return
+    }
+    setTiles([])
+    setViews([])
+    await loadProjects()
+  }, [activeProjectId, loadProjects])
 
   const loadTabs = useCallback(async () => {
     const response = await listBrowserTabs()
@@ -201,6 +299,34 @@ export function App(): React.JSX.Element {
     <div className="app">
       <header className="toolbar">
         <span className="toolbar-title">WebDeck</span>
+        <select
+          className="toolbar-select"
+          value={activeProjectId ?? ''}
+          onChange={(event) => void switchProject(event.target.value)}
+        >
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.name}
+            </option>
+          ))}
+        </select>
+        <input
+          className="toolbar-input"
+          value={projectName}
+          placeholder="프로젝트 이름"
+          onChange={(event) => {
+            setProjectName(event.target.value)
+          }}
+        />
+        <button type="button" onClick={() => void addProject()}>
+          New
+        </button>
+        <button type="button" onClick={() => void renameActiveProject()}>
+          Rename
+        </button>
+        <button type="button" onClick={() => void removeActiveProject()}>
+          Delete
+        </button>
         <span className="toolbar-count">tiles {views.length}</span>
         <span className="toolbar-spacer" />
         <button
