@@ -325,7 +325,7 @@ describe('TASK-P3-01 section 3.6 - the driver is separate from the decision', ()
     const engine = createPreviewEngine(new StubDebugger(), new StubTabs(), clock)
     const stop = startPreviewDriver(engine, 10_000)
 
-    expect(DRIVER_TICK_MS).toBe(1000)
+    expect(DRIVER_TICK_MS).toBe(250)
     expect(DEBUGGER_PROTOCOL_VERSION).toBe('1.3')
     expect(() => stop()).not.toThrow()
   })

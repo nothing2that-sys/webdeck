@@ -7,6 +7,7 @@ import {
   STALE_AFTER_MULTIPLIER,
   canEnqueue,
   nextDelayMs,
+  nextDueAtFrom,
 } from '../shared/scheduler'
 import type { CaptureQueueItem } from '../shared/scheduler'
 import type { TileStatus } from '../shared/types'
@@ -99,6 +100,9 @@ interface TileState {
   tabId: number
   baseIntervalMs: number
   nextDueAt: number
+  //+_+// P4-D16. 이 회차가 예정돼 있던 시각이다. 다음 만기를 여기서부터 잡는다
+  //+_+// 큐에서 슬롯을 기다린 시간이 주기에 더해지지 않도록 실행 시각이 아니라 예정 시각을 쓴다
+  scheduledAt: number
   attemptCount: number
   consecutiveFailures: number
   demoted: boolean
@@ -239,6 +243,7 @@ export class PreviewCaptureManager {
       tabId,
       baseIntervalMs,
       nextDueAt: now,
+      scheduledAt: now,
       attemptCount: 0,
       consecutiveFailures: 0,
       demoted: false,
@@ -367,6 +372,8 @@ export class PreviewCaptureManager {
   private beginAttempt(state: TileState): InFlightAttempt {
     this.nextToken += 1
     state.attemptCount += 1
+    //+_+// P4-D16. 이 회차를 부른 만기를 기억한다. 정산에서 다음 만기의 기준이 된다
+    state.scheduledAt = state.nextDueAt
     const attempt: InFlightAttempt = {
       tileId: state.tileId,
       tabId: state.tabId,
@@ -466,7 +473,8 @@ export class PreviewCaptureManager {
         state.consecutiveFailures = 0
         state.demoted = false
         state.fault = null
-        state.nextDueAt = now + state.baseIntervalMs
+        //+_+// P4-D16. 예정 시각 기준이다. now 기준이면 회차 소요가 매 주기에 더해져 주기가 늘어난다
+        state.nextDueAt = nextDueAtFrom(state.scheduledAt, state.baseIntervalMs, now)
       }
     }
 

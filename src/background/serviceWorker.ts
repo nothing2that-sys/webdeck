@@ -29,9 +29,12 @@ import type { TabsBackend } from './tabManager'
 //+_+// v1 section 12 가 요구하는 프로토콜 버전이다. POC 도 같은 값을 썼다
 export const DEBUGGER_PROTOCOL_VERSION = '1.3'
 
-//+_+// 구동자의 해상도다. 가장 짧은 캡처 주기 2000 보다 촘촘해야 만기를 놓치지 않는다
-//+_+// POC 가 500 에서 올려 쓴 값이다. 스케줄 정책 상수가 아니라 tick 간격이다
-export const DRIVER_TICK_MS = 1000
+//+_+// 구동자의 해상도다. 스케줄 정책 상수가 아니라 tick 간격이다
+//+_+// P4-D16 (N1-c). 1000 에서 250 으로 내렸다. 실현 주기가 tick 격자로 올림되기 때문이다
+//+_+// 1000 에서는 spanLarge 2000 과 spanMedium 2500 의 500 차이가 같은 격자에 접혀 사라졌다
+//+_+// 250 은 2000 / 2500 / 4000 / 45000 을 모두 나누므로 그 네 주기에서 올림 오차가 0 이다
+//+_+// 워커 부하 영향은 L34 가 미상이므로 여기서 판단하지 않는다. Chrome 실측 항목이다
+export const DRIVER_TICK_MS = 250
 
 export interface PreviewEngine {
   sessions: DebuggerSessionManager

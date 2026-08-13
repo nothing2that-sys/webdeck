@@ -10,6 +10,7 @@ import {
   defaultRefreshIntervalMs,
   effectiveIntervalMs,
   nextDelayMs,
+  nextDueAtFrom,
 } from '../src/shared/scheduler'
 import type { CaptureQueueItem } from '../src/shared/scheduler'
 import type { WebTile } from '../src/shared/types'
@@ -192,5 +193,36 @@ describe('TASK-P3-01 item 03 - the constants added after the original six', () =
   it('sits above the observed slow success band and far below the 30000 ms that never returned', () => {
     expect(CAPTURE_TIMEOUT_MS).toBeGreaterThan(2000)
     expect(CAPTURE_TIMEOUT_MS).toBeLessThan(30000)
+  })
+})
+
+describe('P4-D16 - the next due time is relative to the scheduled time', () => {
+  it('adds the interval to the scheduled time, not to the settle time', () => {
+    expect(nextDueAtFrom(0, 2000, 100)).toBe(2000)
+    expect(nextDueAtFrom(0, 2000, 1999)).toBe(2000)
+    expect(nextDueAtFrom(4000, 4000, 4100)).toBe(8000)
+  })
+
+  //+_+// 회차가 주기보다 길었다. 지나간 만기를 쌓지 않고 다음 배수로 건너뛴다
+  it('skips the missed due times instead of queueing them', () => {
+    expect(nextDueAtFrom(0, 2000, 2018)).toBe(4000)
+    expect(nextDueAtFrom(0, 2000, 4000)).toBe(6000)
+    expect(nextDueAtFrom(0, 2000, 9500)).toBe(10000)
+  })
+
+  //+_+// 어떤 경우에도 다음 만기는 지금보다 뒤다. 그래서 매 tick 실행으로 떨어지지 않는다
+  it('never returns a due time that is already past', () => {
+    for (const now of [0, 1, 999, 2000, 2001, 5000, 12345]) {
+      expect(nextDueAtFrom(0, 2000, now)).toBeGreaterThan(now)
+    }
+  })
+
+  //+_+// 실현 주기는 배정 주기의 배수다. 드리프트가 누적되지 않는다
+  it('keeps every due time on the multiple of the interval', () => {
+    let due = 0
+    for (let round = 0; round < 5; round += 1) {
+      due = nextDueAtFrom(due, 2000, due + 2018)
+    }
+    expect(due).toBe(20000)
   })
 })

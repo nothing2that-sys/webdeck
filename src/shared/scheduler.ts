@@ -125,6 +125,18 @@ export function captureStats(input: CaptureStatsInput): CaptureStats {
   }
 }
 
+//+_+// P4-D16. 다음 만기는 예정 시각 기준이다. 정산 시각 기준이면 회차 소요가 매 주기에 더해진다
+//+_+// 회차가 주기보다 길어 만기가 이미 지났으면 지나간 만기를 쌓지 않고 한 번에 건너뛴다
+//+_+// 그래서 밀린 만기가 누적되지 않고 매 tick 실행으로 떨어지지도 않는다. 실현 주기는 주기의 배수다
+export function nextDueAtFrom(scheduledAt: number, intervalMs: number, now: number): number {
+  const next = scheduledAt + intervalMs
+  if (next > now) {
+    return next
+  }
+  const missed = Math.floor((now - scheduledAt) / intervalMs)
+  return scheduledAt + (missed + 1) * intervalMs
+}
+
 //+_+// 마지막 계단에서 고정한다. 무한히 커지지 않는다. 성공 시 원래 주기로 복귀한다
 export function nextDelayMs(consecutiveFailures: number, baseIntervalMs: number): number {
   if (consecutiveFailures <= 0) {

@@ -102,6 +102,8 @@ interface SimTile {
   tabId: number
   intervalMs: number
   callDurationMs: number
+  //+_+// 등록 시각이다. dev 바인딩과 Resize 재등록이 서로 다른 순간에 일어난다
+  registerAtMs?: number
 }
 
 interface Settled {
@@ -140,13 +142,25 @@ async function run(
     },
   })
 
+  const pendingRegistration = [...tiles].filter((tile) => (tile.registerAtMs ?? 0) > 0)
   for (const tile of tiles) {
-    manager.register(tile.tileId, tile.tabId, tile.intervalMs)
+    if ((tile.registerAtMs ?? 0) === 0) {
+      manager.register(tile.tileId, tile.tabId, tile.intervalMs)
+    }
   }
 
   for (let t = 0; t <= horizonMs; t += 1) {
     clock.current = t
     let acted = clock.runDue()
+
+    for (let index = pendingRegistration.length - 1; index >= 0; index -= 1) {
+      const tile = pendingRegistration[index]
+      if ((tile.registerAtMs ?? 0) <= t) {
+        pendingRegistration.splice(index, 1)
+        manager.register(tile.tileId, tile.tabId, tile.intervalMs)
+        acted = true
+      }
+    }
 
     for (let index = backend.pending.length - 1; index >= 0; index -= 1) {
       const call = backend.pending[index]
@@ -174,52 +188,77 @@ function deltas(settled: readonly Settled[], tileId: string): number[] {
   return times.slice(1).map((at, index) => at - times[index])
 }
 
-describe('N1 - the realized period is not the assigned interval', () => {
-  it('turns an assigned 4000ms into a realized 5000ms', async () => {
-    const settled = await run([{ tileId: 'a', tabId: 1, intervalMs: 4000, callDurationMs: 100 }], 21000)
-    expect(new Set(deltas(settled, 'a'))).toEqual(new Set([5000]))
+describe('P4-D16 - the realized period after the fix', () => {
+  it('keeps the driver tick at the value P4-D16 chose', () => {
+    expect(DRIVER_TICK_MS).toBe(250)
   })
 
-  it('turns an assigned 2000ms into a realized 3000ms when the round is short', async () => {
-    const settled = await run([{ tileId: 'a', tabId: 1, intervalMs: 2000, callDurationMs: 100 }], 13000)
-    expect(new Set(deltas(settled, 'a'))).toEqual(new Set([3000]))
-  })
-
-  //+_+// 실측의 2x2 타일이다. 배정 2000 에 회차 소요 2018 이면 실현 주기가 5000 이 된다
-  it('turns an assigned 2000ms into a realized 5000ms when the round takes 2018ms', async () => {
-    const settled = await run(
-      [{ tileId: 'a', tabId: 1, intervalMs: 2000, callDurationMs: 2018 }],
-      23000,
-    )
-    expect(new Set(deltas(settled, 'a'))).toEqual(new Set([5000]))
-  })
-
-  it('cannot honour an interval shorter than the driver tick', async () => {
-    const settled = await run([{ tileId: 'a', tabId: 1, intervalMs: 500, callDurationMs: 100 }], 9000)
-    expect(new Set(deltas(settled, 'a'))).toEqual(new Set([1000]))
-  })
-
-  //+_+// 실현 주기는 배정 주기와 회차 소요의 합을 tick 격자로 올림한 값이다
-  it('follows ceil((interval + round) / tick) * tick', async () => {
+  //+_+// 회차 소요가 배정 주기보다 짧으면 실현 주기가 배정 주기와 정확히 같다
+  //+_+// 250 이 2000 / 2500 / 4000 / 45000 을 모두 나누므로 올림 오차가 0 이다
+  it('realizes the assigned interval exactly while the round fits inside it', async () => {
     const cases = [
-      { intervalMs: 2000, callDurationMs: 100, expected: 3000 },
-      { intervalMs: 2000, callDurationMs: 900, expected: 3000 },
-      { intervalMs: 2000, callDurationMs: 1100, expected: 4000 },
-      { intervalMs: 2000, callDurationMs: 2018, expected: 5000 },
-      { intervalMs: 4000, callDurationMs: 100, expected: 5000 },
-      { intervalMs: 2500, callDurationMs: 100, expected: 3000 },
+      { intervalMs: 2000, callDurationMs: 100 },
+      { intervalMs: 2000, callDurationMs: 900 },
+      { intervalMs: 2000, callDurationMs: 1100 },
+      { intervalMs: 2000, callDurationMs: 1900 },
+      { intervalMs: 2500, callDurationMs: 100 },
+      { intervalMs: 4000, callDurationMs: 100 },
+      { intervalMs: 4000, callDurationMs: 2018 },
     ]
     for (const value of cases) {
       const settled = await run(
         [{ tileId: 'a', tabId: 1, intervalMs: value.intervalMs, callDurationMs: value.callDurationMs }],
-        value.expected * 3 + 2000,
+        value.intervalMs * 3 + value.callDurationMs + 500,
       )
-      expect(deltas(settled, 'a').slice(0, 2)).toEqual([value.expected, value.expected])
+      expect(deltas(settled, 'a').slice(0, 2)).toEqual([value.intervalMs, value.intervalMs])
     }
+  })
+
+  //+_+// 회차 소요가 배정 주기를 넘으면 지나간 만기를 건너뛴다. 실현 주기는 배정 주기의 배수가 된다
+  //+_+// 매 tick 실행으로 떨어지지 않고 밀린 만기도 쌓이지 않는다
+  it('skips to the next multiple when the round outlasts the interval', async () => {
+    const settled = await run(
+      [{ tileId: 'a', tabId: 1, intervalMs: 2000, callDurationMs: 2018 }],
+      18000,
+    )
+    expect(new Set(deltas(settled, 'a'))).toEqual(new Set([4000]))
+  })
+
+  it('skips two multiples when the round outlasts two intervals', async () => {
+    const settled = await run(
+      [{ tileId: 'a', tabId: 1, intervalMs: 2000, callDurationMs: 4100 }],
+      24000,
+    )
+    expect(new Set(deltas(settled, 'a'))).toEqual(new Set([6000]))
+  })
+
+  //+_+// spanLarge 2000 과 spanMedium 2500 이 구분된다. tick 1000 에서는 둘 다 3000 으로 접혔다
+  it('separates spanLarge from spanMedium', async () => {
+    const large = await run([{ tileId: 'a', tabId: 1, intervalMs: 2000, callDurationMs: 100 }], 9000)
+    const medium = await run([{ tileId: 'a', tabId: 1, intervalMs: 2500, callDurationMs: 100 }], 11000)
+    expect(new Set(deltas(large, 'a'))).toEqual(new Set([2000]))
+    expect(new Set(deltas(medium, 'a'))).toEqual(new Set([2500]))
+  })
+
+  //+_+// tick 격자를 나누지 못하는 주기는 올림된다. 다만 드리프트는 누적되지 않는다
+  it('rounds an interval that the tick does not divide up to the next tick', async () => {
+    const settled = await run([{ tileId: 'a', tabId: 1, intervalMs: 2400, callDurationMs: 100 }], 13000)
+    for (const delta of deltas(settled, 'a')) {
+      expect(delta).toBeGreaterThanOrEqual(2250)
+      expect(delta).toBeLessThanOrEqual(2500)
+    }
+    //+_+// 5회차의 누적 오차가 1 tick 을 넘지 않는다. 완료 기준이었다면 계속 늘어났다
+    const times = settled.map((entry) => entry.at)
+    expect(times[4] - times[0]).toBeLessThanOrEqual(2400 * 4 + DRIVER_TICK_MS)
+  })
+
+  it('still cannot honour an interval shorter than the driver tick', async () => {
+    const settled = await run([{ tileId: 'a', tabId: 1, intervalMs: 100, callDurationMs: 50 }], 3000)
+    expect(new Set(deltas(settled, 'a'))).toEqual(new Set([DRIVER_TICK_MS]))
   })
 })
 
-describe('N1 - tiles with different intervals collapse onto one period', () => {
+describe('N1 - three tiles on the observed configuration', () => {
   //+_+// 실측 구성이다. 1x1 두 개는 spanSmall 4000, 2x2 하나는 spanLarge 2000 이다
   const OBSERVED: SimTile[] = [
     { tileId: 'small-1', tabId: 1, intervalMs: 4000, callDurationMs: 100 },
@@ -227,39 +266,67 @@ describe('N1 - tiles with different intervals collapse onto one period', () => {
     { tileId: 'large', tabId: 3, intervalMs: 2000, callDurationMs: 2018 },
   ]
 
-  //+_+// 슬롯이 2개이고 타일이 3개다. 큐 대기가 정산 시각을 밀어 실현 주기에 흔들림을 더한다
-  //+_+// 실측의 4.98~5.03초와 같은 성격의 흔들림이다
-  it('gives every tile about the same 5000ms period even though the intervals differ', async () => {
-    const settled = await run(OBSERVED, 26000)
-    for (const tile of OBSERVED) {
-      const measured = deltas(settled, tile.tileId)
-      expect(measured.length).toBeGreaterThanOrEqual(3)
-      for (const delta of measured) {
-        expect(delta).toBeGreaterThanOrEqual(4900)
-        expect(delta).toBeLessThanOrEqual(5100)
-        expect(delta).not.toBe(tile.intervalMs)
-      }
-    }
+  //+_+// 1x1 은 배정대로 4000 이다. 2x2 는 회차 소요 2018 때문에 2000 이 아니라 4000 이다
+  //+_+// 후자는 스케줄러 결함이 아니라 N2 의 물리적 하한이다. 소요보다 빠른 주기는 만들 수 없다
+  it('gives the small tiles their assigned interval and the large tile the next multiple', async () => {
+    const settled = await run(OBSERVED, 20000)
+    expect(new Set(deltas(settled, 'small-1'))).toEqual(new Set([4000]))
+    expect(new Set(deltas(settled, 'small-2'))).toEqual(new Set([4000]))
+    expect(new Set(deltas(settled, 'large'))).toEqual(new Set([4000]))
   })
 
-  //+_+// 5000 주기 안에서 각 타일이 정확히 한 회차씩 돈다. 세 줄이 한 묶음으로 반복된다
-  //+_+// 묶음 안의 순서와 간격은 회차 소요가 만든다. 2x2 는 자기 소요만큼 뒤에 찍힌다
-  it('settles every tile once per 5000ms cycle', async () => {
-    const settled = await run(OBSERVED, 26000)
-    const cycles = new Map<number, string[]>()
-    for (const entry of settled) {
-      const cycle = Math.floor(entry.at / 5000)
-      cycles.set(cycle, [...(cycles.get(cycle) ?? []), entry.tileId])
-    }
-    const full = [...cycles.values()].filter((tileIds) => tileIds.length === 3)
-    expect(full.length).toBeGreaterThanOrEqual(3)
-  })
-
-  //+_+// 2x2 의 회차 소요가 배정 주기와 거의 같게 나온 것은 N2 다. 여기서는 그것이 주기에 얹히는 것만 본다
   it('reports the round duration the call took and nothing more', async () => {
     const settled = await run(OBSERVED, 12000)
     const large = settled.filter((entry) => entry.tileId === 'large')
-    expect(large.map((entry) => entry.roundDurationMs)).toEqual([2018, 2018])
+    expect(large.length).toBeGreaterThanOrEqual(2)
+    expect(new Set(large.map((entry) => entry.roundDurationMs))).toEqual(new Set([2018]))
+  })
+})
+
+//+_+// TASK-P4-04 항목 2. TASK-P4-03 의 예측이 틀렸다. 실제 로그는 2x2 가 먼저 찍힌다
+//+_+// 원인은 스케줄 규칙이 아니라 초기 조건이다. register 가 nextDueAt 을 등록 시각으로 잡고
+//+_+// 그 위상이 그대로 유지된다. 세 타일을 같은 순간에 등록하면 tie 가 되어 순서가 뒤바뀐다
+describe('N1 - the order inside a burst is decided by registration phase', () => {
+  const SMALLS: SimTile[] = [
+    { tileId: 'small-1', tabId: 1, intervalMs: 4000, callDurationMs: 100 },
+    { tileId: 'small-2', tabId: 2, intervalMs: 4000, callDurationMs: 120 },
+  ]
+  const LARGE: SimTile = { tileId: 'large', tabId: 3, intervalMs: 2000, callDurationMs: 2018 }
+
+  //+_+// 세 타일을 t=0 에 동시 등록하면 selectDueTiles 의 tie 를 삽입 순서가 가른다
+  //+_+// 슬롯 2개를 1x1 두 개가 차지하고 2x2 가 큐에 남는다. TASK-P4-03 이 이 조건을 썼다
+  it('puts the large tile last when every tile is registered at the same instant', async () => {
+    const settled = await run([...SMALLS, LARGE], 12000)
+    const window = settled.filter((entry) => entry.at >= 4000 && entry.at < 8000)
+    expect(window.map((entry) => entry.tileId)).toEqual(['small-1', 'small-2', 'large'])
+  })
+
+  //+_+// 실제로는 타일을 하나씩 바인딩했고 2x2 는 Resize 로 재등록됐다. 위상이 어긋나 있다
+  //+_+// 2x2 를 1982ms 늦게 등록하면 정산이 1x1 들의 만기 직전에 떨어져 순서가 역전된다
+  it('puts the large tile first when it was registered on a different phase', async () => {
+    const settled = await run([...SMALLS, { ...LARGE, registerAtMs: 1982 }], 12000)
+    const window = settled.filter((entry) => entry.at >= 4000 && entry.at < 8000)
+    expect(window.map((entry) => entry.tileId)).toEqual(['large', 'small-1', 'small-2'])
+  })
+
+  //+_+// 실측 로그의 간격이다. 2x2 기준 +0.066 / +0.103 이었다
+  it('follows the large tile within about a tenth of a second', async () => {
+    const settled = await run([...SMALLS, { ...LARGE, registerAtMs: 1982 }], 12000)
+    const window = settled.filter((entry) => entry.at >= 4000 && entry.at < 8000)
+    const gaps = window.slice(1).map((entry) => entry.at - window[0].at)
+    for (const gap of gaps) {
+      expect(gap).toBeGreaterThan(0)
+      expect(gap).toBeLessThanOrEqual(150)
+    }
+  })
+
+  //+_+// 위상 차이는 P4-D16 수정으로 사라지지 않는다. 드리프트가 아니라 등록 시각의 결과다
+  it('keeps the inverted order stable across bursts', async () => {
+    const settled = await run([...SMALLS, { ...LARGE, registerAtMs: 1982 }], 20000)
+    for (const start of [4000, 8000, 12000, 16000]) {
+      const window = settled.filter((entry) => entry.at >= start && entry.at < start + 4000)
+      expect(window[0].tileId).toBe('large')
+    }
   })
 })
 

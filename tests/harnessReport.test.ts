@@ -187,9 +187,13 @@ describe('TASK-P3-01-S5 - runtime attach is recorded too', () => {
 })
 
 describe('P3-D16 - the tick constant is duplicated on purpose', () => {
-  //+_+// 상수를 합치거나 옮기지 않는다. 값이 같은지만 테스트로 묶는다
-  it('keeps the harness tick equal to the product driver tick', () => {
-    expect(HARNESS_TICK_MS).toBe(DRIVER_TICK_MS)
+  //+_+// P4-D16 이 제품 tick 을 250 으로 내렸다. harness/p3 는 동결이고 Phase 3 실측은 1000 에서 얻었다
+  //+_+// 그래서 P3-D16 의 "값이 같은지 묶는다" 는 여기서 끝난다. 두 값을 각각 고정해 표류를 막는다
+  //+_+// 이 이탈은 사용자 승인 대상이다. TASK-P4-04 보고에 정본 충돌로 올렸다
+  it('pins the frozen harness tick and the product driver tick separately', () => {
+    expect(HARNESS_TICK_MS).toBe(1000)
+    expect(DRIVER_TICK_MS).toBe(250)
+    expect(DRIVER_TICK_MS).toBeLessThan(HARNESS_TICK_MS)
   })
 
   //+_+// tick 은 가장 짧은 캡처 주기보다 촘촘해야 만기를 놓치지 않는다. P3-D11
