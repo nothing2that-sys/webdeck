@@ -1,7 +1,8 @@
-import { isPlacementValid } from '../shared/grid'
+import { findFirstAvailablePosition, isPlacementValid } from '../shared/grid'
 import type { GridRect } from '../shared/grid'
 import { assertNever } from '../shared/messages'
 import type {
+  AddTileSource,
   DashboardFailure,
   DashboardRequest,
   DashboardRequestType,
@@ -17,6 +18,7 @@ import type { DebuggerBackend } from './debuggerSessionManager'
 import { PreviewCaptureManager, systemClock } from './previewCaptureManager'
 import type { Clock, PreviewCaptureManagerOptions } from './previewCaptureManager'
 import {
+  DEV_TILE_SPAN,
   EMPTY_CAPTURE_SUMMARY,
   applyCaptureRecord,
   buildRuntimeState,
@@ -87,17 +89,20 @@ export function startPreviewDriver(engine: PreviewEngine, intervalMs = DRIVER_TI
 
 export interface DashboardHost {
   engine: PreviewEngine
-  //+_+// senderWindowId 는 요청을 보낸 Dashboard 탭의 창이다. 없으면 마지막으로 포커스된 창을 쓴다
-  handle(request: DashboardRequest, senderWindowId?: number): Promise<DashboardResponse>
+  handle(request: DashboardRequest): Promise<DashboardResponse>
   //+_+// S1. 워커 기동 시 1회다. 실패해도 던지지 않고 결과를 그대로 돌려준다
   load(): Promise<LoadResult>
 }
 
-export type ListTabs = (windowId: number | undefined) => Promise<BrowserTabInfo[]>
+//+_+// P5-D12. 창 인자를 받지 않는다. v1 section 9.1 은 "현재 Chrome 에 열린 탭 목록" 이다
+export type ListTabs = () => Promise<BrowserTabInfo[]>
 
 //+_+// TabsBackend 에 넣지 않는다. harness/p3 가 그 인터페이스를 구현하고 Phase 3 산출물은 동결이다
 //+_+// ListTabs 와 같은 자리다. 캡처 엔진이 쓰지 않는 chrome 호출은 어댑터로 따로 주입한다
 export type FocusTab = (tabId: number, windowId: number) => Promise<void>
+
+//+_+// P5-D27 의 url 경로다. v1 section 20 이 UI 의 chrome 직접 호출을 금지하므로 워커가 만든다
+export type CreateTab = (url: string) => Promise<BrowserTabInfo>
 
 function failure(
   type: DashboardRequestType,
@@ -114,6 +119,7 @@ export function createDashboardHost(
   tabsBackend: TabsBackend,
   listTabs: ListTabs,
   focusTab: FocusTab,
+  createTab: CreateTab,
   storage: KeyValueBackend,
   clock: Clock = systemClock,
 ): DashboardHost {
@@ -329,6 +335,45 @@ export function createDashboardHost(
     return { ok: true, type: 'BIND_TILE' }
   }
 
+  //+_+// P5-D27. v1 section 9.1 의 두 경로다. 자리를 먼저 확인하고 그 뒤에 탭을 만든다
+  //+_+// 순서를 뒤집으면 GRID_FULL 로 실패한 뒤에도 사용자 탭이 남는다
+  //+_+// 기존 탭은 reload 하지 않고 창도 옮기지 않는다. Link Only 다. v1 section 9.1, 9.2
+  async function addTile(source: AddTileSource): Promise<DashboardResponse> {
+    const project = activeProject()
+    if (findFirstAvailablePosition(DEV_TILE_SPAN, DEV_TILE_SPAN, project.tiles) === null) {
+      return failure('ADD_TILE', 'GRID_FULL', 'The 4x4 grid has no empty slot left')
+    }
+
+    //+_+// launchUrl 은 S6 의 URL 기반 재연결 입력이다. tab 경로는 현재 URL, url 경로는 입력값이다
+    let tabId: number
+    let launchUrl: string
+    if (source.kind === 'tab') {
+      const tab = await engine.tabs.info(source.tabId)
+      if (tab === null) {
+        return failure('ADD_TILE', 'TAB_NOT_FOUND', `No tab with id ${String(source.tabId)}`)
+      }
+      tabId = tab.tabId
+      launchUrl = tab.currentUrl
+    } else {
+      const created = await createTab(source.url)
+      tabId = created.tabId
+      launchUrl = source.url
+    }
+
+    const tileId = crypto.randomUUID()
+    const tile = newTile(tileId, launchUrl, project.tiles)
+    if (tile === null) {
+      return failure('ADD_TILE', 'GRID_FULL', 'The 4x4 grid has no empty slot left')
+    }
+
+    project.tiles.push(tile)
+    bindings.set(tileId, tabId)
+    summaries.delete(tileId)
+    engine.registerTile(tile, tabId, dashboardVisible)
+    await persist()
+    return { ok: true, type: 'ADD_TILE', tileId }
+  }
+
   //+_+// P5-D23. 생성은 생성만 한다. 전환은 SET_ACTIVE_PROJECT 가 따로 맡는다. J82
   async function createNewProject(name: string): Promise<DashboardResponse> {
     const created = createProject(crypto.randomUUID(), name)
@@ -386,7 +431,7 @@ export function createDashboardHost(
   return {
     engine,
     load,
-    handle: async (request, senderWindowId) => {
+    handle: async (request) => {
       switch (request.type) {
         case 'GET_PROJECT_STATE':
           if (request.projectId !== activeProjectId) {
@@ -399,7 +444,9 @@ export function createDashboardHost(
           await applyDashboardVisible(request.dashboardVisible)
           return projectState()
         case 'LIST_BROWSER_TABS':
-          return { ok: true, type: 'LIST_BROWSER_TABS', tabs: await listTabs(senderWindowId) }
+          return { ok: true, type: 'LIST_BROWSER_TABS', tabs: await listTabs() }
+        case 'ADD_TILE':
+          return addTile(request.source)
         case 'BIND_TILE':
           return bindTile(request.tileId, request.tabId)
         //+_+// P4-D8. 핸들러를 만들지 않는다. 프레임은 GET_PROJECT_STATE 가 나른다. 타입은 남긴다
@@ -514,17 +561,33 @@ export const DASHBOARD_PAGE = 'dashboard.html'
 //+_+// manifest.json 의 commands 키와 같은 이름이어야 한다. 다르면 조용히 아무 일도 일어나지 않는다
 export const FOCUS_DASHBOARD_COMMAND = 'focus-dashboard'
 
-//+_+// 요청을 보낸 창의 탭만 돌려준다. 창을 모르면 마지막으로 포커스된 창을 쓴다
-//+_+// 확장 자신의 페이지는 뺀다. Dashboard 를 자기 자신에 걸면 자기 화면을 재귀로 캡처한다
+//+_+// J16 의 나머지 절반이다. 확장 자신의 페이지를 뺀다. 자기 화면을 재귀로 캡처하지 않기 위해서다
+//+_+// 다른 확장의 페이지는 남긴다. 재귀가 되는 것은 자기 자신뿐이다
+export function excludeOwnPages(
+  tabs: readonly BrowserTabInfo[],
+  ownUrlPrefix: string,
+): BrowserTabInfo[] {
+  return tabs.filter((tab) => !tab.currentUrl.startsWith(ownUrlPrefix))
+}
+
+//+_+// P5-D12. 창을 제한하지 않는다. v1 section 9.1 은 "현재 Chrome 에 열린 탭 목록" 이다
 function chromeListTabs(): ListTabs {
-  return async (windowId) => {
-    const query: chrome.tabs.QueryInfo =
-      windowId === undefined ? { currentWindow: true } : { windowId }
-    const own = chrome.runtime.getURL('')
-    const tabs = await chrome.tabs.query(query)
-    return tabs
-      .map(toTabInfo)
-      .filter((tab): tab is BrowserTabInfo => tab !== null && !tab.currentUrl.startsWith(own))
+  return async () => {
+    const tabs = await chrome.tabs.query({})
+    const known = tabs.map(toTabInfo).filter((tab): tab is BrowserTabInfo => tab !== null)
+    return excludeOwnPages(known, chrome.runtime.getURL(''))
+  }
+}
+
+//+_+// P5-D27. active 로 열지 않는다. Dashboard 를 보는 중에 새 탭이 화면을 가로채면 안 된다
+//+_+// id 가 없는 탭은 바인딩할 수 없다. 조용히 통과시키지 않고 던진다
+function chromeCreateTab(): CreateTab {
+  return async (url) => {
+    const info = toTabInfo(await chrome.tabs.create({ url, active: false }))
+    if (info === null) {
+      throw new Error(`chrome.tabs.create returned no tab id for ${url}`)
+    }
+    return info
   }
 }
 
@@ -550,6 +613,7 @@ if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
     chromeTabsBackend(),
     chromeListTabs(),
     chromeFocusTab(),
+    chromeCreateTab(),
     chromeStorageBackend(),
   )
   startPreviewDriver(host.engine)
@@ -566,8 +630,8 @@ if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
     },
   )
 
-  chrome.runtime.onMessage.addListener((message: DashboardRequest, sender, sendResponse) => {
-    host.handle(message, sender.tab?.windowId).then(sendResponse, (error: unknown) => {
+  chrome.runtime.onMessage.addListener((message: DashboardRequest, _sender, sendResponse) => {
+    host.handle(message).then(sendResponse, (error: unknown) => {
       sendResponse(failure(message.type, 'HANDLER_THREW', errorMessage(error)))
     })
     //+_+// 비동기 응답이다. true 를 돌려주지 않으면 채널이 먼저 닫힌다

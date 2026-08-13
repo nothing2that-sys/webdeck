@@ -9,9 +9,13 @@ export const DEFAULT_PROJECT_ID = 'webdeck.default'
 //+_+// 기본 프로젝트의 이름이다. 사용자가 이름을 바꾸면 저장값이 이긴다
 export const DEFAULT_PROJECT_NAME = 'WebDeck'
 
+//+_+// v1 section 9.1 의 두 경로다. tab 은 기존 탭을 걸고 url 은 워커가 새 탭을 만든다
+export type AddTileSource = { kind: 'tab'; tabId: number } | { kind: 'url'; url: string }
+
 //+_+// v1 section 19 line 1143~1150 의 7개. WORKSPACE 계열만 PROJECT 로 치환했다
 //+_+// P4-D12 의 SET_TILE_RECT 가 8번째다. v1 section 19 에 이름이 없어 새로 지은 유일한 요청이다
 //+_+// P5-D23 의 프로젝트 CRUD 5개가 9~13번째다. v1 section 19 에 대응 항목이 없어 명명 규칙만 따랐다
+//+_+// P5-D27 의 ADD_TILE 이 14번째다. v1 section 9.1 의 두 경로를 한 요청 아래 둔다
 export type DashboardRequest =
   //+_+// P4-D11. dashboardVisible 을 폴링마다 싣는다. 표시 상태 전용 요청을 만들지 않는다. J15
   | { type: 'GET_PROJECT_STATE'; projectId: string; dashboardVisible: boolean }
@@ -23,6 +27,8 @@ export type DashboardRequest =
   | { type: 'SET_TILE_KEEP_ALIVE'; tileId: string; enabled: boolean }
   //+_+// P4-D12. 유효성 판정의 권위는 워커다. 화면은 후보 rect 만 보낸다
   | { type: 'SET_TILE_RECT'; tileId: string; rect: GridRect }
+  //+_+// P5-D27. BIND_TILE 을 확장하지 않는다. 그쪽은 저수준 재바인딩 수단으로 남는다. J9
+  | { type: 'ADD_TILE'; source: AddTileSource }
   | { type: 'LIST_PROJECTS' }
   | { type: 'CREATE_PROJECT'; name: string }
   | { type: 'RENAME_PROJECT'; projectId: string; name: string }
@@ -39,7 +45,7 @@ export interface DashboardFailure {
   message: string
 }
 
-//+_+// 조회 3개와 CAPTURE_TILE 과 CREATE_PROJECT 가 payload 를 갖는다. 나머지 8개는 성공 여부만이다
+//+_+// 조회 3개와 CAPTURE_TILE / CREATE_PROJECT / ADD_TILE 이 payload 를 갖는다. 나머지 8개는 성공 여부만이다
 export type CaptureImageFormat = 'jpeg' | 'png'
 
 //+_+// 전송은 base64 문자열이다. L12 확정. ArrayBuffer / Blob / ImageBitmap 은 확장 메시징이 나르지 못한다
@@ -74,6 +80,8 @@ export type DashboardResponse =
   | { ok: true; type: 'RELOAD_TILE' }
   | { ok: true; type: 'SET_TILE_KEEP_ALIVE' }
   | { ok: true; type: 'SET_TILE_RECT' }
+  //+_+// 타일 id 는 워커가 만든다. BIND_TILE 과 다른 점이며 화면이 그것을 응답에서 받는다
+  | { ok: true; type: 'ADD_TILE'; tileId: string }
   //+_+// P5-D22. 화면은 활성 프로젝트 id 를 여기서 받는다. 상수를 하드코딩하지 않는다
   | { ok: true; type: 'LIST_PROJECTS'; projects: Project[]; activeProjectId: string }
   | { ok: true; type: 'CREATE_PROJECT'; project: Project }
@@ -88,7 +96,7 @@ type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : fals
 
 type AssertTrue<T extends true> = T
 
-//+_+// 요청 13개와 성공 응답이 1:1 로 대응하지 않으면 컴파일이 깨진다. 핸들러 없이 망라성을 고정한다
+//+_+// 요청 14개와 성공 응답이 1:1 로 대응하지 않으면 컴파일이 깨진다. 핸들러 없이 망라성을 고정한다
 export type RequestsAndResponsesMatch = AssertTrue<
   MutuallyAssignable<DashboardRequestType, SuccessResponseType>
 >

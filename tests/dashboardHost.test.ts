@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { DebuggerBackend } from '../src/background/debuggerSessionManager'
 import type { Clock } from '../src/background/previewCaptureManager'
 import { ROUND_LOG_PREFIX, formatRoundClock, frameFingerprint } from '../src/background/roundLog'
-import { createDashboardHost } from '../src/background/serviceWorker'
-import type { DashboardHost, FocusTab, ListTabs } from '../src/background/serviceWorker'
+import { createDashboardHost, excludeOwnPages } from '../src/background/serviceWorker'
+import type { CreateTab, DashboardHost, FocusTab, ListTabs } from '../src/background/serviceWorker'
 import type { TabsBackend } from '../src/background/tabManager'
 import { DEFAULT_PROJECT_ID } from '../src/shared/messages'
 import { CAPTURE_INTERVAL_MS } from '../src/shared/scheduler'
@@ -112,7 +112,7 @@ interface Fixture {
   tabsBackend: StubTabs
   clock: StubClock
   storage: StubStorage
-  listedWindowIds: (number | undefined)[]
+  createdUrls: string[]
   activated: { tabId: number; windowId: number }[]
 }
 
@@ -120,30 +120,44 @@ function fixture(tabIds: number[] = [11, 12], storage = new StubStorage()): Fixt
   const debuggerBackend = new StubDebugger()
   const tabsBackend = new StubTabs()
   const clock = new StubClock()
-  const listedWindowIds: (number | undefined)[] = []
+  const createdUrls: string[] = []
   const activated: { tabId: number; windowId: number }[] = []
 
   for (const tabId of tabIds) {
     tabsBackend.tabs.set(tabId, tabInfo(tabId, `https://example.com/${String(tabId)}`))
   }
 
-  const listTabs: ListTabs = (windowId) => {
-    listedWindowIds.push(windowId)
-    return Promise.resolve([...tabsBackend.tabs.values()])
-  }
+  //+_+// P5-D12. 창 인자가 사라졌다. 창 제한은 chromeListTabs 안의 query 로만 남는다
+  const listTabs: ListTabs = () => Promise.resolve([...tabsBackend.tabs.values()])
 
   const focusTab: FocusTab = (tabId, windowId) => {
     activated.push({ tabId, windowId })
     return Promise.resolve()
   }
 
+  //+_+// P5-D27 의 url 경로다. 워커가 탭을 만든다. 새 탭 id 는 기존과 겹치지 않게 고른다
+  const createTab: CreateTab = (url) => {
+    createdUrls.push(url)
+    const created = { ...tabInfo(900 + createdUrls.length, url), currentUrl: url }
+    tabsBackend.tabs.set(created.tabId, created)
+    return Promise.resolve(created)
+  }
+
   return {
-    host: createDashboardHost(debuggerBackend, tabsBackend, listTabs, focusTab, storage, clock),
+    host: createDashboardHost(
+      debuggerBackend,
+      tabsBackend,
+      listTabs,
+      focusTab,
+      createTab,
+      storage,
+      clock,
+    ),
     debuggerBackend,
     tabsBackend,
     clock,
     storage,
-    listedWindowIds,
+    createdUrls,
     activated,
   }
 }
@@ -314,18 +328,51 @@ describe('P4-D2 - BIND_TILE creates the tile the dev button asks for', () => {
   })
 })
 
-describe('P4 - LIST_BROWSER_TABS follows the window the request came from', () => {
-  it('passes the sender window id through', async () => {
-    const { host, listedWindowIds } = fixture()
-    const response = await host.handle({ type: 'LIST_BROWSER_TABS' }, 7)
+//+_+// P5-D12. J16 의 창 제한을 걷어냈다. 확장 자신의 페이지를 빼는 나머지 절반은 남는다
+describe('P5-D12 - LIST_BROWSER_TABS no longer narrows by window', () => {
+  it('returns every tab the adapter reports', async () => {
+    const { host } = fixture()
+    const response = await host.handle({ type: 'LIST_BROWSER_TABS' })
     expect(response).toMatchObject({ ok: true, type: 'LIST_BROWSER_TABS' })
-    expect(listedWindowIds).toEqual([7])
+    if (!response.ok || response.type !== 'LIST_BROWSER_TABS') {
+      throw new Error('unexpected response')
+    }
+    expect(response.tabs.map((tab) => tab.tabId)).toEqual([11, 12])
   })
 
-  it('passes undefined when the sender has no tab', async () => {
-    const { host, listedWindowIds } = fixture()
-    await host.handle({ type: 'LIST_BROWSER_TABS' })
-    expect(listedWindowIds).toEqual([undefined])
+  it('carries tabs from more than one window', async () => {
+    const { host, tabsBackend } = fixture()
+    tabsBackend.tabs.set(21, { ...tabInfo(21, 'https://example.com/21'), windowId: 5 })
+
+    const response = await host.handle({ type: 'LIST_BROWSER_TABS' })
+    if (!response.ok || response.type !== 'LIST_BROWSER_TABS') {
+      throw new Error('unexpected response')
+    }
+    expect(response.tabs.map((tab) => tab.windowId)).toEqual([1, 1, 5])
+  })
+})
+
+describe('J16 - the extension keeps its own pages out of the tab list', () => {
+  const own = 'chrome-extension://abcdef/'
+
+  it('drops a tab whose url starts with the extension origin', () => {
+    const tabs = [tabInfo(11, 'https://example.com/11'), tabInfo(12, `${own}dashboard.html`)]
+    expect(excludeOwnPages(tabs, own).map((tab) => tab.tabId)).toEqual([11])
+  })
+
+  it('keeps every tab when none of them is the extension', () => {
+    const tabs = [tabInfo(11, 'https://example.com/11'), tabInfo(12, 'https://example.com/12')]
+    expect(excludeOwnPages(tabs, own)).toHaveLength(2)
+  })
+
+  //+_+// 다른 확장의 페이지는 남긴다. 재귀 캡처가 되는 것은 자기 자신뿐이다
+  it('keeps a page that belongs to a different extension', () => {
+    const tabs = [tabInfo(11, 'chrome-extension://zzzzzz/panel.html')]
+    expect(excludeOwnPages(tabs, own)).toHaveLength(1)
+  })
+
+  it('drops nothing from an empty list', () => {
+    expect(excludeOwnPages([], own)).toEqual([])
   })
 })
 
@@ -860,5 +907,156 @@ describe('S1 - switching a project stops capturing the one that left', () => {
 
     await host.handle({ type: 'DELETE_PROJECT', projectId: DEFAULT_PROJECT_ID })
     expect(host.engine.captures.statusOf('t1')).toBeNull()
+  })
+})
+
+//+_+// P5-D27. v1 section 9.1 의 두 경로다. BIND_TILE 을 확장하지 않고 별도 요청으로 둔다
+describe('P5-D27 - ADD_TILE covers the two v1 9.1 paths', () => {
+  async function addTile(
+    host: DashboardHost,
+    source: { kind: 'tab'; tabId: number } | { kind: 'url'; url: string },
+  ): Promise<string> {
+    const response = await host.handle({ type: 'ADD_TILE', source })
+    if (!response.ok || response.type !== 'ADD_TILE') {
+      throw new Error(`unexpected response ${JSON.stringify(response)}`)
+    }
+    return response.tileId
+  }
+
+  async function tilesOf(host: DashboardHost) {
+    return (await projectState(host)).project.tiles
+  }
+
+  //+_+// launchUrl 이 비면 S6 의 URL 기반 재연결이 성립하지 않는다. 이 단계의 조용한 핵심이다
+  it('fills launchUrl from the current url of the chosen tab', async () => {
+    const { host } = fixture()
+    const tileId = await addTile(host, { kind: 'tab', tabId: 11 })
+
+    const tiles = await tilesOf(host)
+    expect(tiles).toHaveLength(1)
+    expect(tiles[0]).toMatchObject({ id: tileId, launchUrl: 'https://example.com/11' })
+  })
+
+  it('fills launchUrl from the url that was typed', async () => {
+    const { host, createdUrls } = fixture()
+    const tileId = await addTile(host, { kind: 'url', url: 'https://example.org/dash' })
+
+    expect(createdUrls).toEqual(['https://example.org/dash'])
+    const tiles = await tilesOf(host)
+    expect(tiles[0]).toMatchObject({ id: tileId, launchUrl: 'https://example.org/dash' })
+  })
+
+  it('binds the tile to the tab it was given', async () => {
+    const { host } = fixture()
+    const tileId = await addTile(host, { kind: 'tab', tabId: 12 })
+
+    const state = await projectState(host)
+    expect(state.runtimeStates[0]).toMatchObject({ tileId, tabId: 12 })
+  })
+
+  it('binds the tile to the tab the worker created', async () => {
+    const { host } = fixture()
+    const tileId = await addTile(host, { kind: 'url', url: 'https://example.org/dash' })
+
+    const state = await projectState(host)
+    expect(state.runtimeStates[0]).toMatchObject({ tileId, tabId: 901 })
+  })
+
+  //+_+// P5-D28. 오매칭보다 미매칭이 안전한 실패다
+  it('uses exact as the matchMode default', async () => {
+    const { host } = fixture()
+    await addTile(host, { kind: 'tab', tabId: 11 })
+    expect((await tilesOf(host))[0].matchMode).toBe('exact')
+  })
+
+  it('places the tile in the first free 1x1 slot', async () => {
+    const { host } = fixture()
+    await addTile(host, { kind: 'tab', tabId: 11 })
+    await addTile(host, { kind: 'tab', tabId: 12 })
+
+    expect((await tilesOf(host)).map((tile) => [tile.x, tile.y, tile.w, tile.h])).toEqual([
+      [0, 0, 1, 1],
+      [1, 0, 1, 1],
+    ])
+  })
+
+  it('gives every tile its own id', async () => {
+    const { host } = fixture()
+    const first = await addTile(host, { kind: 'tab', tabId: 11 })
+    const second = await addTile(host, { kind: 'tab', tabId: 12 })
+    expect(first).not.toBe(second)
+  })
+
+  it('refuses a 17th tile and says the grid is full', async () => {
+    const { host, tabsBackend } = fixture([])
+    for (let index = 0; index < 16; index += 1) {
+      const tabId = 100 + index
+      tabsBackend.tabs.set(tabId, tabInfo(tabId, `https://example.com/${String(tabId)}`))
+      await addTile(host, { kind: 'tab', tabId })
+    }
+
+    const response = await host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 200 } })
+    expect(response).toMatchObject({ ok: false, type: 'ADD_TILE', errorCode: 'GRID_FULL' })
+  })
+
+  it('refuses a tabId that does not exist', async () => {
+    const { host } = fixture()
+    const response = await host.handle({
+      type: 'ADD_TILE',
+      source: { kind: 'tab', tabId: 999999 },
+    })
+    expect(response).toMatchObject({ ok: false, type: 'ADD_TILE', errorCode: 'TAB_NOT_FOUND' })
+    expect(await tilesOf(host)).toEqual([])
+  })
+
+  //+_+// 자리가 없으면 탭을 만들지 않는다. 만들고 버리면 사용자 탭이 남는다
+  it('does not create a tab when the grid is already full', async () => {
+    const { host, tabsBackend, createdUrls } = fixture([])
+    for (let index = 0; index < 16; index += 1) {
+      const tabId = 100 + index
+      tabsBackend.tabs.set(tabId, tabInfo(tabId, `https://example.com/${String(tabId)}`))
+      await addTile(host, { kind: 'tab', tabId })
+    }
+
+    const response = await host.handle({
+      type: 'ADD_TILE',
+      source: { kind: 'url', url: 'https://example.org/dash' },
+    })
+    expect(response).toMatchObject({ ok: false, errorCode: 'GRID_FULL' })
+    expect(createdUrls).toEqual([])
+  })
+
+  it('attaches the debugger to the new tile on the next tick', async () => {
+    const { host, debuggerBackend } = fixture()
+    await addTile(host, { kind: 'tab', tabId: 11 })
+
+    host.engine.captures.tick()
+    await Promise.resolve()
+    expect(debuggerBackend.attached).toEqual([11])
+  })
+
+  //+_+// J88. 타일의 존재는 프로젝트 내용이다. 레이아웃 저장(S4)과 다른 것으로 본다
+  it('persists the new tile', async () => {
+    const { host, storage } = fixture()
+    const before = storage.writes
+    await addTile(host, { kind: 'tab', tabId: 11 })
+    expect(storage.writes).toBeGreaterThan(before)
+  })
+
+  it('adds the tile to the project that is active', async () => {
+    const { host } = fixture()
+    const created = await host.handle({ type: 'CREATE_PROJECT', name: 'Monitoring' })
+    if (!created.ok || created.type !== 'CREATE_PROJECT') {
+      throw new Error('create failed')
+    }
+    await host.handle({ type: 'SET_ACTIVE_PROJECT', projectId: created.project.id })
+    await addTile(host, { kind: 'tab', tabId: 11 })
+
+    const listed = await host.handle({ type: 'LIST_PROJECTS' })
+    if (!listed.ok || listed.type !== 'LIST_PROJECTS') {
+      throw new Error('list failed')
+    }
+    expect(listed.projects[0].tiles).toEqual([])
+    expect(listed.projects[1].tiles).toHaveLength(1)
   })
 })
