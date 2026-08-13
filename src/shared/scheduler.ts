@@ -43,6 +43,11 @@ export function defaultRefreshIntervalMs(w: number, h: number): number {
   return CAPTURE_INTERVAL_MS.spanSmall
 }
 
+//+_+// P5-D26. 사용자 지정 주기의 하한이다. serviceWorker 의 DRIVER_TICK_MS 와 같은 값이어야 한다
+//+_+// 구동자 격자보다 짧은 주기는 표현할 수 없다. L32 가 "주기 < 250 은 tick 하한" 으로 서술한다
+//+_+// 두 값이 어긋나는지는 시험이 지킨다. 구동자 상수를 여기로 옮기지 않는다. 층이 다르다
+export const MIN_TILE_INTERVAL_MS = 250
+
 //+_+// P5-D16. 사용자 지정값이 span 자동 배정을 이긴다. P5-D21 이 별도 필드로 정했다
 export function tileIntervalMs(tile: WebTile): number {
   return tile.refreshIntervalOverrideMs ?? tile.refreshIntervalMs

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DRIVER_TICK_MS } from '../src/background/serviceWorker'
 import {
   BACKOFF_STEPS_MS,
   CAPTURE_INTERVAL_MS,
@@ -9,6 +10,7 @@ import {
   canEnqueue,
   defaultRefreshIntervalMs,
   effectiveIntervalMs,
+  MIN_TILE_INTERVAL_MS,
   nextDelayMs,
   nextDueAtFrom,
   tileIntervalMs,
@@ -57,6 +59,11 @@ describe('P5-D16 - the per tile override wins over the span assignment', () => {
   it('does not treat the span assignment as an override', () => {
     const resized = { ...tile(2, 2, 2000), refreshIntervalOverrideMs: 9000, refreshIntervalMs: 2500 }
     expect(tileIntervalMs(resized)).toBe(9000)
+  })
+
+  //+_+// P5-D26 의 하한은 구동자 격자에서 나온다. 두 값이 조용히 어긋나면 하한이 뜻을 잃는다
+  it('keeps the override floor equal to the driver tick', () => {
+    expect(MIN_TILE_INTERVAL_MS).toBe(DRIVER_TICK_MS)
   })
 })
 

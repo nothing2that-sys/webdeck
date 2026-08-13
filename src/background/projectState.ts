@@ -36,8 +36,9 @@ export function resolveProjects(
   return { projects, activeProjectId: first.id }
 }
 
-//+_+// P4-D2 의 개발 전용 바인딩이 만드는 타일이다. span 은 1x1 고정이다
-//+_+// 사용자 지정 span 은 S4 의 Resize 가 만든다. 생성 시점에 고르게 하지 않는다
+//+_+// P5-D27 의 ADD_TILE 이 만드는 타일이다. span 은 1x1 고정이다
+//+_+// 사용자 지정 span 은 Resize 가 만든다. 생성 시점에 고르게 하지 않는다
+//+_+// 이름은 P4-D2 의 개발 전용 바인딩에서 왔다. 그 UI 는 P5-D13 으로 사라졌고 상수는 계승됐다
 export const DEV_TILE_SPAN = 1
 
 //+_+// 자리가 없으면 null 이다. v1 section 7.2 line 589 가 사용자에게 알리라고 요구한다
@@ -53,8 +54,9 @@ export function newTile(
   return {
     id: tileId,
     launchUrl,
-    //+_+// Phase 4 는 URL 로 재연결하지 않는다. matchMode 의 소비자는 Phase 5 의 v1 section 10 이다
-    matchMode: 'origin',
+    //+_+// P5-D28. 기본값은 exact 다. 오매칭은 사용자가 눈치채기 어렵고 미매칭은 DETACHED 로 보인다
+    //+_+// 소비자는 S6 의 v1 section 10 재연결이다. 회피 수단은 S3 의 matchMode 노출이다
+    matchMode: 'exact',
     x: position.x,
     y: position.y,
     w: DEV_TILE_SPAN,

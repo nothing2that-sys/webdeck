@@ -9,6 +9,7 @@ import {
   serializeState,
 } from '../src/shared/storage'
 import type { KeyValueBackend } from '../src/shared/storage'
+import { MIN_TILE_INTERVAL_MS } from '../src/shared/scheduler'
 import type { Project, WebTile } from '../src/shared/types'
 
 function tile(id: string, x: number, y: number): WebTile {
@@ -229,5 +230,44 @@ describe('P5-D21 - refreshIntervalOverrideMs survives the round trip', () => {
       tiles: [{ ...tile('t1', 0, 0), refreshIntervalOverrideMs: 'fast' }],
     }
     expect(deserializeProject(dirty)).toBeNull()
+  })
+})
+
+//+_+// P5-D26. 구동자 격자보다 짧은 주기는 표현할 수 없다. 저장 경로에서 먼저 막는다
+describe('P5-D26 - the override floor is the driver tick', () => {
+  function withOverride(value: unknown) {
+    return {
+      ...project([]),
+      tiles: [{ ...tile('t1', 0, 0), refreshIntervalOverrideMs: value }],
+    }
+  }
+
+  it('accepts the floor itself', () => {
+    expect(MIN_TILE_INTERVAL_MS).toBe(250)
+    expect(deserializeProject(withOverride(250))?.tiles[0].refreshIntervalOverrideMs).toBe(250)
+  })
+
+  it('accepts a value above the floor', () => {
+    expect(deserializeProject(withOverride(9000))?.tiles[0].refreshIntervalOverrideMs).toBe(9000)
+  })
+
+  it('rejects a value one below the floor', () => {
+    expect(deserializeProject(withOverride(249))).toBeNull()
+  })
+
+  it('rejects zero and a negative value', () => {
+    expect(deserializeProject(withOverride(0))).toBeNull()
+    expect(deserializeProject(withOverride(-1))).toBeNull()
+  })
+
+  it('rejects a value that is not an integer', () => {
+    expect(deserializeProject(withOverride(250.5))).toBeNull()
+    expect(deserializeProject(withOverride(Number.NaN))).toBeNull()
+  })
+
+  //+_+// 기존 refreshIntervalMs 의 검증 규칙은 바꾸지 않는다. 하한은 사용자 지정값에만 건다
+  it('leaves the span assigned refreshIntervalMs rule alone', () => {
+    const belowFloor = { ...project([]), tiles: [{ ...tile('t1', 0, 0), refreshIntervalMs: 1 }] }
+    expect(deserializeProject(belowFloor)).not.toBeNull()
   })
 })

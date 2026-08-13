@@ -94,12 +94,18 @@ describe('P4-D2 - the dev binding places a 1x1 tile in the first empty slot', ()
     )
   })
 
-  it('creates a tile that keepAlive and fit mode defaults leave to Phase 5', () => {
+  //+_+// P5-D28. matchMode 기본값은 exact 다. 오매칭보다 미매칭이 안전한 실패다
+  it('creates a tile with the P5-D28 defaults', () => {
     expect(newTile('t1', 'https://example.com/a', [])).toMatchObject({
       keepAlive: false,
       fitMode: 'contain',
-      matchMode: 'origin',
+      matchMode: 'exact',
     })
+  })
+
+  it('leaves the interval override unset so the span assignment applies', () => {
+    const created = newTile('t1', 'https://example.com/a', [])
+    expect(Object.hasOwn(created as object, 'refreshIntervalOverrideMs')).toBe(false)
   })
 })
 
