@@ -1,3 +1,4 @@
+import type { GridRect } from '../shared/grid'
 import { DEFAULT_PROJECT_ID } from '../shared/messages'
 import type { DashboardRequest, DashboardResponse } from '../shared/messages'
 
@@ -34,6 +35,14 @@ export async function listBrowserTabs(): Promise<DashboardResponse> {
 
 export async function bindTile(tileId: string, tabId: number): Promise<DashboardResponse> {
   return send({ type: 'BIND_TILE', tileId, tabId })
+}
+
+export async function focusTile(tileId: string): Promise<DashboardResponse> {
+  return send({ type: 'FOCUS_TILE', tileId })
+}
+
+export async function setTileRect(tileId: string, rect: GridRect): Promise<DashboardResponse> {
+  return send({ type: 'SET_TILE_RECT', tileId, rect })
 }
 
 //+_+// 타일 id 는 요청하는 쪽이 만든다. BIND_TILE 이 tileId 를 받는 형태이기 때문이다

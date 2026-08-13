@@ -15,6 +15,9 @@
   --status-detached: #a05a2c;
   --status-devtools: #8155c4;
   --status-error: #b3453f;
+  --select-ring: #4a7cc4;
+  --drop-valid: #2f9e5e;
+  --drop-invalid: #b3453f;
   --grid-gap: 8px;
   --radius: 6px;
 }
@@ -77,6 +80,11 @@ body {
   max-width: 320px;
 }
 
+.toolbar-toggle--on {
+  border-color: var(--select-ring);
+  box-shadow: inset 0 0 0 1px var(--select-ring);
+}
+
 .grid {
   flex: 1;
   display: grid;
@@ -91,6 +99,7 @@ body {
 }
 
 .tile {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -99,6 +108,46 @@ body {
   background: var(--surface-panel);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
+}
+
+.tile--selected {
+  border-color: var(--select-ring);
+  box-shadow: inset 0 0 0 1px var(--select-ring);
+}
+
+.tile--editing {
+  cursor: grab;
+  touch-action: none;
+}
+
+.tile--dragging {
+  opacity: 0.6;
+  cursor: grabbing;
+}
+
+.tile--invalid {
+  border-color: var(--drop-invalid);
+}
+
+.tile-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background: var(--select-ring);
+  border-top-left-radius: var(--radius);
+}
+
+.drop-indicator {
+  pointer-events: none;
+  border: 2px solid var(--drop-valid);
+  border-radius: var(--radius);
+}
+
+.drop-indicator--invalid {
+  border-color: var(--drop-invalid);
 }
 
 .tile-head {
