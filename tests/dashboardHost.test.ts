@@ -1496,3 +1496,252 @@ describe('P5-D29 - BIND_TILE persists too', () => {
     expect(storage.writes).toBe(before)
   })
 })
+
+//+_+// v1 section 9.4. 탭이 닫혀도 타일을 지우지 않는다. Reopen / Bind / Remove 가 그 위에 얹힌다
+describe('P5-D32 - REOPEN_TILE puts the tile back on a fresh tab', () => {
+  async function detachedTile(): Promise<{ value: Fixture; tileId: string }> {
+    const value = fixture()
+    const added = await value.host.handle({
+      type: 'ADD_TILE',
+      source: { kind: 'tab', tabId: 11 },
+    })
+    if (!added.ok || added.type !== 'ADD_TILE') {
+      throw new Error('add failed')
+    }
+    value.tabsBackend.closeTab(11)
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    return { value, tileId: added.tileId }
+  }
+
+  async function statusOf(value: Fixture, tileId: string): Promise<string> {
+    const state = (await projectState(value.host)).runtimeStates.find(
+      (item) => item.tileId === tileId,
+    )
+    if (state === undefined) {
+      throw new Error(`no runtime state for ${tileId}`)
+    }
+    return state.status
+  }
+
+  it('shows the tile as DETACHED once its tab is gone', async () => {
+    const { value, tileId } = await detachedTile()
+    expect(await statusOf(value, tileId)).toBe('DETACHED')
+  })
+
+  //+_+// J102 의 결과다. resize 는 fault 를 지우는 경로가 아니다
+  it('does not let a resize clear the detached state', async () => {
+    const { value, tileId } = await detachedTile()
+    await value.host.handle({ type: 'SET_TILE_RECT', tileId, rect: { x: 0, y: 0, w: 2, h: 2 } })
+
+    expect(await statusOf(value, tileId)).toBe('DETACHED')
+  })
+
+  it('does not let a settings change clear the detached state', async () => {
+    const { value, tileId } = await detachedTile()
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: {
+        customTitle: 'Named',
+        fitMode: 'contain',
+        matchMode: 'exact',
+        refreshIntervalOverrideMs: 9000,
+      },
+    })
+
+    expect(await statusOf(value, tileId)).toBe('DETACHED')
+  })
+
+  it('opens the launch url on a new tab and rebinds the tile', async () => {
+    const { value, tileId } = await detachedTile()
+    const response = await value.host.handle({ type: 'REOPEN_TILE', tileId })
+
+    expect(response).toMatchObject({ ok: true, type: 'REOPEN_TILE' })
+    expect(value.createdUrls).toEqual(['https://example.com/11'])
+  })
+
+  //+_+// Reopen 은 fault 를 지우는 명시 경로다. 새 탭에 걸므로 엔진이 새 상태를 만든다
+  it('clears the detached state', async () => {
+    const { value, tileId } = await detachedTile()
+    await value.host.handle({ type: 'REOPEN_TILE', tileId })
+
+    expect(await statusOf(value, tileId)).not.toBe('DETACHED')
+  })
+
+  it('keeps the tileId, the rect and the settings', async () => {
+    const { value, tileId } = await detachedTile()
+    await value.host.handle({ type: 'SET_TILE_RECT', tileId, rect: { x: 2, y: 3, w: 1, h: 1 } })
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: {
+        customTitle: 'Named',
+        fitMode: 'cover',
+        matchMode: 'prefix',
+        refreshIntervalOverrideMs: 9000,
+      },
+    })
+    await value.host.handle({ type: 'REOPEN_TILE', tileId })
+
+    const tiles = (await projectState(value.host)).project.tiles
+    expect(tiles).toHaveLength(1)
+    expect(tiles[0]).toMatchObject({
+      id: tileId,
+      x: 2,
+      y: 3,
+      customTitle: 'Named',
+      fitMode: 'cover',
+      matchMode: 'prefix',
+      refreshIntervalOverrideMs: 9000,
+    })
+  })
+
+  it('reports the tab it created', async () => {
+    const { value, tileId } = await detachedTile()
+    const response = await value.host.handle({ type: 'REOPEN_TILE', tileId })
+    if (!response.ok || response.type !== 'REOPEN_TILE') {
+      throw new Error('reopen failed')
+    }
+
+    const state = (await projectState(value.host)).runtimeStates[0]
+    expect(state.tabId).toBe(response.tabId)
+  })
+
+  it('captures the new tab on the next tick', async () => {
+    const { value, tileId } = await detachedTile()
+    await value.host.handle({ type: 'REOPEN_TILE', tileId })
+
+    value.host.engine.captures.tick()
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    expect(value.debuggerBackend.attached.at(-1)).toBe(901)
+  })
+
+  it('persists the rebind', async () => {
+    const { value, tileId } = await detachedTile()
+    const before = value.storage.writes
+    await value.host.handle({ type: 'REOPEN_TILE', tileId })
+    expect(value.storage.writes).toBeGreaterThan(before)
+  })
+
+  it('refuses a tileId the project does not have', async () => {
+    const response = await fixture().host.handle({ type: 'REOPEN_TILE', tileId: 'ghost' })
+    expect(response).toMatchObject({ ok: false, errorCode: 'TILE_NOT_FOUND' })
+  })
+
+  //+_+// S2 이전에 만들어진 저장값은 launchUrl 이 비어 있을 수 있다. 탭을 만들지 않고 실패한다
+  it('refuses a tile whose launch url is empty and creates no tab', async () => {
+    const value = fixture([])
+    value.tabsBackend.tabs.set(30, { ...tabInfo(30, ''), currentUrl: '' })
+    await value.host.handle({ type: 'BIND_TILE', tileId: 'blank', tabId: 30 })
+    const before = value.storage.writes
+
+    const response = await value.host.handle({ type: 'REOPEN_TILE', tileId: 'blank' })
+    expect(response).toMatchObject({ ok: false, errorCode: 'NO_LAUNCH_URL' })
+    expect(value.createdUrls).toEqual([])
+    expect(value.storage.writes).toBe(before)
+  })
+})
+
+//+_+// v1 section 9.4 의 Bind Existing Tab 이다. BIND_TILE 을 그대로 쓴다
+describe('S5 - binding a detached tile to another tab clears the fault', () => {
+  it('clears the detached state', async () => {
+    const value = fixture()
+    const added = await value.host.handle({
+      type: 'ADD_TILE',
+      source: { kind: 'tab', tabId: 11 },
+    })
+    if (!added.ok || added.type !== 'ADD_TILE') {
+      throw new Error('add failed')
+    }
+    value.tabsBackend.closeTab(11)
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+
+    await value.host.handle({ type: 'BIND_TILE', tileId: added.tileId, tabId: 12 })
+    const state = (await projectState(value.host)).runtimeStates[0]
+    expect(state.status).not.toBe('DETACHED')
+    expect(state.tabId).toBe(12)
+  })
+})
+
+//+_+// v1 section 9.4 의 Remove Tile 이다. 사용자의 탭은 닫지 않는다. CLAUDE.md section 5.2
+describe('P5-D33 - REMOVE_TILE drops the tile and leaves the tab open', () => {
+  async function tiled(): Promise<{ value: Fixture; tileId: string }> {
+    const value = fixture()
+    const added = await value.host.handle({
+      type: 'ADD_TILE',
+      source: { kind: 'tab', tabId: 11 },
+    })
+    if (!added.ok || added.type !== 'ADD_TILE') {
+      throw new Error('add failed')
+    }
+    return { value, tileId: added.tileId }
+  }
+
+  it('removes the tile from the project', async () => {
+    const { value, tileId } = await tiled()
+    const response = await value.host.handle({ type: 'REMOVE_TILE', tileId })
+
+    expect(response).toMatchObject({ ok: true, type: 'REMOVE_TILE' })
+    expect((await projectState(value.host)).project.tiles).toEqual([])
+  })
+
+  it('stops capturing the tile', async () => {
+    const { value, tileId } = await tiled()
+    await value.host.handle({ type: 'REMOVE_TILE', tileId })
+
+    expect(value.host.engine.captures.statusOf(tileId)).toBeNull()
+  })
+
+  it('leaves the tab open', async () => {
+    const { value, tileId } = await tiled()
+    await value.host.handle({ type: 'REMOVE_TILE', tileId })
+
+    expect(value.tabsBackend.tabs.has(11)).toBe(true)
+  })
+
+  it('persists the removal', async () => {
+    const { value, tileId } = await tiled()
+    const before = value.storage.writes
+    await value.host.handle({ type: 'REMOVE_TILE', tileId })
+    expect(value.storage.writes).toBe(before + 1)
+  })
+
+  it('frees the slot for a new tile', async () => {
+    const { value, tileId } = await tiled()
+    await value.host.handle({ type: 'REMOVE_TILE', tileId })
+
+    const added = await value.host.handle({
+      type: 'ADD_TILE',
+      source: { kind: 'tab', tabId: 12 },
+    })
+    expect(added).toMatchObject({ ok: true })
+    expect((await projectState(value.host)).project.tiles[0]).toMatchObject({ x: 0, y: 0 })
+  })
+
+  it('refuses a tileId the project does not have', async () => {
+    const value = fixture()
+    const before = value.storage.writes
+
+    const response = await value.host.handle({ type: 'REMOVE_TILE', tileId: 'ghost' })
+    expect(response).toMatchObject({ ok: false, errorCode: 'TILE_NOT_FOUND' })
+    expect(value.storage.writes).toBe(before)
+  })
+
+  it('lets the tile be removed while it is detached', async () => {
+    const { value, tileId } = await tiled()
+    value.tabsBackend.closeTab(11)
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+
+    const response = await value.host.handle({ type: 'REMOVE_TILE', tileId })
+    expect(response).toMatchObject({ ok: true })
+    expect((await projectState(value.host)).project.tiles).toEqual([])
+  })
+})

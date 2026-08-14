@@ -47,6 +47,10 @@ export type DashboardRequest =
   | { type: 'SET_TILE_SETTINGS'; tileId: string; settings: TileSettings }
   //+_+// P5-D27. BIND_TILE 을 확장하지 않는다. 그쪽은 저수준 재바인딩 수단으로 남는다. J9
   | { type: 'ADD_TILE'; source: AddTileSource }
+  //+_+// P5-D32. ADD_TILE 은 새 타일을 만들고 이것은 기존 타일의 자리와 설정을 지킨다. 둘을 묶지 않는다
+  | { type: 'REOPEN_TILE'; tileId: string }
+  //+_+// P5-D33. 타일만 지운다. 사용자의 탭은 닫지 않는다. CLAUDE.md section 5.2
+  | { type: 'REMOVE_TILE'; tileId: string }
   | { type: 'LIST_PROJECTS' }
   | { type: 'CREATE_PROJECT'; name: string }
   | { type: 'RENAME_PROJECT'; projectId: string; name: string }
@@ -101,6 +105,8 @@ export type DashboardResponse =
   | { ok: true; type: 'SET_TILE_SETTINGS' }
   //+_+// 타일 id 는 워커가 만든다. BIND_TILE 과 다른 점이며 화면이 그것을 응답에서 받는다
   | { ok: true; type: 'ADD_TILE'; tileId: string }
+  | { ok: true; type: 'REOPEN_TILE'; tabId: number }
+  | { ok: true; type: 'REMOVE_TILE' }
   //+_+// P5-D22. 화면은 활성 프로젝트 id 를 여기서 받는다. 상수를 하드코딩하지 않는다
   | { ok: true; type: 'LIST_PROJECTS'; projects: Project[]; activeProjectId: string }
   | { ok: true; type: 'CREATE_PROJECT'; project: Project }
@@ -115,7 +121,7 @@ type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : fals
 
 type AssertTrue<T extends true> = T
 
-//+_+// 요청 15개와 성공 응답이 1:1 로 대응하지 않으면 컴파일이 깨진다. 핸들러 없이 망라성을 고정한다
+//+_+// 요청 17개와 성공 응답이 1:1 로 대응하지 않으면 컴파일이 깨진다. 핸들러 없이 망라성을 고정한다
 export type RequestsAndResponsesMatch = AssertTrue<
   MutuallyAssignable<DashboardRequestType, SuccessResponseType>
 >

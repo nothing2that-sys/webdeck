@@ -430,6 +430,43 @@ export function createDashboardHost(
     return { ok: true, type: 'ADD_TILE', tileId }
   }
 
+  //+_+// P5-D32. v1 section 9.4 의 Reopen 이다. 자리와 설정과 tileId 를 그대로 두고 탭만 새로 만든다
+  //+_+// 새 탭에 걸므로 엔진이 새 TileState 를 만든다. 그것이 fault 를 지우는 명시 경로다
+  async function reopenTile(tileId: string): Promise<DashboardResponse> {
+    const tile = activeProject().tiles.find((item) => item.id === tileId)
+    if (tile === undefined) {
+      return failure('REOPEN_TILE', 'TILE_NOT_FOUND', `Unknown tileId ${tileId}`)
+    }
+    //+_+// S2 이전에 만들어진 저장값은 launchUrl 이 비어 있을 수 있다. 탭을 만들기 전에 막는다
+    if (tile.launchUrl.length === 0) {
+      return failure('REOPEN_TILE', 'NO_LAUNCH_URL', `Tile ${tileId} has no launch url to reopen`)
+    }
+
+    const created = await createTab(tile.launchUrl)
+    await engine.captures.unregister(tileId)
+    bindings.set(tileId, created.tabId)
+    summaries.delete(tileId)
+    engine.registerTile(tile, created.tabId, dashboardVisible)
+    await persist()
+    return { ok: true, type: 'REOPEN_TILE', tabId: created.tabId }
+  }
+
+  //+_+// P5-D33. v1 section 9.4 의 Remove Tile 이다. 사용자의 탭은 닫지 않는다
+  async function removeTile(tileId: string): Promise<DashboardResponse> {
+    const project = activeProject()
+    const index = project.tiles.findIndex((item) => item.id === tileId)
+    if (index < 0) {
+      return failure('REMOVE_TILE', 'TILE_NOT_FOUND', `Unknown tileId ${tileId}`)
+    }
+
+    project.tiles.splice(index, 1)
+    await engine.captures.unregister(tileId)
+    bindings.delete(tileId)
+    summaries.delete(tileId)
+    await persist()
+    return { ok: true, type: 'REMOVE_TILE' }
+  }
+
   //+_+// P5-D23. 생성은 생성만 한다. 전환은 SET_ACTIVE_PROJECT 가 따로 맡는다. J82
   async function createNewProject(name: string): Promise<DashboardResponse> {
     const created = createProject(crypto.randomUUID(), name)
@@ -503,6 +540,10 @@ export function createDashboardHost(
           return { ok: true, type: 'LIST_BROWSER_TABS', tabs: await listTabs() }
         case 'ADD_TILE':
           return addTile(request.source)
+        case 'REOPEN_TILE':
+          return reopenTile(request.tileId)
+        case 'REMOVE_TILE':
+          return removeTile(request.tileId)
         case 'BIND_TILE':
           return bindTile(request.tileId, request.tabId)
         //+_+// P4-D8. 핸들러를 만들지 않는다. 프레임은 GET_PROJECT_STATE 가 나른다. 타입은 남긴다
