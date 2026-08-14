@@ -7,10 +7,10 @@ import type { CreateTab, DashboardHost, FocusTab, ListTabs } from '../src/backgr
 import type { TabsBackend } from '../src/background/tabManager'
 import { DEFAULT_PROJECT_ID } from '../src/shared/messages'
 import type { TileSettings } from '../src/shared/messages'
-import { CAPTURE_INTERVAL_MS } from '../src/shared/scheduler'
+import { CAPTURE_INTERVAL_MS, tileIntervalMs } from '../src/shared/scheduler'
 import { STORAGE_KEY } from '../src/shared/storage'
 import type { KeyValueBackend } from '../src/shared/storage'
-import type { BrowserTabInfo } from '../src/shared/types'
+import type { BrowserTabInfo, WebTile } from '../src/shared/types'
 
 class StubClock implements Clock {
   current = 0
@@ -862,15 +862,6 @@ describe('S1 - the worker persists the project list', () => {
     expect(response).toMatchObject({ ok: true, activeProjectId: DEFAULT_PROJECT_ID })
   })
 
-  //+_+// S4 의 항목이다. 저장 함수는 만들되 SET_TILE_RECT 에서 부르지 않는다
-  it('does not persist a layout change yet', async () => {
-    const { host, storage } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
-    const before = storage.writes
-
-    await host.handle({ type: 'SET_TILE_RECT', tileId: 't1', rect: { x: 2, y: 2, w: 1, h: 1 } })
-    expect(storage.writes).toBe(before)
-  })
 })
 
 describe('S1 - switching a project stops capturing the one that left', () => {
@@ -1306,5 +1297,202 @@ describe('S3 - only an interval change re-registers the tile', () => {
     value.clock.current = 1000
     await value.host.handle({ type: 'SET_TILE_SETTINGS', tileId, settings: DEFAULTS })
     expect(await settleRound(value)).toBe(3)
+  })
+})
+
+//+_+// P5-D14. Drop 성공 시점이다. Edit Layout 종료를 기다리지 않는다
+//+_+// P5-D29. 프로젝트 내용이 바뀌면 저장한다. 실패한 요청은 아무것도 남기지 않는다
+describe('P5-D14 - a successful drop is persisted at once', () => {
+  async function tiledFixture(): Promise<{ value: Fixture; tileId: string }> {
+    const value = fixture()
+    const response = await value.host.handle({
+      type: 'ADD_TILE',
+      source: { kind: 'tab', tabId: 11 },
+    })
+    if (!response.ok || response.type !== 'ADD_TILE') {
+      throw new Error('add failed')
+    }
+    return { value, tileId: response.tileId }
+  }
+
+  function storedTiles(value: Fixture) {
+    const stored = value.storage.store.get(STORAGE_KEY) as {
+      projects: { id: string; tiles: WebTile[] }[]
+    }
+    const project = stored.projects.find((item) => item.id === DEFAULT_PROJECT_ID)
+    if (project === undefined) {
+      throw new Error('the default project was not stored')
+    }
+    return project.tiles
+  }
+
+  it('writes exactly once when a move succeeds', async () => {
+    const { value, tileId } = await tiledFixture()
+    const before = value.storage.writes
+
+    const response = await value.host.handle({
+      type: 'SET_TILE_RECT',
+      tileId,
+      rect: { x: 2, y: 3, w: 1, h: 1 },
+    })
+    expect(response).toMatchObject({ ok: true })
+    expect(value.storage.writes).toBe(before + 1)
+  })
+
+  it('stores the new position', async () => {
+    const { value, tileId } = await tiledFixture()
+    await value.host.handle({ type: 'SET_TILE_RECT', tileId, rect: { x: 2, y: 3, w: 1, h: 1 } })
+
+    expect(storedTiles(value)[0]).toMatchObject({ x: 2, y: 3, w: 1, h: 1 })
+  })
+
+  //+_+// J35 가 무효 Drop 을 화면에서 이미 걸러낸다. 이것은 워커가 재판정에서 거부하는 경로다
+  it('writes nothing when the worker refuses the rect', async () => {
+    const { value, tileId } = await tiledFixture()
+    await value.host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 12 } })
+    const before = value.storage.writes
+
+    const response = await value.host.handle({
+      type: 'SET_TILE_RECT',
+      tileId,
+      rect: { x: 1, y: 0, w: 1, h: 1 },
+    })
+    expect(response).toMatchObject({ ok: false, errorCode: 'INVALID_LAYOUT' })
+    expect(value.storage.writes).toBe(before)
+  })
+
+  it('writes nothing when the rect leaves the grid', async () => {
+    const { value, tileId } = await tiledFixture()
+    const before = value.storage.writes
+
+    const response = await value.host.handle({
+      type: 'SET_TILE_RECT',
+      tileId,
+      rect: { x: 3, y: 0, w: 2, h: 1 },
+    })
+    expect(response).toMatchObject({ ok: false, errorCode: 'INVALID_LAYOUT' })
+    expect(value.storage.writes).toBe(before)
+  })
+
+  it('writes nothing for a tileId the project does not have', async () => {
+    const value = fixture()
+    const before = value.storage.writes
+
+    const response = await value.host.handle({
+      type: 'SET_TILE_RECT',
+      tileId: 'ghost',
+      rect: { x: 0, y: 0, w: 1, h: 1 },
+    })
+    expect(response).toMatchObject({ ok: false, errorCode: 'TILE_NOT_FOUND' })
+    expect(value.storage.writes).toBe(before)
+  })
+
+  //+_+// resize 는 span 배정값을 덮어쓴다. 그 값도 같은 저장에 실린다
+  it('stores the span assigned interval a resize wrote', async () => {
+    const { value, tileId } = await tiledFixture()
+    await value.host.handle({ type: 'SET_TILE_RECT', tileId, rect: { x: 0, y: 0, w: 2, h: 2 } })
+
+    expect(storedTiles(value)[0]).toMatchObject({
+      w: 2,
+      h: 2,
+      refreshIntervalMs: CAPTURE_INTERVAL_MS.spanLarge,
+    })
+  })
+
+  //+_+// P5-D21. override 가 있으면 span 배정이 바뀌어도 실효 주기는 그대로다
+  it('keeps the override winning after a resize', async () => {
+    const { value, tileId } = await tiledFixture()
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: {
+        customTitle: '',
+        fitMode: 'contain',
+        matchMode: 'exact',
+        refreshIntervalOverrideMs: 9000,
+      },
+    })
+    await value.host.handle({ type: 'SET_TILE_RECT', tileId, rect: { x: 0, y: 0, w: 2, h: 2 } })
+
+    const stored = storedTiles(value)[0]
+    expect(stored).toMatchObject({
+      refreshIntervalMs: CAPTURE_INTERVAL_MS.spanLarge,
+      refreshIntervalOverrideMs: 9000,
+    })
+    expect(tileIntervalMs(stored)).toBe(9000)
+  })
+
+  //+_+// J102. 실효 주기가 그대로면 재등록하지 않는다. J96 과 같은 판정이다
+  it('does not re-register a resize that leaves the effective interval alone', async () => {
+    const { value, tileId } = await tiledFixture()
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: {
+        customTitle: '',
+        fitMode: 'contain',
+        matchMode: 'exact',
+        refreshIntervalOverrideMs: 9000,
+      },
+    })
+
+    value.host.engine.captures.tick()
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    expect(value.host.engine.captures.captureRecords).toHaveLength(1)
+
+    value.clock.current = 1000
+    await value.host.handle({ type: 'SET_TILE_RECT', tileId, rect: { x: 0, y: 0, w: 2, h: 2 } })
+    value.host.engine.captures.tick()
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    expect(value.host.engine.captures.captureRecords).toHaveLength(1)
+  })
+})
+
+//+_+// P5-D29. S5 에서 앞당긴 항목이다. ADD_TILE 과의 비대칭을 닫는다
+describe('P5-D29 - BIND_TILE persists too', () => {
+  it('writes when a bind succeeds', async () => {
+    const { host, storage } = fixture()
+    const before = storage.writes
+
+    const response = await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    expect(response).toMatchObject({ ok: true })
+    expect(storage.writes).toBe(before + 1)
+  })
+
+  it('writes when an existing tile is rebound', async () => {
+    const { host, storage } = fixture()
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    const before = storage.writes
+
+    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 12 })
+    expect(storage.writes).toBe(before + 1)
+  })
+
+  it('writes nothing when the tab is gone', async () => {
+    const { host, storage } = fixture()
+    const before = storage.writes
+
+    const response = await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 999999 })
+    expect(response).toMatchObject({ ok: false, errorCode: 'TAB_NOT_FOUND' })
+    expect(storage.writes).toBe(before)
+  })
+
+  it('writes nothing when the grid is full', async () => {
+    const { host, storage, tabsBackend } = fixture([])
+    for (let index = 0; index < 16; index += 1) {
+      const tabId = 100 + index
+      tabsBackend.tabs.set(tabId, tabInfo(tabId, `https://example.com/${String(tabId)}`))
+      await host.handle({ type: 'BIND_TILE', tileId: `t${String(index)}`, tabId })
+    }
+    tabsBackend.tabs.set(200, tabInfo(200, 'https://example.com/200'))
+    const before = storage.writes
+
+    const response = await host.handle({ type: 'BIND_TILE', tileId: 'overflow', tabId: 200 })
+    expect(response).toMatchObject({ ok: false, errorCode: 'GRID_FULL' })
+    expect(storage.writes).toBe(before)
   })
 })

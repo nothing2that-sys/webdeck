@@ -267,7 +267,8 @@ export function createDashboardHost(
   }
 
   //+_+// P4-D12. 화면이 이미 판정했더라도 워커가 다시 판정한다. 같은 isPlacementValid 를 쓴다
-  //+_+// 레이아웃은 워커 메모리에만 있다. 영구화는 WEBDECK_PLAN section 7 의 Phase 5 다
+  //+_+// P5-D14. Drop 성공 1회에 저장한다. Edit Layout 종료를 기다리지 않는다
+  //+_+// 거부된 요청은 아무것도 쓰지 않으므로 저장에도 도달하지 않는다
   async function setTileRect(tileId: string, rect: GridRect): Promise<DashboardResponse> {
     const project = activeProject()
     const tile = project.tiles.find((item) => item.id === tileId)
@@ -284,16 +285,20 @@ export function createDashboardHost(
 
     //+_+// span 이 바뀌면 v1 section 6 의 주기 구간도 바뀐다. P4-D4 는 값을 그대로 두라고 했을 뿐이다
     const resized = rect.w !== tile.w || rect.h !== tile.h
+    const before = tileIntervalMs(tile)
     tile.x = rect.x
     tile.y = rect.y
     tile.w = rect.w
     tile.h = rect.h
-    if (!resized) {
-      return { ok: true, type: 'SET_TILE_RECT' }
+    if (resized) {
+      tile.refreshIntervalMs = defaultRefreshIntervalMs(rect.w, rect.h)
     }
 
-    tile.refreshIntervalMs = defaultRefreshIntervalMs(rect.w, rect.h)
-    await reregister(tile)
+    //+_+// J102. 판정 기준은 실효 주기다. J96 과 같다. override 가 있으면 span 이 바뀌어도 그대로다
+    if (tileIntervalMs(tile) !== before) {
+      await reregister(tile)
+    }
+    await persist()
     return { ok: true, type: 'SET_TILE_RECT' }
   }
 
@@ -381,6 +386,8 @@ export function createDashboardHost(
 
     //+_+// P4-D11 이후로는 마지막 폴링이 알려 준 표시 상태를 쓴다
     engine.registerTile(tile, tabId, dashboardVisible)
+    //+_+// P5-D29. ADD_TILE 과 같다. 타일이 늘거나 바뀌었으면 저장한다
+    await persist()
     return { ok: true, type: 'BIND_TILE' }
   }
 
