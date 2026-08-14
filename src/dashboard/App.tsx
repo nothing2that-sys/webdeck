@@ -161,6 +161,8 @@ export function App(): React.JSX.Element {
         setNotice(`${response.errorCode}: ${response.message}`)
         return
       }
+      //+_+// 성공한 동작은 이전 안내를 지운다. loadProjects 보다 먼저다. 그쪽 오류를 덮지 않기 위해서다
+      setNotice('')
       setTiles([])
       setViews([])
       await loadProjects()
@@ -199,6 +201,7 @@ export function App(): React.JSX.Element {
       return
     }
     setProjectName('')
+    setNotice('')
     await loadProjects()
   }, [activeProjectId, loadProjects, projectName])
 
@@ -212,26 +215,37 @@ export function App(): React.JSX.Element {
       setNotice(`${response.errorCode}: ${response.message}`)
       return
     }
+    setNotice('')
     setTiles([])
     setViews([])
     await loadProjects()
   }, [activeProjectId, loadProjects])
 
   //+_+// P5-D12. 워커가 모든 창의 탭을 돌려준다. 목록은 시간이 지나면 낡으므로 다시 읽을 수 있게 둔다
-  const loadTabs = useCallback(async () => {
+  //+_+// 성공 여부를 돌려준다. 안내를 지울지는 부르는 쪽이 정한다
+  //+_+// 여기서 지우면 openMissing 이 방금 남긴 N tabs opened 를 뒤따르는 loadTabs 가 지운다. J120
+  const loadTabs = useCallback(async (): Promise<boolean> => {
     const response = await listBrowserTabs()
     if (!response.ok) {
       setNotice(`${response.errorCode}: ${response.message}`)
-      return
+      return false
     }
     if (response.type !== 'LIST_BROWSER_TABS') {
-      return
+      return false
     }
     setTabs(response.tabs)
     setSelectedTabId((current) =>
       response.tabs.some((tab) => tab.tabId === current) ? current : (response.tabs[0]?.tabId ?? null),
     )
+    return true
   }, [])
+
+  //+_+// 탭 새로고침 버튼 전용이다. 사용자가 직접 부른 회차만 안내를 지운다
+  const refreshTabs = useCallback(async () => {
+    if (await loadTabs()) {
+      setNotice('')
+    }
+  }, [loadTabs])
 
   useEffect(() => {
     void loadTabs()
@@ -399,7 +413,9 @@ export function App(): React.JSX.Element {
     const response = await focusTile(tileId)
     if (!response.ok) {
       setNotice(`${response.errorCode}: ${response.message}`)
+      return
     }
+    setNotice('')
   }, [])
 
   const cellAt = useCallback((event: React.PointerEvent): GridPosition | null => {
@@ -524,7 +540,7 @@ export function App(): React.JSX.Element {
             </option>
           ))}
         </select>
-        <button type="button" onClick={() => void loadTabs()}>
+        <button type="button" onClick={() => void refreshTabs()}>
           탭 새로고침
         </button>
         <button type="button" onClick={() => void addTileFromTab()}>
