@@ -162,8 +162,10 @@ export function resolveRuntimeStatus(
   if (captureStatus !== null) {
     return captureStatus
   }
+  //+_+// P5-D38. v1 section 10 5단계다. 붙을 탭이 없는 타일은 DETACHED 다
+  //+_+// tabId 를 저장하지 않으므로 재시작 직후의 타일은 전부 여기로 온다. v1 section 10 첫 문장
   if (tabId === undefined) {
-    return 'LOADING'
+    return 'DETACHED'
   }
   return tab === null ? 'DETACHED' : 'LOADING'
 }

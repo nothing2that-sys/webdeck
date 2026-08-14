@@ -511,6 +511,29 @@ export function createDashboardHost(
     return { ok: true, type: 'REOPEN_TILE', tabId: created.tabId }
   }
 
+  //+_+// P5-D6. v1 section 14 의 Refresh Preview 다. P4-D8 이 미결로 둔 의미를 이것으로 닫는다
+  //+_+// 페이지를 reload 하지 않는다. Reload Page 는 P5-D5 가 Phase 6 에 두었다
+  async function captureTile(tileId: string): Promise<DashboardResponse> {
+    if (bindings.get(tileId) === undefined) {
+      return failure('CAPTURE_TILE', 'TILE_NOT_BOUND', `Tile ${tileId} is not bound to a tab`)
+    }
+    if (!engine.captures.isScheduled(tileId)) {
+      return failure('CAPTURE_TILE', 'TAB_NOT_FOUND', `The tab of tile ${tileId} is gone`)
+    }
+
+    const frame = await engine.captures.captureOnce(tileId)
+    if (frame === null) {
+      return failure('CAPTURE_TILE', 'CAPTURE_FAILED', `The round for tile ${tileId} returned no frame`)
+    }
+    return {
+      ok: true,
+      type: 'CAPTURE_TILE',
+      imageBase64: frame.imageBase64,
+      format: frame.format,
+      bytes: frame.bytes,
+    }
+  }
+
   //+_+// P5-D33. v1 section 9.4 의 Remove Tile 이다. 사용자의 탭은 닫지 않는다
   async function removeTile(tileId: string): Promise<DashboardResponse> {
     const project = activeProject()
@@ -579,7 +602,13 @@ export function createDashboardHost(
     if (result.ok) {
       await applyProjects(result.projects, result.activeProjectId)
     }
-    await reconnect()
+    //+_+// P5-D39. 재연결은 부가 동작이다. 그것이 던져도 저장된 프로젝트는 돌려줘야 한다
+    //+_+// P5-D35 가 수동 재시도를 금지했으므로 여기서 던지면 복구 수단이 없다
+    try {
+      await reconnect()
+    } catch (error: unknown) {
+      console.error('[webdeck] reconnect failed', errorMessage(error))
+    }
     return result
   }
 
@@ -610,9 +639,8 @@ export function createDashboardHost(
           return openMissingTabs()
         case 'BIND_TILE':
           return bindTile(request.tileId, request.tabId)
-        //+_+// P4-D8. 핸들러를 만들지 않는다. 프레임은 GET_PROJECT_STATE 가 나른다. 타입은 남긴다
         case 'CAPTURE_TILE':
-          return failure(request.type, 'NOT_IMPLEMENTED', 'CAPTURE_TILE has no handler (P4-D8)')
+          return captureTile(request.tileId)
         case 'FOCUS_TILE':
           return focusTile(request.tileId)
         case 'SET_TILE_RECT':
