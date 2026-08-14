@@ -1,5 +1,11 @@
 import type { GridRect } from './grid'
-import type { BrowserTabInfo, Project, TileRuntimeState } from './types'
+import type {
+  BrowserTabInfo,
+  Project,
+  TileFitMode,
+  TileMatchMode,
+  TileRuntimeState,
+} from './types'
 
 //+_+// P5-D22. 기본 프로젝트의 id 다. 목록이 비었을 때 워커가 세우는 프로젝트가 이 id 를 쓴다
 //+_+// 새로 만드는 프로젝트의 id 는 crypto.randomUUID 다. 이 상수는 기본 프로젝트 전용이다
@@ -11,6 +17,16 @@ export const DEFAULT_PROJECT_NAME = 'WebDeck'
 
 //+_+// v1 section 9.1 의 두 경로다. tab 은 기존 탭을 걸고 url 은 워커가 새 탭을 만든다
 export type AddTileSource = { kind: 'tab'; tabId: number } | { kind: 'url'; url: string }
+
+//+_+// P5-D31. 부분 갱신을 만들지 않는다. 4필드 전체 교체다
+//+_+// 부분 갱신은 "필드 부재" 와 "값 비우기" 를 구별할 수 없다. customTitle 을 지우는 경로가 필요하다
+//+_+// 미지정의 표현은 customTitle 이 빈 문자열, refreshIntervalOverrideMs 가 null 이다
+export interface TileSettings {
+  customTitle: string
+  fitMode: TileFitMode
+  matchMode: TileMatchMode
+  refreshIntervalOverrideMs: number | null
+}
 
 //+_+// v1 section 19 line 1143~1150 의 7개. WORKSPACE 계열만 PROJECT 로 치환했다
 //+_+// P4-D12 의 SET_TILE_RECT 가 8번째다. v1 section 19 에 이름이 없어 새로 지은 유일한 요청이다
@@ -27,6 +43,8 @@ export type DashboardRequest =
   | { type: 'SET_TILE_KEEP_ALIVE'; tileId: string; enabled: boolean }
   //+_+// P4-D12. 유효성 판정의 권위는 워커다. 화면은 후보 rect 만 보낸다
   | { type: 'SET_TILE_RECT'; tileId: string; rect: GridRect }
+  //+_+// P5-D31. 같은 원칙이다. 화면이 검증했더라도 워커가 override 하한을 다시 본다
+  | { type: 'SET_TILE_SETTINGS'; tileId: string; settings: TileSettings }
   //+_+// P5-D27. BIND_TILE 을 확장하지 않는다. 그쪽은 저수준 재바인딩 수단으로 남는다. J9
   | { type: 'ADD_TILE'; source: AddTileSource }
   | { type: 'LIST_PROJECTS' }
@@ -80,6 +98,7 @@ export type DashboardResponse =
   | { ok: true; type: 'RELOAD_TILE' }
   | { ok: true; type: 'SET_TILE_KEEP_ALIVE' }
   | { ok: true; type: 'SET_TILE_RECT' }
+  | { ok: true; type: 'SET_TILE_SETTINGS' }
   //+_+// 타일 id 는 워커가 만든다. BIND_TILE 과 다른 점이며 화면이 그것을 응답에서 받는다
   | { ok: true; type: 'ADD_TILE'; tileId: string }
   //+_+// P5-D22. 화면은 활성 프로젝트 id 를 여기서 받는다. 상수를 하드코딩하지 않는다
@@ -96,7 +115,7 @@ type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : fals
 
 type AssertTrue<T extends true> = T
 
-//+_+// 요청 14개와 성공 응답이 1:1 로 대응하지 않으면 컴파일이 깨진다. 핸들러 없이 망라성을 고정한다
+//+_+// 요청 15개와 성공 응답이 1:1 로 대응하지 않으면 컴파일이 깨진다. 핸들러 없이 망라성을 고정한다
 export type RequestsAndResponsesMatch = AssertTrue<
   MutuallyAssignable<DashboardRequestType, SuccessResponseType>
 >

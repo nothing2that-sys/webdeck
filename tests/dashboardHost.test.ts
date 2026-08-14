@@ -6,6 +6,7 @@ import { createDashboardHost, excludeOwnPages } from '../src/background/serviceW
 import type { CreateTab, DashboardHost, FocusTab, ListTabs } from '../src/background/serviceWorker'
 import type { TabsBackend } from '../src/background/tabManager'
 import { DEFAULT_PROJECT_ID } from '../src/shared/messages'
+import type { TileSettings } from '../src/shared/messages'
 import { CAPTURE_INTERVAL_MS } from '../src/shared/scheduler'
 import { STORAGE_KEY } from '../src/shared/storage'
 import type { KeyValueBackend } from '../src/shared/storage'
@@ -1058,5 +1059,252 @@ describe('P5-D27 - ADD_TILE covers the two v1 9.1 paths', () => {
     }
     expect(listed.projects[0].tiles).toEqual([])
     expect(listed.projects[1].tiles).toHaveLength(1)
+  })
+})
+
+//+_+// P5-D31. 부분 갱신을 만들지 않는다. 4필드를 전부 싣는 전체 교체다
+describe('P5-D31 - SET_TILE_SETTINGS replaces all four fields', () => {
+  const DEFAULTS: TileSettings = {
+    customTitle: '',
+    fitMode: 'contain',
+    matchMode: 'exact',
+    refreshIntervalOverrideMs: null,
+  }
+
+  async function boundTile(value = fixture()): Promise<{ value: Fixture; tileId: string }> {
+    const response = await value.host.handle({
+      type: 'ADD_TILE',
+      source: { kind: 'tab', tabId: 11 },
+    })
+    if (!response.ok || response.type !== 'ADD_TILE') {
+      throw new Error('add failed')
+    }
+    return { value, tileId: response.tileId }
+  }
+
+  async function settingsOf(host: DashboardHost, tileId: string) {
+    const tile = (await projectState(host)).project.tiles.find((item) => item.id === tileId)
+    if (tile === undefined) {
+      throw new Error(`no tile ${tileId}`)
+    }
+    return tile
+  }
+
+  it('writes all four fields onto the tile', async () => {
+    const { value, tileId } = await boundTile()
+    const response = await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: {
+        customTitle: 'Named',
+        fitMode: 'cover',
+        matchMode: 'prefix',
+        refreshIntervalOverrideMs: 9000,
+      },
+    })
+
+    expect(response).toMatchObject({ ok: true, type: 'SET_TILE_SETTINGS' })
+    expect(await settingsOf(value.host, tileId)).toMatchObject({
+      customTitle: 'Named',
+      fitMode: 'cover',
+      matchMode: 'prefix',
+      refreshIntervalOverrideMs: 9000,
+    })
+  })
+
+  //+_+// P5-D31. 빈 문자열이 미지정이다. v1 section 15.7 이 비면 페이지 title 을 쓰라고 한다
+  it('drops the custom title rather than storing an empty string', async () => {
+    const { value, tileId } = await boundTile()
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, customTitle: 'Named' },
+    })
+    await value.host.handle({ type: 'SET_TILE_SETTINGS', tileId, settings: DEFAULTS })
+
+    const tile = await settingsOf(value.host, tileId)
+    expect(Object.hasOwn(tile, 'customTitle')).toBe(false)
+  })
+
+  //+_+// P5-D16. null 이면 span 배정으로 돌아간다
+  it('drops the override rather than storing null', async () => {
+    const { value, tileId } = await boundTile()
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, refreshIntervalOverrideMs: 9000 },
+    })
+    await value.host.handle({ type: 'SET_TILE_SETTINGS', tileId, settings: DEFAULTS })
+
+    const tile = await settingsOf(value.host, tileId)
+    expect(Object.hasOwn(tile, 'refreshIntervalOverrideMs')).toBe(false)
+    expect(tile.refreshIntervalMs).toBe(CAPTURE_INTERVAL_MS.spanSmall)
+  })
+
+  it('leaves the span assigned refreshIntervalMs alone', async () => {
+    const { value, tileId } = await boundTile()
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, refreshIntervalOverrideMs: 9000 },
+    })
+    expect((await settingsOf(value.host, tileId)).refreshIntervalMs).toBe(
+      CAPTURE_INTERVAL_MS.spanSmall,
+    )
+  })
+
+  //+_+// P5-D26. 화면 검증을 신뢰하지 않는다. 워커가 다시 판정한다. P4-D12 선례다
+  it('refuses an override below the floor', async () => {
+    const { value, tileId } = await boundTile()
+    for (const bad of [249, 0, -1, 250.5]) {
+      const response = await value.host.handle({
+        type: 'SET_TILE_SETTINGS',
+        tileId,
+        settings: { ...DEFAULTS, refreshIntervalOverrideMs: bad },
+      })
+      expect(response).toMatchObject({ ok: false, errorCode: 'INVALID_INTERVAL' })
+    }
+    expect(Object.hasOwn(await settingsOf(value.host, tileId), 'refreshIntervalOverrideMs')).toBe(
+      false,
+    )
+  })
+
+  it('accepts the floor itself', async () => {
+    const { value, tileId } = await boundTile()
+    const response = await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, refreshIntervalOverrideMs: 250 },
+    })
+    expect(response).toMatchObject({ ok: true })
+  })
+
+  it('refuses a tileId the project does not have', async () => {
+    const response = await fixture().host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId: 'ghost',
+      settings: DEFAULTS,
+    })
+    expect(response).toMatchObject({ ok: false, errorCode: 'TILE_NOT_FOUND' })
+  })
+
+  it('persists the change', async () => {
+    const { value, tileId } = await boundTile()
+    const before = value.storage.writes
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, customTitle: 'Named' },
+    })
+    expect(value.storage.writes).toBeGreaterThan(before)
+  })
+
+  it('does not persist a rejected change', async () => {
+    const { value, tileId } = await boundTile()
+    const before = value.storage.writes
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, refreshIntervalOverrideMs: 10 },
+    })
+    expect(value.storage.writes).toBe(before)
+  })
+})
+
+//+_+// J27 의 Resize 배선과 같은 성질이다. 주기를 바꾼 것만 재등록한다
+describe('S3 - only an interval change re-registers the tile', () => {
+  const DEFAULTS: TileSettings = {
+    customTitle: '',
+    fitMode: 'contain',
+    matchMode: 'exact',
+    refreshIntervalOverrideMs: null,
+  }
+
+  async function settleRound(value: Fixture): Promise<number> {
+    value.host.engine.captures.tick()
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    return value.host.engine.captures.captureRecords.length
+  }
+
+  async function tileWithOneRound(): Promise<{ value: Fixture; tileId: string }> {
+    const value = fixture()
+    const response = await value.host.handle({
+      type: 'ADD_TILE',
+      source: { kind: 'tab', tabId: 11 },
+    })
+    if (!response.ok || response.type !== 'ADD_TILE') {
+      throw new Error('add failed')
+    }
+    expect(await settleRound(value)).toBe(1)
+    return { value, tileId: response.tileId }
+  }
+
+  //+_+// 재등록은 만기를 now 로 되돌린다. 그 자리에서 한 회차가 더 도는 것으로 관측한다
+  it('re-registers when the override changes', async () => {
+    const { value, tileId } = await tileWithOneRound()
+    value.clock.current = 1000
+
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, refreshIntervalOverrideMs: 9000 },
+    })
+    expect(await settleRound(value)).toBe(2)
+  })
+
+  it('runs on the new interval after the change', async () => {
+    const { value, tileId } = await tileWithOneRound()
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, refreshIntervalOverrideMs: 9000 },
+    })
+    expect(await settleRound(value)).toBe(2)
+
+    value.clock.current = CAPTURE_INTERVAL_MS.spanSmall
+    expect(await settleRound(value)).toBe(2)
+
+    value.clock.current = 9000
+    expect(await settleRound(value)).toBe(3)
+  })
+
+  it('does not re-register when only matchMode changed', async () => {
+    const { value, tileId } = await tileWithOneRound()
+    value.clock.current = 1000
+
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, matchMode: 'prefix' },
+    })
+    expect(await settleRound(value)).toBe(1)
+  })
+
+  it('does not re-register when only the title and the fit mode changed', async () => {
+    const { value, tileId } = await tileWithOneRound()
+    value.clock.current = 1000
+
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, customTitle: 'Named', fitMode: 'cover' },
+    })
+    expect(await settleRound(value)).toBe(1)
+  })
+
+  it('re-registers when the override is cleared', async () => {
+    const { value, tileId } = await tileWithOneRound()
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, refreshIntervalOverrideMs: 9000 },
+    })
+    expect(await settleRound(value)).toBe(2)
+
+    value.clock.current = 1000
+    await value.host.handle({ type: 'SET_TILE_SETTINGS', tileId, settings: DEFAULTS })
+    expect(await settleRound(value)).toBe(3)
   })
 })

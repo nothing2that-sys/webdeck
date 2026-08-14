@@ -48,6 +48,11 @@ export function defaultRefreshIntervalMs(w: number, h: number): number {
 //+_+// 두 값이 어긋나는지는 시험이 지킨다. 구동자 상수를 여기로 옮기지 않는다. 층이 다르다
 export const MIN_TILE_INTERVAL_MS = 250
 
+//+_+// 저장 경로와 SET_TILE_SETTINGS 가 같은 판정을 써야 한다. 규칙을 두 곳에 두지 않는다
+export function isValidIntervalOverride(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= MIN_TILE_INTERVAL_MS
+}
+
 //+_+// P5-D16. 사용자 지정값이 span 자동 배정을 이긴다. P5-D21 이 별도 필드로 정했다
 export function tileIntervalMs(tile: WebTile): number {
   return tile.refreshIntervalOverrideMs ?? tile.refreshIntervalMs

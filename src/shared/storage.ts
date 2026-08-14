@@ -1,4 +1,4 @@
-import { MIN_TILE_INTERVAL_MS } from './scheduler'
+import { isValidIntervalOverride } from './scheduler'
 import type { Project, TileFitMode, TileMatchMode, WebTile } from './types'
 
 //+_+// P5-D17. 1 -> 2 마이그레이션을 만들지 않는다. 제품이 키를 쓴 적이 없어 폐기 비용이 0 이다
@@ -111,13 +111,8 @@ function deserializeTile(value: unknown): WebTile | null {
   }
   //+_+// P5-D26. 하한은 구동자 격자다. 상한은 두지 않는다. 긴 주기는 표현할 수 있다
   //+_+// 기존 refreshIntervalMs 의 검증 규칙은 바꾸지 않는다. 하한은 사용자 지정값에만 건다
-  if (refreshIntervalOverrideMs !== undefined) {
-    if (typeof refreshIntervalOverrideMs !== 'number' || !Number.isInteger(refreshIntervalOverrideMs)) {
-      return null
-    }
-    if (refreshIntervalOverrideMs < MIN_TILE_INTERVAL_MS) {
-      return null
-    }
+  if (refreshIntervalOverrideMs !== undefined && !isValidIntervalOverride(refreshIntervalOverrideMs)) {
+    return null
   }
 
   const tile: WebTile = {

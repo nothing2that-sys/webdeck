@@ -8,8 +8,15 @@ import type {
   DashboardRequestType,
   DashboardResponse,
   TileFrame,
+  TileSettings,
 } from '../shared/messages'
-import { defaultRefreshIntervalMs, effectiveIntervalMs } from '../shared/scheduler'
+import {
+  MIN_TILE_INTERVAL_MS,
+  defaultRefreshIntervalMs,
+  effectiveIntervalMs,
+  isValidIntervalOverride,
+  tileIntervalMs,
+} from '../shared/scheduler'
 import { loadState, saveState } from '../shared/storage'
 import type { KeyValueBackend, LoadResult } from '../shared/storage'
 import type { BrowserTabInfo, Project, TileRuntimeState, WebTile } from '../shared/types'
@@ -290,6 +297,48 @@ export function createDashboardHost(
     return { ok: true, type: 'SET_TILE_RECT' }
   }
 
+  //+_+// P5-D31. 4필드 전체 교체다. 미지정은 필드를 지운다. undefined 를 써 넣지 않는다
+  //+_+// 주기가 바뀐 회차에만 재등록한다. J27 의 Resize 배선과 같은 성질이다
+  //+_+// matchMode / customTitle / fitMode 는 캡처 주기를 건드리지 않으므로 만기를 흔들지 않는다
+  async function setTileSettings(
+    tileId: string,
+    settings: TileSettings,
+  ): Promise<DashboardResponse> {
+    const tile = activeProject().tiles.find((item) => item.id === tileId)
+    if (tile === undefined) {
+      return failure('SET_TILE_SETTINGS', 'TILE_NOT_FOUND', `Unknown tileId ${tileId}`)
+    }
+    //+_+// P4-D12 선례다. 화면이 이미 판정했더라도 워커가 다시 판정한다
+    const override = settings.refreshIntervalOverrideMs
+    if (override !== null && !isValidIntervalOverride(override)) {
+      return failure(
+        'SET_TILE_SETTINGS',
+        'INVALID_INTERVAL',
+        `Interval override must be an integer of at least ${String(MIN_TILE_INTERVAL_MS)} ms`,
+      )
+    }
+
+    const before = tileIntervalMs(tile)
+    if (settings.customTitle.length === 0) {
+      delete tile.customTitle
+    } else {
+      tile.customTitle = settings.customTitle
+    }
+    tile.fitMode = settings.fitMode
+    tile.matchMode = settings.matchMode
+    if (override === null) {
+      delete tile.refreshIntervalOverrideMs
+    } else {
+      tile.refreshIntervalOverrideMs = override
+    }
+
+    if (tileIntervalMs(tile) !== before) {
+      await reregister(tile)
+    }
+    await persist()
+    return { ok: true, type: 'SET_TILE_SETTINGS' }
+  }
+
   //+_+// TASK-P4-01 S3. Focus 는 워커 경유다. v1 section 20 이 UI 의 chrome 직접 호출을 금지한다
   //+_+// 바인딩이 없으면 활성화할 탭이 없다. 창은 탭 정보에서 읽는다. 화면이 보낸 값을 믿지 않는다
   async function focusTile(tileId: string): Promise<DashboardResponse> {
@@ -456,6 +505,8 @@ export function createDashboardHost(
           return focusTile(request.tileId)
         case 'SET_TILE_RECT':
           return setTileRect(request.tileId, request.rect)
+        case 'SET_TILE_SETTINGS':
+          return setTileSettings(request.tileId, request.settings)
         case 'LIST_PROJECTS':
           return { ok: true, type: 'LIST_PROJECTS', projects, activeProjectId }
         case 'CREATE_PROJECT':
