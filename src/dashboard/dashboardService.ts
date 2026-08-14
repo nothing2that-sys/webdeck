@@ -93,6 +93,11 @@ export async function removeTile(tileId: string): Promise<DashboardResponse> {
   return send({ type: 'REMOVE_TILE', tileId })
 }
 
+//+_+// v1 section 10 의 6단계다. 버튼으로만 돈다. 브라우저 시작과 동시에 돌지 않는다
+export async function openMissingTabs(): Promise<DashboardResponse> {
+  return send({ type: 'OPEN_MISSING_TABS' })
+}
+
 export async function setTileSettings(
   tileId: string,
   settings: TileSettings,

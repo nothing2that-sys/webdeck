@@ -16,6 +16,7 @@ import {
   isStaleTabFailure,
   listBrowserTabs,
   listProjects,
+  openMissingTabs,
   removeTile,
   renameProject,
   reopenTile,
@@ -281,6 +282,21 @@ export function App(): React.JSX.Element {
     [poll, reportFailure, selectedTabId],
   )
 
+  //+_+// v1 section 10 의 6단계다. 열린 탭 수만큼 알리고 0건이면 그것도 알린다
+  const openMissing = useCallback(async () => {
+    const response = await openMissingTabs()
+    if (!response.ok) {
+      await reportFailure(response)
+      return
+    }
+    if (response.type !== 'OPEN_MISSING_TABS') {
+      return
+    }
+    setNotice(`${String(response.openedTileIds.length)} tabs opened`)
+    await poll()
+    await loadTabs()
+  }, [loadTabs, poll, reportFailure])
+
   const remove = useCallback(
     async (tileId: string) => {
       const response = await removeTile(tileId)
@@ -491,6 +507,9 @@ export function App(): React.JSX.Element {
         />
         <button type="button" onClick={() => void addTileFromUrl()}>
           Add URL
+        </button>
+        <button type="button" onClick={() => void openMissing()}>
+          Open Missing Tabs
         </button>
       </header>
 
