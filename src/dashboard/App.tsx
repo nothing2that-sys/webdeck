@@ -16,6 +16,7 @@ import {
   renameProject,
   setActiveProject,
   setTileRect,
+  setTileSettings,
 } from './dashboardService'
 import {
   beginDrag,
@@ -26,8 +27,8 @@ import {
   pointerToCell,
 } from './layoutDrag'
 import type { DragMode, DragState, GridMetrics } from './layoutDrag'
-import { buildTileViews, gridArea } from './tileView'
-import type { TileViewModel } from './tileView'
+import { buildTileViews, gridArea, parseTileSettings, tileSettingsDraft } from './tileView'
+import type { TileSettingsDraft, TileViewModel } from './tileView'
 
 //+_+// 4x4 를 항상 보이게 하는 빈 칸이다. 타일과 같은 좌표 계산을 쓴다
 const GRID_SLOTS = Array.from({ length: GRID_ROWS * GRID_COLUMNS }, (_unused, index) => {
@@ -71,6 +72,7 @@ export function App(): React.JSX.Element {
   const [selectedTabId, setSelectedTabId] = useState<number | null>(null)
   const [tileUrl, setTileUrl] = useState('')
   const [selectedTileId, setSelectedTileId] = useState<string | null>(null)
+  const [settings, setSettings] = useState<TileSettingsDraft | null>(null)
   const [editing, setEditing] = useState(false)
   const [drag, setDrag] = useState<DragState | null>(null)
   const [notice, setNotice] = useState('')
@@ -244,6 +246,35 @@ export function App(): React.JSX.Element {
     await loadTabs()
   }, [loadTabs, poll, tileUrl])
 
+  //+_+// 선택할 때 한 번만 현재값을 읽는다. 폴링에 맞춰 다시 읽으면 입력 중인 값이 2초마다 덮인다
+  const selectTile = useCallback(
+    (tileId: string) => {
+      setSelectedTileId(tileId)
+      const tile = tiles.find((item) => item.id === tileId)
+      setSettings(tile === undefined ? null : tileSettingsDraft(tile))
+    },
+    [tiles],
+  )
+
+  //+_+// P5-D31. 4필드 전체 교체다. 값이 규칙에 맞지 않으면 보내지 않는다. 판정 권위는 워커다
+  const applySettings = useCallback(async () => {
+    if (selectedTileId === null || settings === null) {
+      return
+    }
+    const parsed = parseTileSettings(settings)
+    if (parsed === null) {
+      setNotice('주기는 250 이상의 정수이거나 비어 있어야 한다')
+      return
+    }
+    const response = await setTileSettings(selectedTileId, parsed)
+    if (!response.ok) {
+      setNotice(`${response.errorCode}: ${response.message}`)
+      return
+    }
+    setNotice('')
+    await poll()
+  }, [poll, selectedTileId, settings])
+
   //+_+// v1 section 7.1. 더블클릭이 실제 탭으로 간다. 활성화는 워커가 한다
   const focus = useCallback(async (tileId: string) => {
     const response = await focusTile(tileId)
@@ -393,6 +424,69 @@ export function App(): React.JSX.Element {
         </button>
       </header>
 
+      <section className="settingsbar">
+        <span className="settingsbar-label">
+          {settings === null ? '타일을 고르면 설정이 열린다' : 'Tile'}
+        </span>
+        <input
+          className="toolbar-input"
+          value={settings?.customTitle ?? ''}
+          placeholder="Custom Tile Name"
+          disabled={settings === null}
+          onChange={(event) => {
+            setSettings((current) =>
+              current === null ? current : { ...current, customTitle: event.target.value },
+            )
+          }}
+        />
+        <select
+          className="toolbar-select"
+          value={settings?.fitMode ?? 'contain'}
+          disabled={settings === null}
+          onChange={(event) => {
+            const fitMode = event.target.value === 'cover' ? 'cover' : 'contain'
+            setSettings((current) => (current === null ? current : { ...current, fitMode }))
+          }}
+        >
+          <option value="contain">fit · contain</option>
+          <option value="cover">fit · cover</option>
+        </select>
+        <select
+          className="toolbar-select"
+          value={settings?.matchMode ?? 'exact'}
+          disabled={settings === null}
+          onChange={(event) => {
+            const matchMode =
+              event.target.value === 'origin'
+                ? 'origin'
+                : event.target.value === 'prefix'
+                  ? 'prefix'
+                  : 'exact'
+            setSettings((current) => (current === null ? current : { ...current, matchMode }))
+          }}
+        >
+          <option value="exact">match · exact</option>
+          <option value="origin">match · origin</option>
+          <option value="prefix">match · prefix</option>
+        </select>
+        <input
+          className="toolbar-input"
+          value={settings?.refreshIntervalOverrideMs ?? ''}
+          placeholder="주기 ms · 비우면 자동"
+          disabled={settings === null}
+          onChange={(event) => {
+            setSettings((current) =>
+              current === null
+                ? current
+                : { ...current, refreshIntervalOverrideMs: event.target.value },
+            )
+          }}
+        />
+        <button type="button" disabled={settings === null} onClick={() => void applySettings()}>
+          Apply
+        </button>
+      </section>
+
       <main
         className="grid"
         ref={gridRef}
@@ -412,7 +506,7 @@ export function App(): React.JSX.Element {
             editing={editing}
             dragClassName={dragClassName(drag, view.tileId)}
             onSelect={() => {
-              setSelectedTileId(view.tileId)
+              selectTile(view.tileId)
             }}
             onFocus={() => void focus(view.tileId)}
             onDragStart={(mode, event) => {

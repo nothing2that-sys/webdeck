@@ -66,9 +66,29 @@ body {
   flex: 1;
 }
 
+.settingsbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.settingsbar-label {
+  color: var(--text-muted);
+}
+
+.settingsbar button:disabled,
+.settingsbar .toolbar-select:disabled,
+.settingsbar .toolbar-input:disabled {
+  opacity: 0.5;
+}
+
 .toolbar button,
 .toolbar-select,
-.toolbar-input {
+.toolbar-input,
+.settingsbar button {
   background: var(--surface-slot);
   color: var(--text-primary);
   border: 1px solid var(--border-soft);

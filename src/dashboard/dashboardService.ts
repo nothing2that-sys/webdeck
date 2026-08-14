@@ -1,5 +1,10 @@
 import type { GridRect } from '../shared/grid'
-import type { AddTileSource, DashboardRequest, DashboardResponse } from '../shared/messages'
+import type {
+  AddTileSource,
+  DashboardRequest,
+  DashboardResponse,
+  TileSettings,
+} from '../shared/messages'
 
 //+_+// P4-D7 이 정한 폴링 주기다. 워커의 캡처 주기와 별개이며 서로를 참조하지 않는다
 export const POLL_INTERVAL_MS = 2000
@@ -72,4 +77,11 @@ export async function focusTile(tileId: string): Promise<DashboardResponse> {
 
 export async function setTileRect(tileId: string, rect: GridRect): Promise<DashboardResponse> {
   return send({ type: 'SET_TILE_RECT', tileId, rect })
+}
+
+export async function setTileSettings(
+  tileId: string,
+  settings: TileSettings,
+): Promise<DashboardResponse> {
+  return send({ type: 'SET_TILE_SETTINGS', tileId, settings })
 }
