@@ -199,6 +199,8 @@ export class PreviewCaptureManager {
   private readonly captureLog: CaptureRecord[] = []
   private readonly lateArrivalLog: LateArrivalRecord[] = []
   private readonly frames = new Map<string, CapturedFrame>()
+  //+_+// P5-D6. 즉시 캡처를 기다리는 쪽이다. 회차가 정산되면 그 프레임으로 깨운다
+  private readonly onceWaiters = new Map<string, ((frame: CapturedFrame | null) => void)[]>()
   private nextToken = 0
 
   constructor(
@@ -280,12 +282,13 @@ export class PreviewCaptureManager {
     this.slots.delete(state.tileId)
 
     const attempt = this.inFlight.get(state.tileId)
-    if (attempt === undefined) {
-      return
+    if (attempt !== undefined) {
+      attempt.cancelTimer()
+      this.inFlight.delete(state.tileId)
+      this.write(attempt, { outcome: 'tabGone', bytes: null, message: null })
     }
-    attempt.cancelTimer()
-    this.inFlight.delete(state.tileId)
-    this.write(attempt, { outcome: 'tabGone', bytes: null, message: null })
+    //+_+// 기다리던 즉시 캡처가 있으면 여기서 끝낸다. 회차가 사라졌으므로 깨울 곳이 없다
+    this.resolveOnce(state.tileId, null)
   }
 
   //+_+// P5-D20. 탭이 닫히면 상태를 지우지 않는다. 소멸을 기억하고 스케줄에서만 뺀다
@@ -303,6 +306,37 @@ export class PreviewCaptureManager {
         state.holdsLease = false
         await this.sessions.release(tabId)
       }
+    }
+  }
+
+  //+_+// P5-D6. v1 section 14 의 Refresh Preview 다. 페이지를 reload 하지 않고 프레임만 다시 받는다
+  //+_+// 큐를 우회하지 않는다. 만기를 당겨 정상 경로가 집어가게 한다. v1 section 6.1
+  //+_+// 같은 탭에 회차가 이미 떠 있으면 canEnqueue 가 막고 그 회차의 결과가 이 약속을 깨운다
+  captureOnce(tileId: string): Promise<CapturedFrame | null> {
+    const state = this.tiles.get(tileId)
+    if (state === undefined || state.tabGone) {
+      return Promise.resolve(null)
+    }
+
+    const waiting = new Promise<CapturedFrame | null>((resolve) => {
+      const waiters = this.onceWaiters.get(tileId) ?? []
+      waiters.push(resolve)
+      this.onceWaiters.set(tileId, waiters)
+    })
+    state.nextDueAt = this.clock.now()
+    this.tick()
+    return waiting
+  }
+
+  //+_+// 기다리는 쪽을 남겨 두지 않는다. 회차가 어떻게 끝나든 한 번은 깨운다
+  private resolveOnce(tileId: string, frame: CapturedFrame | null): void {
+    const waiters = this.onceWaiters.get(tileId)
+    if (waiters === undefined) {
+      return
+    }
+    this.onceWaiters.delete(tileId)
+    for (const resolve of waiters) {
+      resolve(frame)
     }
   }
 
@@ -511,6 +545,7 @@ export class PreviewCaptureManager {
     }
 
     this.write(attempt, settled, frame)
+    this.resolveOnce(attempt.tileId, frame)
     this.pump()
   }
 

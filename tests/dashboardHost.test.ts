@@ -116,6 +116,8 @@ interface Fixture {
   createdUrls: string[]
   //+_+// P5-D37. 일부 실패가 성공한 것들을 되돌리지 않는 것을 시험하려면 실패를 만들 수 있어야 한다
   failCreateUrls: Set<string>
+  //+_+// P5-D39. 재연결이 던지는 상황을 만든다
+  failListTabs: boolean
   activated: { tabId: number; windowId: number }[]
 }
 
@@ -131,7 +133,10 @@ function fixture(tabIds: number[] = [11, 12], storage = new StubStorage()): Fixt
   }
 
   //+_+// P5-D12. 창 인자가 사라졌다. 창 제한은 chromeListTabs 안의 query 로만 남는다
-  const listTabs: ListTabs = () => Promise.resolve([...tabsBackend.tabs.values()])
+  const listTabs: ListTabs = () =>
+    value.failListTabs
+      ? Promise.reject(new Error('tab listing refused'))
+      : Promise.resolve([...tabsBackend.tabs.values()])
 
   const focusTab: FocusTab = (tabId, windowId) => {
     activated.push({ tabId, windowId })
@@ -150,7 +155,7 @@ function fixture(tabIds: number[] = [11, 12], storage = new StubStorage()): Fixt
     return Promise.resolve(created)
   }
 
-  return {
+  const value: Fixture = {
     host: createDashboardHost(
       debuggerBackend,
       tabsBackend,
@@ -166,8 +171,10 @@ function fixture(tabIds: number[] = [11, 12], storage = new StubStorage()): Fixt
     storage,
     createdUrls,
     failCreateUrls,
+    failListTabs: false,
     activated,
   }
+  return value
 }
 
 async function projectState(host: DashboardHost, dashboardVisible = true) {
@@ -384,17 +391,8 @@ describe('J16 - the extension keeps its own pages out of the tab list', () => {
   })
 })
 
-describe('P4-D8 - the verbs without a Phase 4 handler fail loudly', () => {
-  it('refuses CAPTURE_TILE rather than capturing on demand', async () => {
-    const response = await fixture().host.handle({ type: 'CAPTURE_TILE', tileId: 't1' })
-    expect(response).toMatchObject({
-      ok: false,
-      type: 'CAPTURE_TILE',
-      errorCode: 'NOT_IMPLEMENTED',
-    })
-  })
-
-  it('refuses the verbs that later stages own', async () => {
+describe('P5-D4 - the verbs Phase 6 owns fail loudly', () => {
+  it('refuses the verbs that later phases own', async () => {
     const { host } = fixture()
     const reload = await host.handle({ type: 'RELOAD_TILE', tileId: 't1' })
     const keepAlive = await host.handle({
@@ -1982,5 +1980,158 @@ describe('P5-D37 - OPEN_MISSING_TABS opens the tabs a tile is waiting for', () =
 
     expect(await openMissing(value)).toEqual([first.tileId])
     expect((await projectState(value.host)).runtimeStates[0]).toMatchObject({ tabId: 901 })
+  })
+})
+
+//+_+// P5-D39. 재연결은 부가 동작이다. 그것 때문에 저장된 프로젝트를 못 보게 하지 않는다
+describe('P5-D39 - a reconnect failure does not sink the load', () => {
+  it('still returns the stored projects when listing tabs throws', async () => {
+    const value = fixture()
+    const created = await value.host.handle({ type: 'CREATE_PROJECT', name: 'Monitoring' })
+    if (!created.ok || created.type !== 'CREATE_PROJECT') {
+      throw new Error('create failed')
+    }
+
+    const restored = fixture([11, 12], value.storage)
+    restored.failListTabs = true
+    const result = await restored.host.load()
+
+    expect(result.ok).toBe(true)
+    const listed = await restored.host.handle({ type: 'LIST_PROJECTS' })
+    if (!listed.ok || listed.type !== 'LIST_PROJECTS') {
+      throw new Error('list failed')
+    }
+    expect(listed.projects.map((project) => project.name)).toEqual(['WebDeck', 'Monitoring'])
+  })
+
+  it('does not reject', async () => {
+    const value = fixture()
+    value.failListTabs = true
+    await expect(value.host.load()).resolves.toMatchObject({ ok: true })
+  })
+})
+
+//+_+// P5-D6. v1 section 14 의 Refresh Preview 다. 페이지 reload 없이 그 타일만 즉시 1회 캡처한다
+describe('P5-D6 - CAPTURE_TILE refreshes one preview on demand', () => {
+  async function tiled(): Promise<{ value: Fixture; tileId: string }> {
+    const value = fixture()
+    const added = await value.host.handle({
+      type: 'ADD_TILE',
+      source: { kind: 'tab', tabId: 11 },
+    })
+    if (!added.ok || added.type !== 'ADD_TILE') {
+      throw new Error('add failed')
+    }
+    return { value, tileId: added.tileId }
+  }
+
+  it('returns the frame it captured', async () => {
+    const { value, tileId } = await tiled()
+    const response = await value.host.handle({ type: 'CAPTURE_TILE', tileId })
+
+    expect(response).toMatchObject({
+      ok: true,
+      type: 'CAPTURE_TILE',
+      imageBase64: 'AAAA',
+      format: 'jpeg',
+      bytes: 3,
+    })
+  })
+
+  it('sends only captureScreenshot and never a reload', async () => {
+    const { value, tileId } = await tiled()
+    await value.host.handle({ type: 'CAPTURE_TILE', tileId })
+
+    expect(value.debuggerBackend.attached).toEqual([11])
+  })
+
+  //+_+// v1 section 6.1. 큐를 우회하지 않는다. 회차 기록에 정상 회차로 남는다
+  it('records the round like any other', async () => {
+    const { value, tileId } = await tiled()
+    await value.host.handle({ type: 'CAPTURE_TILE', tileId })
+
+    const records = value.host.engine.captures.captureRecords
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({ tileId, outcome: 'success' })
+  })
+
+  it('refuses a tile that is not bound', async () => {
+    const value = fixture()
+    const response = await value.host.handle({ type: 'CAPTURE_TILE', tileId: 'ghost' })
+    expect(response).toMatchObject({ ok: false, errorCode: 'TILE_NOT_BOUND' })
+  })
+
+  //+_+// tabGone 타일은 붙을 탭이 없다. 기존 실패 코드를 쓴다
+  it('refuses a tile whose tab is gone', async () => {
+    const { value, tileId } = await tiled()
+    value.tabsBackend.closeTab(11)
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+
+    const response = await value.host.handle({ type: 'CAPTURE_TILE', tileId })
+    expect(response).toMatchObject({ ok: false, errorCode: 'TAB_NOT_FOUND' })
+  })
+
+  it('reports a failed round rather than inventing a frame', async () => {
+    const { value, tileId } = await tiled()
+    value.debuggerBackend.data = null
+
+    const response = await value.host.handle({ type: 'CAPTURE_TILE', tileId })
+    expect(response).toMatchObject({ ok: false, errorCode: 'CAPTURE_FAILED' })
+  })
+
+  //+_+// J124. 만기를 당기므로 정기 회차의 위상이 요청 시각으로 옮겨간다. 숨기지 않는다
+  it('moves the regular cadence to the moment it was asked', async () => {
+    const { value, tileId } = await tiled()
+
+    async function settleRound(): Promise<number> {
+      value.host.engine.captures.tick()
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0)
+      })
+      return value.host.engine.captures.captureRecords.length
+    }
+
+    expect(await settleRound()).toBe(1)
+
+    value.clock.current = 1000
+    await value.host.handle({ type: 'CAPTURE_TILE', tileId })
+    expect(value.host.engine.captures.captureRecords).toHaveLength(2)
+
+    //+_+// 요청이 없었으면 4000 에 세 번째 회차가 돌았을 자리다
+    value.clock.current = CAPTURE_INTERVAL_MS.spanSmall
+    expect(await settleRound()).toBe(2)
+
+    value.clock.current = 1000 + CAPTURE_INTERVAL_MS.spanSmall
+    expect(await settleRound()).toBe(3)
+  })
+
+  //+_+// J125. captureOnce 가 tick 을 부르므로 만기가 지난 다른 타일도 그 자리에서 돈다
+  //+_+// 그 타일의 위상은 자기 만기 기준으로 남는다. 정기 주기가 흔들리지 않는다
+  it('leaves the cadence of another tile where it was', async () => {
+    const { value, tileId } = await tiled()
+    const other = await value.host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 12 } })
+    if (!other.ok || other.type !== 'ADD_TILE') {
+      throw new Error('add failed')
+    }
+
+    value.clock.current = 1000
+    await value.host.handle({ type: 'CAPTURE_TILE', tileId })
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+
+    const roundsOf = (id: string): number =>
+      value.host.engine.captures.captureRecords.filter((record) => record.tileId === id).length
+    expect(roundsOf(other.tileId)).toBe(1)
+
+    //+_+// 다른 타일의 다음 만기는 0 + 4000 이다. 요청 시각 1000 이 그것을 밀지 않았다
+    value.clock.current = CAPTURE_INTERVAL_MS.spanSmall
+    value.host.engine.captures.tick()
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    expect(roundsOf(other.tileId)).toBe(2)
   })
 })
