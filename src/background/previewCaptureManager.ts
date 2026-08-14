@@ -109,6 +109,9 @@ interface TileState {
   lastFrameAt: number
   holdsLease: boolean
   fault: TileStatus | null
+  //+_+// P5-D20. 탭이 닫혔다는 사실이다. fault 와 나누는 이유는 디버거 detach 가 탭 소멸이 아니어서다
+  //+_+// detach 는 다음 회차가 다시 붙어야 하고 탭 소멸은 붙을 곳이 없다
+  tabGone: boolean
 }
 
 interface InFlightAttempt {
@@ -236,8 +239,13 @@ export class PreviewCaptureManager {
   }
 
   //+_+// 첫 성공 전에는 등록 시각이 신선도의 기준이다. 한 번도 반환되지 않는 탭도 STALE 로 간다
+  //+_+// P5-D20. 같은 탭으로 다시 등록하는 것은 아는 것을 지우지 않는다. 그것이 L36 이었다
+  //+_+// 다른 탭에 거는 것만 새 상태다. Reopen 과 Bind 가 fault 를 지우는 유일한 명시 경로가 된다
+  //+_+// 만기와 시도 카운터는 언제나 초기화한다. 새 주기를 적용하는 것이 재등록의 목적이다
   register(tileId: string, tabId: number, baseIntervalMs: number): void {
     const now = this.clock.now()
+    const previous = this.tiles.get(tileId)
+    const kept = previous !== undefined && previous.tabId === tabId ? previous : null
     this.tiles.set(tileId, {
       tileId,
       tabId,
@@ -247,9 +255,10 @@ export class PreviewCaptureManager {
       attemptCount: 0,
       consecutiveFailures: 0,
       demoted: false,
-      lastFrameAt: now,
-      holdsLease: false,
-      fault: null,
+      lastFrameAt: kept?.lastFrameAt ?? now,
+      holdsLease: kept?.holdsLease ?? false,
+      fault: kept?.fault ?? null,
+      tabGone: kept?.tabGone ?? false,
     })
   }
 
@@ -259,28 +268,41 @@ export class PreviewCaptureManager {
       return
     }
     this.tiles.delete(tileId)
-    this.dropQueued(tileId)
-    this.slots.delete(tileId)
-
-    //+_+// 진행 중이던 회차는 tabGone 으로 닫는다. 조용히 사라지면 회차 수가 맞지 않는다
-    const attempt = this.inFlight.get(tileId)
-    if (attempt !== undefined) {
-      attempt.cancelTimer()
-      this.inFlight.delete(tileId)
-      this.write(attempt, { outcome: 'tabGone', bytes: null, message: null })
-    }
+    this.abandonRound(state)
     if (state.holdsLease) {
       await this.sessions.release(state.tabId)
     }
   }
 
-  //+_+// 탭이 닫히면 그 탭에 걸린 타일을 전부 내린다. 리스도 함께 놓는다
+  //+_+// 진행 중이던 회차는 tabGone 으로 닫는다. 조용히 사라지면 회차 수가 맞지 않는다
+  private abandonRound(state: TileState): void {
+    this.dropQueued(state.tileId)
+    this.slots.delete(state.tileId)
+
+    const attempt = this.inFlight.get(state.tileId)
+    if (attempt === undefined) {
+      return
+    }
+    attempt.cancelTimer()
+    this.inFlight.delete(state.tileId)
+    this.write(attempt, { outcome: 'tabGone', bytes: null, message: null })
+  }
+
+  //+_+// P5-D20. 탭이 닫히면 상태를 지우지 않는다. 소멸을 기억하고 스케줄에서만 뺀다
+  //+_+// 지우면 다음 등록이 그 사실을 모른 채 새 상태를 만든다. 그것이 L36 이었다
+  //+_+// 리스는 그대로 놓는다. detach 동작을 바꾸지 않는다
   async releaseTab(tabId: number): Promise<void> {
-    const tileIds = [...this.tiles.values()]
-      .filter((state) => state.tabId === tabId)
-      .map((state) => state.tileId)
-    for (const tileId of tileIds) {
-      await this.unregister(tileId)
+    for (const state of this.tiles.values()) {
+      if (state.tabId !== tabId) {
+        continue
+      }
+      state.tabGone = true
+      state.fault = 'DETACHED'
+      this.abandonRound(state)
+      if (state.holdsLease) {
+        state.holdsLease = false
+        await this.sessions.release(tabId)
+      }
     }
   }
 
@@ -296,7 +318,10 @@ export class PreviewCaptureManager {
   //+_+// 구동자는 이 함수를 부르기만 한다. setInterval 은 serviceWorker 쪽에 둔다
   tick(): void {
     const now = this.clock.now()
-    const due = selectDueTiles([...this.tiles.values()], now)
+    //+_+// P5-D20. 탭이 사라진 타일은 만기가 와도 큐에 넣지 않는다. 붙일 탭이 없다
+    //+_+// 디버거 detach 는 여기에 해당하지 않는다. 탭은 살아 있고 다음 회차가 다시 붙는다
+    const alive = [...this.tiles.values()].filter((state) => !state.tabGone)
+    const due = selectDueTiles(alive, now)
     const running = [...this.slots.entries()].map(([tileId, tabId]) => ({ tileId, tabId }))
     for (const tile of due) {
       const item: CaptureQueueItem = { tileId: tile.tileId, tabId: tile.tabId }

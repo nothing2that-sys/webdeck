@@ -1014,3 +1014,96 @@ describe('r2 후속 - lateArrival 은 마감 뒤에 온 응답만이다', () => 
     expect(manager.lateArrivals.every((entry) => entry.lateByMs >= 0)).toBe(true)
   })
 })
+
+//+_+// L36. 상태 소유가 두 층에 갈려 있어 닫힌 탭의 타일이 재등록으로 되살아난다
+//+_+// P4-D15 는 호출자에 게이트를 걸어 증상만 막았다. 엔진 자체는 탭 소멸을 기억하지 않는다
+//+_+// P5-D20 이 소유를 엔진으로 모은다. 아래는 그 전후를 가르는 시험이다
+describe('P5-D20 - the capture engine owns the fact that a tab is gone', () => {
+  async function captured(): Promise<ReturnType<typeof build>> {
+    const value = build()
+    value.manager.register('a', 1, 2000)
+    value.manager.tick()
+    await flush()
+    await settleCapture(value.backend, 0)
+    expect(value.manager.statusOf('a')).toBe('LIVE')
+    return value
+  }
+
+  it('reports DETACHED rather than forgetting the tile', async () => {
+    const { manager } = await captured()
+    await manager.releaseTab(1)
+
+    expect(manager.statusOf('a')).toBe('DETACHED')
+  })
+
+  //+_+// 이것이 L36 의 본체다. 게이트 없이 다시 등록하면 오늘은 LIVE 가 된다
+  it('does not revive the tile when it is registered again for the same tab', async () => {
+    const { manager } = await captured()
+    await manager.releaseTab(1)
+    manager.register('a', 1, 2000)
+
+    expect(manager.statusOf('a')).toBe('DETACHED')
+  })
+
+  it('does not capture a tile whose tab is gone', async () => {
+    const { manager, clock, backend } = await captured()
+    const before = backend.commands.length
+    await manager.releaseTab(1)
+
+    clock.advance(10000)
+    manager.tick()
+    await flush()
+    expect(backend.commands).toHaveLength(before)
+  })
+
+  it('does not queue a tile whose tab is gone', async () => {
+    const { manager, clock } = await captured()
+    await manager.releaseTab(1)
+
+    clock.advance(10000)
+    manager.tick()
+    expect(manager.queueLength).toBe(0)
+    expect(manager.inFlightCount).toBe(0)
+  })
+
+  //+_+// Reopen 과 Bind 가 fault 를 지우는 유일한 명시 경로다. 새 탭으로 거는 것이 그 형태다
+  it('clears the fault when the tile is registered for a different tab', async () => {
+    const { manager } = await captured()
+    await manager.releaseTab(1)
+    manager.register('a', 2, 2000)
+
+    expect(manager.statusOf('a')).toBe('LIVE')
+  })
+
+  it('captures again after it was registered for a different tab', async () => {
+    const { manager, backend } = await captured()
+    await manager.releaseTab(1)
+    manager.register('a', 2, 2000)
+
+    manager.tick()
+    await flush()
+    expect(backend.commands.at(-1)).toMatchObject({ tabId: 2 })
+  })
+
+  //+_+// 같은 탭으로의 재등록은 신선도 기준도 되돌리지 않는다. J28 이 지적한 나머지 절반이다
+  it('keeps a stale tile stale when it is registered again for the same tab', async () => {
+    const { manager, clock } = await captured()
+    clock.advance(2000 * 3 + 1)
+    expect(manager.statusOf('a')).toBe('STALE')
+
+    manager.register('a', 1, 2000)
+    expect(manager.statusOf('a')).toBe('STALE')
+  })
+
+  //+_+// 디버거 detach 는 탭 소멸이 아니다. 다음 회차가 다시 붙어야 한다. 스케줄에서 빼지 않는다
+  it('keeps scheduling a tile whose debugger detached but whose tab is alive', async () => {
+    const { manager, clock, backend } = await captured()
+    backend.fireDetach(1, 'target_closed')
+    expect(manager.statusOf('a')).toBe('DETACHED')
+
+    clock.advance(2000)
+    manager.tick()
+    await flush()
+    expect(backend.attachCalls.length).toBeGreaterThan(1)
+  })
+})

@@ -279,7 +279,8 @@ describe('TASK-P3-01 section 3.6 - the driver is separate from the decision', ()
     expect(engine.captures.inFlightCount).toBe(1)
   })
 
-  it('stops the tile and releases the lease when the tab is removed', async () => {
+  //+_+// P5-D20. 타일을 잊지 않는다. DETACHED 로 표시하고 스케줄에서만 뺀다
+  it('detaches the tile and releases the lease when the tab is removed', async () => {
     const clock = new StubClock()
     const tabs = new StubTabs()
     const engine = createPreviewEngine(new StubDebugger(), tabs, clock)
@@ -292,8 +293,13 @@ describe('TASK-P3-01 section 3.6 - the driver is separate from the decision', ()
     tabs.fireRemoved(7)
     await flush()
 
-    expect(engine.captures.statusOf('a')).toBeNull()
+    expect(engine.captures.statusOf('a')).toBe('DETACHED')
     expect(engine.sessions.isAttached(7)).toBe(false)
+
+    clock.current = 4000
+    engine.captures.tick()
+    expect(engine.captures.inFlightCount).toBe(0)
+    expect(engine.captures.queueLength).toBe(0)
   })
 
   //+_+// v1 section 5.2 조건 9. navigation 뒤에도 캡처가 복구되어야 한다
