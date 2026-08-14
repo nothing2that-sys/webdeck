@@ -22,6 +22,7 @@ function dragModeFor(event: React.PointerEvent): DragMode {
 
 //+_+// v1 section 7 line 508~518 의 표시 항목이다. Favicon / 제목 / Preview / 상태 / 마지막 갱신 시각
 //+_+// v1 section 7.1. View Mode 에서는 Pointer 처리기를 달지 않는다. 그래서 드래그로 움직이지 않는다
+//+_+// v1 section 15.6. fitMode 값이 그대로 CSS object-fit 이다. 매핑표를 만들지 않는다
 export function TileCard({
   view,
   selected,
@@ -75,7 +76,13 @@ export function TileCard({
         {view.previewDataUrl === null ? (
           <span className="tile-preview-empty">no preview</span>
         ) : (
-          <img className="tile-preview-image" src={view.previewDataUrl} alt="" draggable={false} />
+          <img
+            className="tile-preview-image"
+            style={{ objectFit: view.fitMode }}
+            src={view.previewDataUrl}
+            alt=""
+            draggable={false}
+          />
         )}
       </div>
 

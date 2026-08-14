@@ -1,6 +1,14 @@
 import type { GridRect } from '../shared/grid'
-import type { TileFrame } from '../shared/messages'
-import type { Project, TileRuntimeState, TileStatus } from '../shared/types'
+import type { TileFrame, TileSettings } from '../shared/messages'
+import { isValidIntervalOverride } from '../shared/scheduler'
+import type {
+  Project,
+  TileFitMode,
+  TileMatchMode,
+  TileRuntimeState,
+  TileStatus,
+  WebTile,
+} from '../shared/types'
 
 //+_+// React 를 import 하지 않는다. P4-D6 이 순수 모듈을 node 환경에서 시험하기로 했다
 export interface TileViewModel {
@@ -13,6 +21,55 @@ export interface TileViewModel {
   statusClassName: string
   previewDataUrl: string | null
   lastCaptureLabel: string
+  //+_+// v1 section 15.6. CSS object-fit 값 그대로다. 크롭 로직을 직접 쓰지 않는다
+  fitMode: TileFitMode
+}
+
+//+_+// 설정 폼은 문자열을 다루고 프로토콜은 값을 다룬다. 그 사이 변환을 여기 둔다
+export interface TileSettingsDraft {
+  customTitle: string
+  fitMode: TileFitMode
+  matchMode: TileMatchMode
+  refreshIntervalOverrideMs: string
+}
+
+//+_+// 미지정은 빈 문자열이다. 폼이 undefined 를 표시할 수 없기 때문이다
+export function tileSettingsDraft(tile: WebTile): TileSettingsDraft {
+  return {
+    customTitle: tile.customTitle ?? '',
+    fitMode: tile.fitMode,
+    matchMode: tile.matchMode,
+    refreshIntervalOverrideMs:
+      tile.refreshIntervalOverrideMs === undefined
+        ? ''
+        : String(tile.refreshIntervalOverrideMs),
+  }
+}
+
+//+_+// 값이 규칙에 맞지 않으면 null 이다. 판정 권위는 워커이고 여기는 보내기 전 거름망이다
+//+_+// P5-D26 의 하한을 워커와 같은 함수로 본다. 규칙을 화면에 복제하지 않는다
+export function parseTileSettings(draft: TileSettingsDraft): TileSettings | null {
+  const text = draft.refreshIntervalOverrideMs.trim()
+  if (text.length === 0) {
+    return {
+      customTitle: draft.customTitle.trim(),
+      fitMode: draft.fitMode,
+      matchMode: draft.matchMode,
+      refreshIntervalOverrideMs: null,
+    }
+  }
+
+  //+_+// Number 는 빈 문자열을 0 으로 만든다. 위에서 이미 걸렀으므로 여기 도달하지 않는다
+  const parsed = Number(text)
+  if (!isValidIntervalOverride(parsed)) {
+    return null
+  }
+  return {
+    customTitle: draft.customTitle.trim(),
+    fitMode: draft.fitMode,
+    matchMode: draft.matchMode,
+    refreshIntervalOverrideMs: parsed,
+  }
 }
 
 //+_+// CSS Grid 는 1-based 이고 순서는 row-start / column-start / row-end / column-end 다
@@ -71,6 +128,7 @@ export function buildTileViews(
       statusClassName: statusClassName(status),
       previewDataUrl: previewDataUrl(frameById.get(tile.id)),
       lastCaptureLabel: formatCaptureTime(state?.lastCaptureAt),
+      fitMode: tile.fitMode,
     }
   })
 }
