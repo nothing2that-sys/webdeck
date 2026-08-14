@@ -1,19 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GRID_COLUMNS, GRID_ROWS } from '../shared/grid'
 import type { GridPosition } from '../shared/grid'
+import type { DashboardResponse } from '../shared/messages'
 import type { BrowserTabInfo, Project, WebTile } from '../shared/types'
 import { TileCard } from './TileCard'
 import {
   POLL_INTERVAL_MS,
   addTile,
+  bindTile,
   createProject,
   deleteProject,
   fetchProjectState,
   focusTile,
   isDashboardVisible,
+  isStaleTabFailure,
   listBrowserTabs,
   listProjects,
+  removeTile,
   renameProject,
+  reopenTile,
   setActiveProject,
   setTileRect,
   setTileSettings,
@@ -213,6 +218,21 @@ export function App(): React.JSX.Element {
     void loadTabs()
   }, [loadTabs])
 
+  //+_+// P5-D30. 탭이 사라졌다는 실패는 화면이 아는 목록이 낡았다는 뜻이다. 오류로 표시하지 않는다
+  const reportFailure = useCallback(
+    async (response: DashboardResponse) => {
+      if (isStaleTabFailure(response)) {
+        setNotice('탭 목록이 낡았다. 다시 읽었다')
+        await loadTabs()
+        return
+      }
+      if (!response.ok) {
+        setNotice(`${response.errorCode}: ${response.message}`)
+      }
+    },
+    [loadTabs],
+  )
+
   //+_+// v1 section 9.1 의 (a) 경로다. 기존 탭을 걸기만 한다. reload 도 창 이동도 하지 않는다
   const addTileFromTab = useCallback(async () => {
     if (selectedTabId === null) {
@@ -221,12 +241,62 @@ export function App(): React.JSX.Element {
     }
     const response = await addTile({ kind: 'tab', tabId: selectedTabId })
     if (!response.ok) {
-      setNotice(`${response.errorCode}: ${response.message}`)
+      await reportFailure(response)
       return
     }
     setNotice('')
     await poll()
-  }, [poll, selectedTabId])
+  }, [poll, reportFailure, selectedTabId])
+
+  //+_+// v1 section 9.4 의 세 버튼이다. Reopen 과 Bind 가 fault 를 지우는 명시 경로다
+  const reopen = useCallback(
+    async (tileId: string) => {
+      const response = await reopenTile(tileId)
+      if (!response.ok) {
+        await reportFailure(response)
+        return
+      }
+      setNotice('')
+      await poll()
+      await loadTabs()
+    },
+    [loadTabs, poll, reportFailure],
+  )
+
+  //+_+// 탭 선택은 툴바의 목록을 그대로 쓴다. 별도 다이얼로그를 만들지 않는다. J86 선례
+  const bindExisting = useCallback(
+    async (tileId: string) => {
+      if (selectedTabId === null) {
+        setNotice('먼저 탭 목록에서 붙일 탭을 고른다')
+        return
+      }
+      const response = await bindTile(tileId, selectedTabId)
+      if (!response.ok) {
+        await reportFailure(response)
+        return
+      }
+      setNotice('')
+      await poll()
+    },
+    [poll, reportFailure, selectedTabId],
+  )
+
+  const remove = useCallback(
+    async (tileId: string) => {
+      const response = await removeTile(tileId)
+      if (!response.ok) {
+        await reportFailure(response)
+        return
+      }
+      if (tileId === selectedTileId) {
+        setSelectedTileId(null)
+        setSettings(null)
+      }
+      setNotice('')
+      await poll()
+    },
+    [poll, reportFailure, selectedTileId],
+  )
 
   //+_+// v1 section 9.1 의 (b) 경로다. 탭 생성은 워커가 한다. 화면은 chrome.* 를 부르지 않는다
   const addTileFromUrl = useCallback(async () => {
@@ -485,6 +555,17 @@ export function App(): React.JSX.Element {
         <button type="button" disabled={settings === null} onClick={() => void applySettings()}>
           Apply
         </button>
+        <button
+          type="button"
+          disabled={selectedTileId === null}
+          onClick={() => {
+            if (selectedTileId !== null) {
+              void remove(selectedTileId)
+            }
+          }}
+        >
+          Remove Tile
+        </button>
       </section>
 
       <main
@@ -515,6 +596,9 @@ export function App(): React.JSX.Element {
             onDragMove={moveDrag}
             onDragEnd={() => void endDrag()}
             onDragCancel={cancelDrag}
+            onReopen={() => void reopen(view.tileId)}
+            onBindExisting={() => void bindExisting(view.tileId)}
+            onRemove={() => void remove(view.tileId)}
           />
         ))}
         {indicator === null ? null : (

@@ -29,6 +29,12 @@ export function isDashboardVisible(): boolean {
   return document.visibilityState === 'visible'
 }
 
+//+_+// P5-D30. 화면이 아는 탭 목록이 낡았다는 뜻이다. 오류로 표시하지 않고 목록을 다시 읽는다
+//+_+// J85 와 같은 원칙이다. 워커가 정본이고 화면이 따라간다
+export function isStaleTabFailure(response: DashboardResponse): boolean {
+  return !response.ok && response.errorCode === 'TAB_NOT_FOUND'
+}
+
 //+_+// P5-D22. 활성 프로젝트 id 는 워커가 알려 준 값이다. 상수를 하드코딩하지 않는다
 export async function fetchProjectState(
   projectId: string,
@@ -77,6 +83,14 @@ export async function focusTile(tileId: string): Promise<DashboardResponse> {
 
 export async function setTileRect(tileId: string, rect: GridRect): Promise<DashboardResponse> {
   return send({ type: 'SET_TILE_RECT', tileId, rect })
+}
+
+export async function reopenTile(tileId: string): Promise<DashboardResponse> {
+  return send({ type: 'REOPEN_TILE', tileId })
+}
+
+export async function removeTile(tileId: string): Promise<DashboardResponse> {
+  return send({ type: 'REMOVE_TILE', tileId })
 }
 
 export async function setTileSettings(

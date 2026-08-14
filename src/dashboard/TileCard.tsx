@@ -12,6 +12,9 @@ export interface TileCardProps {
   onDragMove: (event: React.PointerEvent) => void
   onDragEnd: () => void
   onDragCancel: () => void
+  onReopen: () => void
+  onBindExisting: () => void
+  onRemove: () => void
 }
 
 //+_+// Resize Handle 위에서 시작한 것만 크기 변경이다. 그 밖에서 시작한 것은 이동이다
@@ -34,6 +37,9 @@ export function TileCard({
   onDragMove,
   onDragEnd,
   onDragCancel,
+  onReopen,
+  onBindExisting,
+  onRemove,
 }: TileCardProps): React.JSX.Element {
   const className = ['tile', selected ? 'tile--selected' : '', editing ? 'tile--editing' : '', dragClassName]
     .filter((part) => part.length > 0)
@@ -85,6 +91,20 @@ export function TileCard({
           />
         )}
       </div>
+
+      {view.status === 'DETACHED' ? (
+        <div className="tile-detached">
+          <button type="button" disabled={editing} onClick={onReopen}>
+            Reopen
+          </button>
+          <button type="button" disabled={editing} onClick={onBindExisting}>
+            Bind Existing Tab
+          </button>
+          <button type="button" disabled={editing} onClick={onRemove}>
+            Remove Tile
+          </button>
+        </div>
+      ) : null}
 
       <footer className="tile-foot">
         <span>{view.lastCaptureLabel}</span>

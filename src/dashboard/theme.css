@@ -260,6 +260,28 @@ body {
   background: var(--surface-preview);
 }
 
+.tile-detached {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+  justify-content: center;
+}
+
+.tile-detached button {
+  background: var(--surface-slot);
+  color: var(--text-primary);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 11px;
+}
+
+.tile-detached button:disabled {
+  opacity: 0.5;
+}
+
 .tile-preview-empty {
   color: var(--text-muted);
   font-size: 11px;
