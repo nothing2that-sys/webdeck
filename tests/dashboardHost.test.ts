@@ -114,6 +114,8 @@ interface Fixture {
   clock: StubClock
   storage: StubStorage
   createdUrls: string[]
+  //+_+// P5-D37. 일부 실패가 성공한 것들을 되돌리지 않는 것을 시험하려면 실패를 만들 수 있어야 한다
+  failCreateUrls: Set<string>
   activated: { tabId: number; windowId: number }[]
 }
 
@@ -137,7 +139,11 @@ function fixture(tabIds: number[] = [11, 12], storage = new StubStorage()): Fixt
   }
 
   //+_+// P5-D27 의 url 경로다. 워커가 탭을 만든다. 새 탭 id 는 기존과 겹치지 않게 고른다
+  const failCreateUrls = new Set<string>()
   const createTab: CreateTab = (url) => {
+    if (failCreateUrls.has(url)) {
+      return Promise.reject(new Error(`refused to create a tab for ${url}`))
+    }
     createdUrls.push(url)
     const created = { ...tabInfo(900 + createdUrls.length, url), currentUrl: url }
     tabsBackend.tabs.set(created.tabId, created)
@@ -159,6 +165,7 @@ function fixture(tabIds: number[] = [11, 12], storage = new StubStorage()): Fixt
     clock,
     storage,
     createdUrls,
+    failCreateUrls,
     activated,
   }
 }
@@ -1743,5 +1750,237 @@ describe('P5-D33 - REMOVE_TILE drops the tile and leaves the tab open', () => {
     const response = await value.host.handle({ type: 'REMOVE_TILE', tileId })
     expect(response).toMatchObject({ ok: true })
     expect((await projectState(value.host)).project.tiles).toEqual([])
+  })
+})
+
+//+_+// P5-D35. 워커 기동 시 1회다. 재연결 전용 메시지를 만들지 않는다. v1 section 10
+describe('P5-D35 - the worker reconnects once when it starts', () => {
+  //+_+// tabId 를 저장하지 않는다. 저장값에는 launchUrl 과 matchMode 만 있다. v1 section 10 첫 문장
+  function seeded(tiles: WebTile[]): StubStorage {
+    const storage = new StubStorage()
+    storage.store.set(STORAGE_KEY, {
+      schemaVersion: 2,
+      activeProjectId: DEFAULT_PROJECT_ID,
+      projects: [
+        {
+          id: DEFAULT_PROJECT_ID,
+          name: 'WebDeck',
+          gridColumns: 4,
+          gridRows: 4,
+          keepManagedTabsAlive: false,
+          tiles,
+        },
+      ],
+    })
+    return storage
+  }
+
+  function storedTile(id: string, launchUrl: string, x = 0, matchMode: WebTile['matchMode'] = 'exact'): WebTile {
+    return {
+      id,
+      launchUrl,
+      matchMode,
+      x,
+      y: 0,
+      w: 1,
+      h: 1,
+      refreshIntervalMs: 4000,
+      fitMode: 'contain',
+      keepAlive: false,
+    }
+  }
+
+  it('binds a tile whose url matches exactly one open tab', async () => {
+    const value = fixture([11, 12], seeded([storedTile('t1', 'https://example.com/11')]))
+    await value.host.load()
+
+    const state = (await projectState(value.host)).runtimeStates[0]
+    expect(state).toMatchObject({ tileId: 't1', tabId: 11 })
+  })
+
+  it('captures the reconnected tab on the next tick', async () => {
+    const value = fixture([11, 12], seeded([storedTile('t1', 'https://example.com/11')]))
+    await value.host.load()
+
+    value.host.engine.captures.tick()
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    expect(value.debuggerBackend.attached).toEqual([11])
+  })
+
+  it('persists the binding it made', async () => {
+    const value = fixture([11, 12], seeded([storedTile('t1', 'https://example.com/11')]))
+    const before = value.storage.writes
+    await value.host.load()
+
+    expect(value.storage.writes).toBeGreaterThan(before)
+  })
+
+  //+_+// 배지 문자열을 여기서 고정하지 않는다. v1 section 10 의 5단계는 DETACHED 를 요구하나
+  //+_+// resolveRuntimeStatus 는 바인딩이 없는 타일을 LOADING 으로 낸다. 보고에 올린 미결이다
+  it('writes nothing when no tile matches', async () => {
+    const value = fixture([11, 12], seeded([storedTile('t1', 'https://elsewhere.test/gone')]))
+    const before = value.storage.writes
+    await value.host.load()
+
+    expect(value.storage.writes).toBe(before)
+    expect(Object.hasOwn((await projectState(value.host)).runtimeStates[0], 'tabId')).toBe(false)
+  })
+
+  //+_+// P5-D15. 후보가 둘이면 고르지 않는다. 사용자가 Bind Existing Tab 으로 고른다
+  it('leaves a tile with two candidates unbound', async () => {
+    const value = fixture([], seeded([storedTile('t1', 'https://example.com/same')]))
+    value.tabsBackend.tabs.set(11, tabInfo(11, 'https://example.com/same'))
+    value.tabsBackend.tabs.set(12, tabInfo(12, 'https://example.com/same'))
+    await value.host.load()
+
+    const state = (await projectState(value.host)).runtimeStates[0]
+    expect(Object.hasOwn(state, 'tabId')).toBe(false)
+  })
+
+  //+_+// P5-D36. 한 탭이 두 타일에 붙지 않는다. 배열 순서가 먼저인 타일이 잡는다
+  it('gives a shared candidate to the earlier tile only', async () => {
+    const value = fixture(
+      [11],
+      seeded([
+        storedTile('first', 'https://example.com/11', 0),
+        storedTile('second', 'https://example.com/11', 1),
+      ]),
+    )
+    await value.host.load()
+
+    const states = (await projectState(value.host)).runtimeStates
+    expect(states[0]).toMatchObject({ tileId: 'first', tabId: 11 })
+    expect(Object.hasOwn(states[1], 'tabId')).toBe(false)
+  })
+
+  it('does not create any tab while reconnecting', async () => {
+    const value = fixture([11], seeded([storedTile('t1', 'https://elsewhere.test/gone')]))
+    await value.host.load()
+
+    expect(value.createdUrls).toEqual([])
+  })
+
+  //+_+// L11 이 실제로 걸리는 자리다. exact 는 query 순서를 구분한다. P5-D7
+  it('does not reconnect an exact tile to a tab whose query order differs', async () => {
+    const value = fixture([], seeded([storedTile('t1', 'https://example.com/p?a=1&b=2')]))
+    value.tabsBackend.tabs.set(11, tabInfo(11, 'https://example.com/p?b=2&a=1'))
+    await value.host.load()
+
+    const state = (await projectState(value.host)).runtimeStates[0]
+    expect(Object.hasOwn(state, 'tabId')).toBe(false)
+  })
+
+  it('reconnects the same tile once matchMode is origin', async () => {
+    const value = fixture(
+      [],
+      seeded([storedTile('t1', 'https://example.com/p?a=1&b=2', 0, 'origin')]),
+    )
+    value.tabsBackend.tabs.set(11, tabInfo(11, 'https://example.com/p?b=2&a=1'))
+    await value.host.load()
+
+    expect((await projectState(value.host)).runtimeStates[0]).toMatchObject({ tabId: 11 })
+  })
+})
+
+//+_+// P5-D37. v1 section 10 의 6단계다. 버튼으로만이고 브라우저 시작과 동시에 돌지 않는다
+describe('P5-D37 - OPEN_MISSING_TABS opens the tabs a tile is waiting for', () => {
+  async function detachedFixture(): Promise<{ value: Fixture; tileId: string }> {
+    const value = fixture()
+    const added = await value.host.handle({
+      type: 'ADD_TILE',
+      source: { kind: 'tab', tabId: 11 },
+    })
+    if (!added.ok || added.type !== 'ADD_TILE') {
+      throw new Error('add failed')
+    }
+    value.tabsBackend.closeTab(11)
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    return { value, tileId: added.tileId }
+  }
+
+  async function openMissing(value: Fixture): Promise<string[]> {
+    const response = await value.host.handle({ type: 'OPEN_MISSING_TABS' })
+    if (!response.ok || response.type !== 'OPEN_MISSING_TABS') {
+      throw new Error(`unexpected response ${JSON.stringify(response)}`)
+    }
+    return response.openedTileIds
+  }
+
+  it('opens the launch url of a tile whose tab is gone', async () => {
+    const { value, tileId } = await detachedFixture()
+    expect(await openMissing(value)).toEqual([tileId])
+    expect(value.createdUrls).toEqual(['https://example.com/11'])
+  })
+
+  it('binds the tile it opened', async () => {
+    const { value, tileId } = await detachedFixture()
+    await openMissing(value)
+
+    const state = (await projectState(value.host)).runtimeStates[0]
+    expect(state).toMatchObject({ tileId, tabId: 901 })
+    expect(state.status).not.toBe('DETACHED')
+  })
+
+  it('leaves a tile whose tab is alive alone', async () => {
+    const value = fixture()
+    await value.host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 11 } })
+
+    expect(await openMissing(value)).toEqual([])
+    expect(value.createdUrls).toEqual([])
+  })
+
+  it('reports nothing and writes nothing when there is no missing tile', async () => {
+    const value = fixture()
+    await value.host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 11 } })
+    const before = value.storage.writes
+
+    expect(await openMissing(value)).toEqual([])
+    expect(value.storage.writes).toBe(before)
+  })
+
+  it('persists once at least one tab was opened', async () => {
+    const { value } = await detachedFixture()
+    const before = value.storage.writes
+    await openMissing(value)
+    expect(value.storage.writes).toBeGreaterThan(before)
+  })
+
+  //+_+// launchUrl 이 빈 타일은 건너뛴다. 응답에 실리지 않는 것이 그 사실이다
+  it('skips a tile with no launch url', async () => {
+    const value = fixture([])
+    value.tabsBackend.tabs.set(30, { ...tabInfo(30, ''), currentUrl: '' })
+    await value.host.handle({ type: 'BIND_TILE', tileId: 'blank', tabId: 30 })
+    value.tabsBackend.closeTab(30)
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+
+    expect(await openMissing(value)).toEqual([])
+    expect(value.createdUrls).toEqual([])
+  })
+
+  //+_+// 일부 실패가 성공한 것들을 되돌리지 않는다
+  it('keeps the tabs it managed to open when one of them fails', async () => {
+    const value = fixture([])
+    value.tabsBackend.tabs.set(21, tabInfo(21, 'https://example.com/ok'))
+    value.tabsBackend.tabs.set(22, tabInfo(22, 'https://example.com/broken'))
+    const first = await value.host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 21 } })
+    const second = await value.host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 22 } })
+    if (!first.ok || first.type !== 'ADD_TILE' || !second.ok || second.type !== 'ADD_TILE') {
+      throw new Error('add failed')
+    }
+    value.tabsBackend.closeTab(21)
+    value.tabsBackend.closeTab(22)
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    value.failCreateUrls.add('https://example.com/broken')
+
+    expect(await openMissing(value)).toEqual([first.tileId])
+    expect((await projectState(value.host)).runtimeStates[0]).toMatchObject({ tabId: 901 })
   })
 })

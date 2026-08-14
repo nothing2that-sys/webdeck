@@ -31,6 +31,7 @@ import {
   buildRuntimeState,
   createProject,
   newTile,
+  planReconnect,
   resolveProjects,
   resolveRuntimeStatus,
 } from './projectState'
@@ -430,6 +431,67 @@ export function createDashboardHost(
     return { ok: true, type: 'ADD_TILE', tileId }
   }
 
+  //+_+// P5-D35 · P5-D37 이 같은 정의를 쓴다. 두 곳에 규칙을 두지 않는다
+  //+_+// 바인딩이 없거나 엔진이 스케줄에서 뺀 타일이 재연결 대상이다
+  function liveBoundTabId(tileId: string): number | null {
+    const tabId = bindings.get(tileId)
+    if (tabId === undefined || !engine.captures.isScheduled(tileId)) {
+      return null
+    }
+    return tabId
+  }
+
+  //+_+// 타일을 탭에 건다. bindTile 과 달리 타일 생성도 검증도 하지 않는다. 이미 있는 타일만이다
+  function attachTile(tile: WebTile, tabId: number): void {
+    bindings.set(tile.id, tabId)
+    summaries.delete(tile.id)
+    engine.registerTile(tile, tabId, dashboardVisible)
+  }
+
+  //+_+// P5-D35. v1 section 10 이다. 워커 기동 시 1회이며 전용 메시지를 만들지 않는다
+  //+_+// tabId 를 저장하지 않으므로 URL 로 다시 찾는다. 살아 있는 바인딩은 건드리지 않는다
+  async function reconnect(): Promise<void> {
+    const project = activeProject()
+    const targets = project.tiles.map((tile) => ({ tile, boundTabId: liveBoundTabId(tile.id) }))
+    const verdicts = planReconnect(targets, await listTabs())
+
+    let bound = 0
+    for (const verdict of verdicts) {
+      const tile = project.tiles.find((item) => item.id === verdict.tileId)
+      if (verdict.kind !== 'bind' || tile === undefined) {
+        continue
+      }
+      attachTile(tile, verdict.tabId)
+      bound += 1
+    }
+    if (bound > 0) {
+      await persist()
+    }
+  }
+
+  //+_+// P5-D37. v1 section 10 의 6단계다. 버튼으로만 돈다. 브라우저 시작과 동시에 돌지 않는다
+  //+_+// 한 건이 실패해도 앞의 성공을 되돌리지 않는다. 성공한 것만 응답에 싣는다
+  async function openMissingTabs(): Promise<DashboardResponse> {
+    const openedTileIds: string[] = []
+    for (const tile of activeProject().tiles) {
+      if (liveBoundTabId(tile.id) !== null || tile.launchUrl.length === 0) {
+        continue
+      }
+      try {
+        const created = await createTab(tile.launchUrl)
+        await engine.captures.unregister(tile.id)
+        attachTile(tile, created.tabId)
+        openedTileIds.push(tile.id)
+      } catch (error: unknown) {
+        console.error('[webdeck] openMissingTabs failed', tile.id, errorMessage(error))
+      }
+    }
+    if (openedTileIds.length > 0) {
+      await persist()
+    }
+    return { ok: true, type: 'OPEN_MISSING_TABS', openedTileIds }
+  }
+
   //+_+// P5-D32. v1 section 9.4 의 Reopen 이다. 자리와 설정과 tileId 를 그대로 두고 탭만 새로 만든다
   //+_+// 새 탭에 걸므로 엔진이 새 TileState 를 만든다. 그것이 fault 를 지우는 명시 경로다
   async function reopenTile(tileId: string): Promise<DashboardResponse> {
@@ -444,9 +506,7 @@ export function createDashboardHost(
 
     const created = await createTab(tile.launchUrl)
     await engine.captures.unregister(tileId)
-    bindings.set(tileId, created.tabId)
-    summaries.delete(tileId)
-    engine.registerTile(tile, created.tabId, dashboardVisible)
+    attachTile(tile, created.tabId)
     await persist()
     return { ok: true, type: 'REOPEN_TILE', tabId: created.tabId }
   }
@@ -513,11 +573,13 @@ export function createDashboardHost(
   }
 
   //+_+// 거부된 저장값을 덮어쓰지 않는다. 씨앗 상태를 그대로 두고 실패를 부르는 쪽에 돌려준다
+  //+_+// P5-D35. 재연결은 여기 안에 둔다. 기동 시 1회라는 조건을 한 자리에서 보장한다
   async function load(): Promise<LoadResult> {
     const result = await loadState(storage)
     if (result.ok) {
       await applyProjects(result.projects, result.activeProjectId)
     }
+    await reconnect()
     return result
   }
 
@@ -544,6 +606,8 @@ export function createDashboardHost(
           return reopenTile(request.tileId)
         case 'REMOVE_TILE':
           return removeTile(request.tileId)
+        case 'OPEN_MISSING_TABS':
+          return openMissingTabs()
         case 'BIND_TILE':
           return bindTile(request.tileId, request.tabId)
         //+_+// P4-D8. 핸들러를 만들지 않는다. 프레임은 GET_PROJECT_STATE 가 나른다. 타입은 남긴다

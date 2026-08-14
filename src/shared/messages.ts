@@ -51,6 +51,8 @@ export type DashboardRequest =
   | { type: 'REOPEN_TILE'; tileId: string }
   //+_+// P5-D33. 타일만 지운다. 사용자의 탭은 닫지 않는다. CLAUDE.md section 5.2
   | { type: 'REMOVE_TILE'; tileId: string }
+  //+_+// P5-D37. v1 section 10 의 6단계다. REOPEN_TILE 의 일괄판이며 메시지를 합치지 않는다
+  | { type: 'OPEN_MISSING_TABS' }
   | { type: 'LIST_PROJECTS' }
   | { type: 'CREATE_PROJECT'; name: string }
   | { type: 'RENAME_PROJECT'; projectId: string; name: string }
@@ -107,6 +109,8 @@ export type DashboardResponse =
   | { ok: true; type: 'ADD_TILE'; tileId: string }
   | { ok: true; type: 'REOPEN_TILE'; tabId: number }
   | { ok: true; type: 'REMOVE_TILE' }
+  //+_+// 성공한 것만 싣는다. 일부 실패가 전체를 되돌리지 않는다
+  | { ok: true; type: 'OPEN_MISSING_TABS'; openedTileIds: string[] }
   //+_+// P5-D22. 화면은 활성 프로젝트 id 를 여기서 받는다. 상수를 하드코딩하지 않는다
   | { ok: true; type: 'LIST_PROJECTS'; projects: Project[]; activeProjectId: string }
   | { ok: true; type: 'CREATE_PROJECT'; project: Project }
@@ -121,7 +125,7 @@ type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : fals
 
 type AssertTrue<T extends true> = T
 
-//+_+// 요청 17개와 성공 응답이 1:1 로 대응하지 않으면 컴파일이 깨진다. 핸들러 없이 망라성을 고정한다
+//+_+// 요청 18개와 성공 응답이 1:1 로 대응하지 않으면 컴파일이 깨진다. 핸들러 없이 망라성을 고정한다
 export type RequestsAndResponsesMatch = AssertTrue<
   MutuallyAssignable<DashboardRequestType, SuccessResponseType>
 >
