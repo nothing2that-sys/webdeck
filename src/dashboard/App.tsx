@@ -8,7 +8,9 @@ import {
   POLL_INTERVAL_MS,
   addTile,
   bindTile,
+  captureTile,
   createProject,
+  createVisibilityGate,
   deleteProject,
   fetchProjectState,
   focusTile,
@@ -132,6 +134,22 @@ export function App(): React.JSX.Element {
     }, POLL_INTERVAL_MS)
     return () => {
       clearInterval(handle)
+    }
+  }, [poll])
+
+  //+_+// P5-D9. L35 를 닫는다. 표시 상태가 바뀌면 다음 폴링을 기다리지 않고 즉시 1회 보낸다
+  //+_+// 주기 자체는 바꾸지 않는다. P4-D7 의 2000ms 그대로다
+  //+_+// 판정 권위는 워커다. 화면은 폴링에 dashboardVisible 을 실어 보낼 뿐이다. P4-D11
+  useEffect(() => {
+    const gate = createVisibilityGate(isDashboardVisible())
+    const notify = (): void => {
+      if (gate.changed(isDashboardVisible())) {
+        void poll()
+      }
+    }
+    document.addEventListener('visibilitychange', notify)
+    return () => {
+      document.removeEventListener('visibilitychange', notify)
     }
   }, [poll])
 
@@ -281,6 +299,21 @@ export function App(): React.JSX.Element {
     },
     [poll, reportFailure, selectedTabId],
   )
+
+  //+_+// P5-D6. v1 section 14 의 Refresh Preview 다. 응답의 프레임을 직접 그리지 않고 폴링에 맡긴다
+  //+_+// 워커가 최신 프레임을 이미 들고 있으므로 다음 상태 응답이 같은 것을 나른다. J126
+  const refreshPreview = useCallback(async () => {
+    if (selectedTileId === null) {
+      return
+    }
+    const response = await captureTile(selectedTileId)
+    if (!response.ok) {
+      await reportFailure(response)
+      return
+    }
+    setNotice('')
+    await poll()
+  }, [poll, reportFailure, selectedTileId])
 
   //+_+// v1 section 10 의 6단계다. 열린 탭 수만큼 알리고 0건이면 그것도 알린다
   const openMissing = useCallback(async () => {
@@ -573,6 +606,13 @@ export function App(): React.JSX.Element {
         />
         <button type="button" disabled={settings === null} onClick={() => void applySettings()}>
           Apply
+        </button>
+        <button
+          type="button"
+          disabled={selectedTileId === null}
+          onClick={() => void refreshPreview()}
+        >
+          Refresh Preview
         </button>
         <button
           type="button"

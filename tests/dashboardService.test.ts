@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { POLL_INTERVAL_MS, isStaleTabFailure } from '../src/dashboard/dashboardService'
+import {
+  POLL_INTERVAL_MS,
+  createVisibilityGate,
+  isStaleTabFailure,
+} from '../src/dashboard/dashboardService'
 import type { DashboardResponse } from '../src/shared/messages'
 
 //+_+// chrome 을 부르는 것은 send 안이며 이 파일은 그것을 import 하지 않는다
@@ -27,5 +31,35 @@ describe('P5-D30 - a stale tab list is refreshed rather than reported', () => {
   //+_+// P4-D7 이 정한 값이다. 워커의 캡처 주기와 별개이며 서로를 참조하지 않는다
   it('keeps the poll interval the dashboard was built around', () => {
     expect(POLL_INTERVAL_MS).toBe(2000)
+  })
+})
+
+//+_+// P5-D9. visibilitychange 는 같은 상태로도 발화할 수 있다. 바뀐 회차만 폴링을 부른다
+describe('P5-D9 - the visibility gate only passes a change', () => {
+  it('passes the first change away from the initial state', () => {
+    const gate = createVisibilityGate(true)
+    expect(gate.changed(false)).toBe(true)
+  })
+
+  it('blocks a notification that repeats the current state', () => {
+    const gate = createVisibilityGate(true)
+    expect(gate.changed(true)).toBe(false)
+  })
+
+  it('blocks the second of two identical notifications', () => {
+    const gate = createVisibilityGate(true)
+    expect(gate.changed(false)).toBe(true)
+    expect(gate.changed(false)).toBe(false)
+  })
+
+  it('passes a flip back to the earlier state', () => {
+    const gate = createVisibilityGate(true)
+    gate.changed(false)
+    expect(gate.changed(true)).toBe(true)
+  })
+
+  it('follows the initial value it was given', () => {
+    expect(createVisibilityGate(false).changed(false)).toBe(false)
+    expect(createVisibilityGate(false).changed(true)).toBe(true)
   })
 })

@@ -29,6 +29,21 @@ export function isDashboardVisible(): boolean {
   return document.visibilityState === 'visible'
 }
 
+//+_+// P5-D9. visibilitychange 는 같은 상태로도 발화할 수 있다. 바뀐 회차만 통과시킨다
+//+_+// 폴링 주기 자체는 건드리지 않는다. 이것은 그 사이의 즉시 통보 1회를 위한 문이다. L35
+export function createVisibilityGate(initial: boolean): { changed(next: boolean): boolean } {
+  let current = initial
+  return {
+    changed(next: boolean): boolean {
+      if (next === current) {
+        return false
+      }
+      current = next
+      return true
+    },
+  }
+}
+
 //+_+// P5-D30. 화면이 아는 탭 목록이 낡았다는 뜻이다. 오류로 표시하지 않고 목록을 다시 읽는다
 //+_+// J85 와 같은 원칙이다. 워커가 정본이고 화면이 따라간다
 export function isStaleTabFailure(response: DashboardResponse): boolean {
@@ -96,6 +111,11 @@ export async function removeTile(tileId: string): Promise<DashboardResponse> {
 //+_+// v1 section 10 의 6단계다. 버튼으로만 돈다. 브라우저 시작과 동시에 돌지 않는다
 export async function openMissingTabs(): Promise<DashboardResponse> {
   return send({ type: 'OPEN_MISSING_TABS' })
+}
+
+//+_+// v1 section 14 의 Refresh Preview 다. 페이지를 reload 하지 않는다
+export async function captureTile(tileId: string): Promise<DashboardResponse> {
+  return send({ type: 'CAPTURE_TILE', tileId })
 }
 
 export async function setTileSettings(
