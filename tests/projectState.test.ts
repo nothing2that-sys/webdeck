@@ -7,9 +7,11 @@ import {
   buildRuntimeState,
   createProject,
   newTile,
+  planReconnect,
   resolveProjects,
   resolveRuntimeStatus,
 } from '../src/background/projectState'
+import type { ReconnectTarget } from '../src/background/projectState'
 import { DEFAULT_PROJECT_ID } from '../src/shared/messages'
 import { CAPTURE_INTERVAL_MS } from '../src/shared/scheduler'
 import type { BrowserTabInfo, Project, WebTile } from '../src/shared/types'
@@ -298,5 +300,139 @@ describe('P5-D22 - createProject builds an empty 4x4 project', () => {
   //+_+// P5-D3. Keep Alive 를 새로 만들지 않는다. 기존 필드는 기본값으로만 남는다
   it('leaves keepManagedTabsAlive off', () => {
     expect(createProject('p1', 'Monitoring').keepManagedTabsAlive).toBe(false)
+  })
+})
+
+//+_+// v1 section 10 의 판정이다. 후보 수가 셋으로 갈린다. 자동 선택 규칙을 만들지 않는다. P5-D15
+describe('v1 10 - planReconnect decides by candidate count', () => {
+  function target(tile: WebTile, boundTabId: number | null = null): ReconnectTarget {
+    return { tile, boundTabId }
+  }
+
+  function tab(tabId: number, currentUrl: string): BrowserTabInfo {
+    return { tabId, windowId: 1, currentUrl, title: `title ${String(tabId)}` }
+  }
+
+  function urlTile(id: string, launchUrl: string, matchMode: WebTile['matchMode'] = 'exact'): WebTile {
+    return { ...tile(id, 0, 0), launchUrl, matchMode }
+  }
+
+  it('binds when exactly one tab matches', () => {
+    const tiles = [target(urlTile('t1', 'https://a.com/one'))]
+    const tabs = [tab(11, 'https://a.com/one'), tab(12, 'https://a.com/two')]
+
+    expect(planReconnect(tiles, tabs)).toEqual([{ tileId: 't1', kind: 'bind', tabId: 11 }])
+  })
+
+  it('leaves the tile alone when no tab matches', () => {
+    const tiles = [target(urlTile('t1', 'https://a.com/one'))]
+    expect(planReconnect(tiles, [tab(12, 'https://a.com/two')])).toEqual([
+      { tileId: 't1', kind: 'none' },
+    ])
+  })
+
+  //+_+// P5-D15. 가장 적절한 후보의 판정 규칙이 v1 어디에도 없다. 지어내지 않는다
+  it('refuses to choose when two tabs match', () => {
+    const tiles = [target(urlTile('t1', 'https://a.com/one'))]
+    const tabs = [tab(11, 'https://a.com/one'), tab(12, 'https://a.com/one')]
+
+    expect(planReconnect(tiles, tabs)).toEqual([
+      { tileId: 't1', kind: 'ambiguous', tabIds: [11, 12] },
+    ])
+  })
+
+  it('refuses to choose when three tabs match', () => {
+    const tiles = [target(urlTile('t1', 'https://a.com/one'))]
+    const tabs = [11, 12, 13].map((id) => tab(id, 'https://a.com/one'))
+
+    expect(planReconnect(tiles, tabs)[0]).toMatchObject({ kind: 'ambiguous' })
+  })
+
+  it('skips a tile whose binding is still alive', () => {
+    const tiles = [target(urlTile('t1', 'https://a.com/one'), 11)]
+    expect(planReconnect(tiles, [tab(11, 'https://a.com/one')])).toEqual([])
+  })
+
+  //+_+// P5-D36. 살아 있는 바인딩이 점유한 탭은 다른 타일의 후보가 되지 않는다
+  it('keeps a tab that another tile already holds out of the candidates', () => {
+    const tiles = [
+      target(urlTile('held', 'https://a.com/one'), 11),
+      target(urlTile('t2', 'https://a.com/one')),
+    ]
+    const tabs = [tab(11, 'https://a.com/one')]
+
+    expect(planReconnect(tiles, tabs)).toEqual([{ tileId: 't2', kind: 'none' }])
+  })
+
+  //+_+// P5-D36. 순서를 정하지 않으면 결과가 비결정적이 된다. 배열 순서가 저장 순서다
+  it('lets the earlier tile in the array take a shared candidate', () => {
+    const tiles = [target(urlTile('first', 'https://a.com/one')), target(urlTile('second', 'https://a.com/one'))]
+    const tabs = [tab(11, 'https://a.com/one')]
+
+    expect(planReconnect(tiles, tabs)).toEqual([
+      { tileId: 'first', kind: 'bind', tabId: 11 },
+      { tileId: 'second', kind: 'none' },
+    ])
+  })
+
+  it('does not let an ambiguous tile claim any tab', () => {
+    const tiles = [
+      target(urlTile('ambiguous', 'https://a.com/one')),
+      target(urlTile('later', 'https://a.com/one')),
+    ]
+    const tabs = [tab(11, 'https://a.com/one'), tab(12, 'https://a.com/one')]
+
+    expect(planReconnect(tiles, tabs)).toEqual([
+      { tileId: 'ambiguous', kind: 'ambiguous', tabIds: [11, 12] },
+      { tileId: 'later', kind: 'ambiguous', tabIds: [11, 12] },
+    ])
+  })
+
+  it('matches each tile by its own matchMode', () => {
+    const tabs = [tab(11, 'https://a.com/p?a=1'), tab(12, 'https://b.com/p/deep')]
+
+    expect(planReconnect([target(urlTile('t', 'https://a.com/p?a=1', 'exact'))], tabs)).toEqual([
+      { tileId: 't', kind: 'bind', tabId: 11 },
+    ])
+    expect(planReconnect([target(urlTile('t', 'https://a.com/other', 'origin'))], tabs)).toEqual([
+      { tileId: 't', kind: 'bind', tabId: 11 },
+    ])
+    expect(planReconnect([target(urlTile('t', 'https://b.com/p', 'prefix'))], tabs)).toEqual([
+      { tileId: 't', kind: 'bind', tabId: 12 },
+    ])
+  })
+
+  //+_+// 앞 타일이 후보를 가져가면 뒤 타일의 후보 수가 줄어 판정이 달라진다
+  it('narrows a later tile candidates by what an earlier tile took', () => {
+    const tiles = [
+      target(urlTile('exact', 'https://a.com/p?a=1', 'exact')),
+      target(urlTile('origin', 'https://a.com/anything', 'origin')),
+    ]
+    const tabs = [tab(11, 'https://a.com/p?a=1'), tab(12, 'https://a.com/p/deep')]
+
+    expect(planReconnect(tiles, tabs)).toEqual([
+      { tileId: 'exact', kind: 'bind', tabId: 11 },
+      { tileId: 'origin', kind: 'bind', tabId: 12 },
+    ])
+  })
+
+  //+_+// launchUrl 이 비면 어떤 탭과도 매치되지 않는다. urlMatches 가 파싱 실패를 false 로 만든다
+  it('finds no candidate for a tile with an empty launch url', () => {
+    const tiles = [target(urlTile('blank', ''))]
+    expect(planReconnect(tiles, [tab(11, 'https://a.com/one')])).toEqual([
+      { tileId: 'blank', kind: 'none' },
+    ])
+  })
+
+  it('returns nothing for an empty tile list', () => {
+    expect(planReconnect([], [tab(11, 'https://a.com/one')])).toEqual([])
+  })
+
+  it('reports every tile as unmatched when no tab is open', () => {
+    const tiles = [target(urlTile('t1', 'https://a.com/one')), target(urlTile('t2', 'https://a.com/two'))]
+    expect(planReconnect(tiles, [])).toEqual([
+      { tileId: 't1', kind: 'none' },
+      { tileId: 't2', kind: 'none' },
+    ])
   })
 })

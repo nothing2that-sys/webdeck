@@ -108,3 +108,31 @@ describe('v1 25.1 item 8 - url prefix match', () => {
     expect(urlMatches('a.com/foo', 'a.com/foo', 'prefix')).toBe(false)
   })
 })
+
+//+_+// P5-D7. L11 을 정규화하지 않는다. 현재 동작을 시험으로 고정하고 회피 수단은 matchMode 다
+describe('L11 - exact tells query parameter order apart', () => {
+  it('does not match when only the query order differs', () => {
+    expect(urlMatches('https://a.com/p?a=1&b=2', 'https://a.com/p?b=2&a=1', 'exact')).toBe(false)
+  })
+
+  it('matches when the query is written in the same order', () => {
+    expect(urlMatches('https://a.com/p?a=1&b=2', 'https://a.com/p?a=1&b=2', 'exact')).toBe(true)
+  })
+
+  //+_+// 회피 수단이다. 두 모드는 search 를 비교에 넣지 않는다
+  it('lets origin ignore the query order', () => {
+    expect(urlMatches('https://a.com/p?a=1&b=2', 'https://a.com/p?b=2&a=1', 'origin')).toBe(true)
+  })
+
+  it('lets prefix ignore the query order', () => {
+    expect(urlMatches('https://a.com/p?a=1&b=2', 'https://a.com/p?b=2&a=1', 'prefix')).toBe(true)
+  })
+
+  it('keeps exact sensitive to an added parameter', () => {
+    expect(urlMatches('https://a.com/p?a=1', 'https://a.com/p?a=1&b=2', 'exact')).toBe(false)
+  })
+
+  it('keeps exact matching an empty query on both sides', () => {
+    expect(urlMatches('https://a.com/p', 'https://a.com/p', 'exact')).toBe(true)
+  })
+})

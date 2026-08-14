@@ -1,6 +1,7 @@
 import { findFirstAvailablePosition } from '../shared/grid'
 import { DEFAULT_PROJECT_ID, DEFAULT_PROJECT_NAME } from '../shared/messages'
 import { defaultRefreshIntervalMs } from '../shared/scheduler'
+import { urlMatches } from '../shared/urlMatcher'
 import type { BrowserTabInfo, Project, TileRuntimeState, TileStatus, WebTile } from '../shared/types'
 import type { CaptureRecord } from './previewCaptureManager'
 
@@ -65,6 +66,56 @@ export function newTile(
     fitMode: 'contain',
     keepAlive: false,
   }
+}
+
+//+_+// v1 section 10 의 재연결 대상이다. boundTabId 가 있으면 살아 있는 바인딩이고 판정하지 않는다
+export interface ReconnectTarget {
+  tile: WebTile
+  boundTabId: number | null
+}
+
+//+_+// v1 section 10 의 3~5 단계다. 후보 수가 판정을 가른다
+//+_+// P5-D15. 후보가 둘 이상이면 고르지 않는다. "가장 적절한" 의 규칙이 v1 어디에도 없다
+export type ReconnectVerdict =
+  | { tileId: string; kind: 'bind'; tabId: number }
+  | { tileId: string; kind: 'ambiguous'; tabIds: number[] }
+  | { tileId: string; kind: 'none' }
+
+//+_+// tabId 를 저장하지 않으므로 URL 로 다시 찾는다. v1 section 10 첫 문장
+//+_+// P5-D36. 한 탭은 한 타일에만 붙는다. 이미 잡힌 탭은 뒤 타일의 후보에서 빠진다
+//+_+// 순서는 타일 배열 순서이고 그것이 저장 순서다. 정하지 않으면 결과가 비결정적이 된다
+//+_+// 매칭은 urlMatcher 를 그대로 쓴다. 같은 로직을 두 번 쓰지 않는다
+export function planReconnect(
+  targets: readonly ReconnectTarget[],
+  tabs: readonly BrowserTabInfo[],
+): ReconnectVerdict[] {
+  const taken = new Set<number>()
+  for (const target of targets) {
+    if (target.boundTabId !== null) {
+      taken.add(target.boundTabId)
+    }
+  }
+
+  const verdicts: ReconnectVerdict[] = []
+  for (const target of targets) {
+    if (target.boundTabId !== null) {
+      continue
+    }
+    const tileId = target.tile.id
+    const tabIds = tabs
+      .filter((tab) => !taken.has(tab.tabId))
+      .filter((tab) => urlMatches(target.tile.launchUrl, tab.currentUrl, target.tile.matchMode))
+      .map((tab) => tab.tabId)
+
+    const only = tabIds.length === 1 ? tabIds[0] : undefined
+    if (only === undefined) {
+      verdicts.push(tabIds.length === 0 ? { tileId, kind: 'none' } : { tileId, kind: 'ambiguous', tabIds })
+      continue
+    }
+    taken.add(only)
+    verdicts.push({ tileId, kind: 'bind', tabId: only })
+  }
+  return verdicts
 }
 
 //+_+// previewCaptureManager 는 타일별 마지막 회차를 공개하지 않는다. 정산 훅으로 따로 접는다

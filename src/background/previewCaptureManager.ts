@@ -306,6 +306,13 @@ export class PreviewCaptureManager {
     }
   }
 
+  //+_+// P5-D35. 엔진이 이 타일을 아직 스케줄에 두고 있는가다
+  //+_+// 모르는 타일과 탭이 사라진 타일이 false 다. 재연결과 Open Missing Tabs 가 이것으로 대상을 고른다
+  isScheduled(tileId: string): boolean {
+    const state = this.tiles.get(tileId)
+    return state !== undefined && !state.tabGone
+  }
+
   statusOf(tileId: string): TileStatus | null {
     const state = this.tiles.get(tileId)
     if (state === undefined) {
