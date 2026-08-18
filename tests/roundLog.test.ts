@@ -19,6 +19,8 @@ function entry(overrides: Partial<CaptureRoundLog> = {}): CaptureRoundLog {
     outcome: 'success',
     bytes: 41523,
     frameHash: 'f3a91c22',
+    registeredTiles: 3,
+    attachedTabs: 2,
     ...overrides,
   }
 }
@@ -36,7 +38,7 @@ describe('F4 - the round clock carries milliseconds', () => {
 describe('F4 - a round line carries what the period needs to be read by eye', () => {
   it('names the prefix, the clock, the tile, the span, the interval, both durations and the outcome', () => {
     expect(formatCaptureRound(entry())).toBe(
-      `${ROUND_LOG_PREFIX} ${formatRoundClock(entry().at)} 3f2a9c11 1x1 every 4000ms took 812ms call 790ms success 40.5kB f3a91c22`,
+      `${ROUND_LOG_PREFIX} ${formatRoundClock(entry().at)} 3f2a9c11 1x1 every 4000ms took 812ms call 790ms success 40.5kB f3a91c22 tiles 3 attached 2`,
     )
   })
 
@@ -53,12 +55,15 @@ describe('F4 - a round line carries what the period needs to be read by eye', ()
     ).toContain(' took 812ms call -ms attachFailed')
   })
 
+  //+_+// P6-D17 이 행 끝에 두 값을 붙였다. 해시는 여전히 크기 바로 뒤다
   it('prints the frame hash after the size so equal frames are visible', () => {
-    expect(formatCaptureRound(entry({ frameHash: 'deadbeef' }))).toMatch(/40\.5kB deadbeef$/)
+    expect(formatCaptureRound(entry({ frameHash: 'deadbeef' }))).toMatch(
+      / 40\.5kB deadbeef tiles 3 attached 2$/,
+    )
   })
 
   it('drops the hash when the round produced no frame', () => {
-    expect(formatCaptureRound(entry({ frameHash: null }))).toMatch(/40\.5kB$/)
+    expect(formatCaptureRound(entry({ frameHash: null }))).toMatch(/ 40\.5kB tiles 3 attached 2$/)
   })
 
   it('shortens the tile id to the first eight characters', () => {
@@ -94,6 +99,35 @@ describe('F4 - a round line carries what the period needs to be read by eye', ()
   it('rounds the byte count to one decimal', () => {
     expect(formatCaptureRound(entry({ bytes: 1024 }))).toContain(' 1.0kB')
     expect(formatCaptureRound(entry({ bytes: 0 }))).toContain(' 0.0kB')
+  })
+})
+
+//+_+// P6-D17. L39 는 회차 시점의 타일 수 없이 판정할 수 없다
+describe('P6-D17 - the round line carries the tile count and the attach count', () => {
+  it('names both counts at the end of a successful round', () => {
+    expect(formatCaptureRound(entry({ registeredTiles: 16, attachedTabs: 15 }))).toMatch(
+      / tiles 16 attached 15$/,
+    )
+  })
+
+  //+_+// 실패 회차가 L39 의 관측 대상이다. 여기서 두 값이 빠지면 항목을 닫을 수 없다
+  it('keeps both counts on a failed round that has no byte count', () => {
+    const line = formatCaptureRound(entry({ outcome: 'timeout', bytes: null, frameHash: null }))
+    expect(line).toMatch(/ timeout tiles 3 attached 2$/)
+    expect(line).not.toContain('kB')
+  })
+
+  it('does not disturb the tokens that came before it', () => {
+    expect(formatCaptureRound(entry())).toContain(
+      ' 3f2a9c11 1x1 every 4000ms took 812ms call 790ms success ',
+    )
+  })
+
+  //+_+// 0 을 대시로 적지 않는다. 등록 0 은 모르는 값이 아니라 관측값이다
+  it('writes a zero count as zero', () => {
+    expect(formatCaptureRound(entry({ registeredTiles: 0, attachedTabs: 0 }))).toMatch(
+      / tiles 0 attached 0$/,
+    )
   })
 })
 

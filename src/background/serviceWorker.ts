@@ -22,6 +22,7 @@ import type { KeyValueBackend, LoadResult } from '../shared/storage'
 import type { BrowserTabInfo, Project, TileRuntimeState, WebTile } from '../shared/types'
 import { DebuggerSessionManager, errorMessage } from './debuggerSessionManager'
 import type { DebuggerBackend } from './debuggerSessionManager'
+import { createRoundLogStore, recordWorkerStart } from './diagnostics'
 import { PreviewCaptureManager, systemClock } from './previewCaptureManager'
 import type { Clock, PreviewCaptureManagerOptions } from './previewCaptureManager'
 import {
@@ -37,6 +38,7 @@ import {
 } from './projectState'
 import type { TileCaptureSummary } from './projectState'
 import { frameFingerprint, logCaptureRound } from './roundLog'
+import type { CaptureRoundLog } from './roundLog'
 import { TabManager } from './tabManager'
 import type { TabsBackend } from './tabManager'
 
@@ -130,6 +132,9 @@ export function createDashboardHost(
   createTab: CreateTab,
   storage: KeyValueBackend,
   clock: Clock = systemClock,
+  //+_+// P6-D18. 계측 전용 자리다. null 이면 링버퍼를 쓰지 않는다
+  //+_+// storage 와 같은 인자를 쓰지 않는 이유는 계측 쓰기와 상태 저장 쓰기를 갈라 세기 위해서다
+  diagnostics: KeyValueBackend | null = null,
 ): DashboardHost {
   //+_+// P5-D8. 저장값을 읽기 전에도 활성 프로젝트가 하나 있다. load 가 있으면 그것으로 갈아 끼운다
   const seeded = resolveProjects([], '')
@@ -150,6 +155,8 @@ export function createDashboardHost(
   //+_+// P4-D11. 대시보드가 보내오는 표시 상태다. 요청이 오기 전에는 보이는 것으로 둔다
   let dashboardVisible = true
 
+  const rounds = diagnostics === null ? null : createRoundLogStore(diagnostics)
+
   const engine = createPreviewEngine(debuggerBackend, tabsBackend, clock, {
     onCaptureSettled: (record, frame) => {
       summaries.set(
@@ -163,7 +170,7 @@ export function createDashboardHost(
       //+_+// 로그가 던져도 정산이 달라지지 않아야 한다. 그래서 여기서 삼킨다
       try {
         const tile = activeProject().tiles.find((item) => item.id === record.tileId) ?? null
-        logCaptureRound({
+        const entry: CaptureRoundLog = {
           at: record.startedAt + record.roundDurationMs,
           tileId: record.tileId,
           w: tile?.w ?? null,
@@ -174,7 +181,13 @@ export function createDashboardHost(
           outcome: record.outcome,
           bytes: record.bytes,
           frameHash: frame === null ? null : frameFingerprint(frame.imageBase64),
-        })
+          //+_+// P6-D17. 이 회차 시점의 값이다. 정산이 끝난 뒤에 읽으므로 슬롯은 이미 반납됐다
+          registeredTiles: engine.captures.registeredTileCount,
+          attachedTabs: engine.sessions.attachedCount,
+        }
+        logCaptureRound(entry)
+        //+_+// S3. 콘솔과 같은 정보를 저장에도 남긴다. append 는 거부하지 않는다
+        void rounds?.append(entry)
       } catch {
         //+_+// 계측이 제품 동작을 바꾸지 않는다는 것이 F4 의 조건이다
       }
@@ -799,15 +812,22 @@ export async function openDashboard(): Promise<void> {
 //+_+// 서비스 워커는 최상위에서 스스로 시작한다. 리스너 등록도 최상위여야 한다
 //+_+// chrome 이 없는 환경에서는 아무것도 하지 않는다. 그래서 단위 테스트가 이 파일을 import 할 수 있다
 if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
+  //+_+// P6-D16 · P6-D18. 계측 키는 상태 키와 다르므로 어댑터 하나를 두 자리에 그대로 넣는다
+  const storageBackend = chromeStorageBackend()
   const host = createDashboardHost(
     chromeDebuggerBackend(),
     chromeTabsBackend(),
     chromeListTabs(),
     chromeFocusTab(),
     chromeCreateTab(),
-    chromeStorageBackend(),
+    storageBackend,
+    systemClock,
+    storageBackend,
   )
   startPreviewDriver(host.engine)
+
+  //+_+// S1. 기동 1회당 1회다. await 하지 않는다. 아래 리스너 등록이 늦어지면 요청을 놓친다
+  void recordWorkerStart(storageBackend, Date.now())
 
   //+_+// S1. 기동 시 1회다. 실패해도 씨앗 상태로 계속 돈다. 조용히 삼키지 않고 콘솔에 남긴다
   host.load().then(

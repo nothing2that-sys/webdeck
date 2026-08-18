@@ -20,6 +20,10 @@ export interface CaptureRoundLog {
   bytes: number | null
   //+_+// N2. 프레임이 그대로인지 바뀌었는지 본다. 바이트 크기로는 구분되지 않는다
   frameHash: string | null
+  //+_+// P6-D17. L39 는 이 두 값 없이 판정할 수 없다. K2 가 로그에 없다고 보고했다
+  //+_+// 두 값이 갈리면 리스를 놓은 타일이 있다는 뜻이다. 등록 수는 tabGone 타일도 센다
+  registeredTiles: number
+  attachedTabs: number
 }
 
 //+_+// FNV-1a 32비트다. 암호용이 아니고 충돌을 걱정하는 용도도 아니다
@@ -59,12 +63,17 @@ export function formatCaptureRound(entry: CaptureRoundLog): string {
     entry.outcome,
   ].join(' ')
 
+  //+_+// P6-D17. 기존 토큰의 순서와 표기를 바꾸지 않고 행 끝에 붙인다
+  //+_+// 실패 회차도 L39 의 관측 대상이므로 bytes 가 없어도 이 두 값은 나온다
+  const tail = `tiles ${String(entry.registeredTiles)} attached ${String(entry.attachedTabs)}`
+
   //+_+// 실패 회차에는 바이트가 없다. 0kB 라고 적으면 빈 이미지를 받은 것처럼 읽힌다
   if (entry.bytes === null) {
-    return head
+    return `${head} ${tail}`
   }
   const size = `${head} ${(entry.bytes / 1024).toFixed(1)}kB`
-  return entry.frameHash === null ? size : `${size} ${entry.frameHash}`
+  const framed = entry.frameHash === null ? size : `${size} ${entry.frameHash}`
+  return `${framed} ${tail}`
 }
 
 //+_+// console 호출은 이 한 곳이다. CLAUDE.md section 8 의 console.log 남발 금지 조항이다

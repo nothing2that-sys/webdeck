@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DebuggerBackend } from '../src/background/debuggerSessionManager'
+import { ROUND_LOG_KEY, readRoundRows } from '../src/background/diagnostics'
 import type { Clock } from '../src/background/previewCaptureManager'
 import { ROUND_LOG_PREFIX, formatRoundClock, frameFingerprint } from '../src/background/roundLog'
 import { createDashboardHost, excludeOwnPages } from '../src/background/serviceWorker'
@@ -90,12 +91,17 @@ function tabInfo(tabId: number, url: string): BrowserTabInfo {
 class StubStorage implements KeyValueBackend {
   readonly store = new Map<string, unknown>()
   writes = 0
+  //+_+// S3. 링버퍼 쓰기가 실패해도 캡처가 계속되는 것을 시험하려면 실패를 만들 수 있어야 한다
+  failSet = false
 
   get(key: string): Promise<unknown> {
     return Promise.resolve(this.store.has(key) ? this.store.get(key) : undefined)
   }
 
   set(key: string, value: unknown): Promise<void> {
+    if (this.failSet) {
+      return Promise.reject(new Error('set refused'))
+    }
     this.writes += 1
     this.store.set(key, value)
     return Promise.resolve()
@@ -113,6 +119,8 @@ interface Fixture {
   tabsBackend: StubTabs
   clock: StubClock
   storage: StubStorage
+  //+_+// P6-D18. 계측 쓰기를 상태 저장 쓰기와 갈라 센다. null 이면 링버퍼가 꺼진 배선이다
+  diagnostics: StubStorage | null
   createdUrls: string[]
   //+_+// P5-D37. 일부 실패가 성공한 것들을 되돌리지 않는 것을 시험하려면 실패를 만들 수 있어야 한다
   failCreateUrls: Set<string>
@@ -121,7 +129,11 @@ interface Fixture {
   activated: { tabId: number; windowId: number }[]
 }
 
-function fixture(tabIds: number[] = [11, 12], storage = new StubStorage()): Fixture {
+function fixture(
+  tabIds: number[] = [11, 12],
+  storage = new StubStorage(),
+  diagnostics: StubStorage | null = null,
+): Fixture {
   const debuggerBackend = new StubDebugger()
   const tabsBackend = new StubTabs()
   const clock = new StubClock()
@@ -164,11 +176,13 @@ function fixture(tabIds: number[] = [11, 12], storage = new StubStorage()): Fixt
       createTab,
       storage,
       clock,
+      diagnostics,
     ),
     debuggerBackend,
     tabsBackend,
     clock,
     storage,
+    diagnostics,
     createdUrls,
     failCreateUrls,
     failListTabs: false,
@@ -424,13 +438,80 @@ describe('F4 - every settled round leaves one console line', () => {
 
       //+_+// 시각은 StubClock 의 0 이다. 로컬 시간대에 따라 달라지므로 같은 함수로 만든다
       //+_+// N2. 해시는 응답 본문 AAAA 에서 나온다. 값을 손으로 적지 않고 같은 함수로 만든다
+      //+_+// P6-D17. 타일 1개를 등록하고 탭 1개에 붙은 회차다
       expect(lines).toHaveLength(1)
       expect(lines[0][0]).toBe(
-        `${ROUND_LOG_PREFIX} ${formatRoundClock(0)} abcdef12 1x1 every ${String(CAPTURE_INTERVAL_MS.spanSmall)}ms took 0ms call 0ms success 0.0kB ${frameFingerprint('AAAA')}`,
+        `${ROUND_LOG_PREFIX} ${formatRoundClock(0)} abcdef12 1x1 every ${String(CAPTURE_INTERVAL_MS.spanSmall)}ms took 0ms call 0ms success 0.0kB ${frameFingerprint('AAAA')} tiles 1 attached 1`,
       )
     } finally {
       spy.mockRestore()
     }
+  })
+})
+
+//+_+// S3. 콘솔 출력과 같은 정보를 저장에도 남긴다. 관측 뒤에 콘솔을 한 번 열어 덤프한다
+describe('P6-D18 - a settled round also reaches the storage ring buffer', () => {
+  //+_+// 링버퍼 쓰기는 정산 뒤의 비동기 사슬이다. 매크로태스크 두 번으로 그 사슬을 비운다
+  async function settleOneRound(value: Fixture): Promise<string> {
+    const lines: unknown[][] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      lines.push(args)
+    })
+
+    try {
+      await value.host.handle({ type: 'BIND_TILE', tileId: 'abcdef1234', tabId: 11 })
+      value.host.engine.captures.tick()
+      for (let turn = 0; turn < 2; turn += 1) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 0)
+        })
+      }
+      return String(lines[0]?.[0] ?? '')
+    } finally {
+      spy.mockRestore()
+    }
+  }
+
+  it('stores the same line the console got', async () => {
+    const diagnostics = new StubStorage()
+    const value = fixture([11, 12], new StubStorage(), diagnostics)
+
+    const line = await settleOneRound(value)
+    const rows = readRoundRows(diagnostics.store.get(ROUND_LOG_KEY))
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.line).toBe(line)
+  })
+
+  //+_+// P6-D16. 계측 키는 상태 키와 다르다. schemaVersion 경로를 지나지 않는다
+  it('never writes the state key', async () => {
+    const diagnostics = new StubStorage()
+    await settleOneRound(fixture([11, 12], new StubStorage(), diagnostics))
+
+    expect([...diagnostics.store.keys()]).toEqual([ROUND_LOG_KEY])
+  })
+
+  it('writes nothing when no diagnostics backend is wired', async () => {
+    const storage = new StubStorage()
+    const value = fixture([11, 12], storage)
+
+    await settleOneRound(value)
+
+    expect(value.diagnostics).toBeNull()
+    expect([...storage.store.keys()]).toEqual([STORAGE_KEY])
+  })
+
+  //+_+// S3. 쓰기 실패가 캡처를 막지 않는다
+  it('settles the round even when the ring buffer write fails', async () => {
+    const diagnostics = new StubStorage()
+    diagnostics.failSet = true
+    const value = fixture([11, 12], new StubStorage(), diagnostics)
+
+    const line = await settleOneRound(value)
+
+    expect(line).toContain('success')
+    expect(value.host.engine.captures.captureRecords).toHaveLength(1)
+    expect(diagnostics.store.size).toBe(0)
   })
 })
 

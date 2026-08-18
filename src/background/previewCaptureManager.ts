@@ -236,6 +236,11 @@ export class PreviewCaptureManager {
     return this.queue.length
   }
 
+  //+_+// P6-D17. 등록과 해제가 이 수의 경계다. tabGone 타일도 등록돼 있으므로 센다
+  get registeredTileCount(): number {
+    return this.tiles.size
+  }
+
   latestFrame(tileId: string): CapturedFrame | null {
     return this.frames.get(tileId) ?? null
   }
