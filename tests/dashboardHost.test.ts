@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DebuggerBackend } from '../src/background/debuggerSessionManager'
-import { ROUND_LOG_KEY, readRoundRows } from '../src/background/diagnostics'
+import {
+  RECONNECT_LOG_KEY,
+  ROUND_LOG_KEY,
+  readReconnectRows,
+  readRoundRows,
+} from '../src/background/diagnostics'
 import type { Clock } from '../src/background/previewCaptureManager'
 import { ROUND_LOG_PREFIX, formatRoundClock, frameFingerprint } from '../src/background/roundLog'
 import { createDashboardHost, excludeOwnPages } from '../src/background/serviceWorker'
@@ -2544,5 +2549,128 @@ describe('P6-D47 - SET_PREVIEW_PAUSED is the manual whole-dashboard pause', () =
 
     const response = await value.host.handle({ type: 'CAPTURE_TILE', tileId: 't1' })
     expect(response).toMatchObject({ ok: true, type: 'CAPTURE_TILE', format: 'jpeg' })
+  })
+})
+
+//+_+// P6-D56. C-e2 가 메우려던 단서는 사후에 필요하다. 워커 콘솔은 워커가 죽으면 함께 사라진다
+describe('P6-D56 - the reconnect verdicts are readable after the fact', () => {
+  function seeded(projects: unknown[]): StubStorage {
+    const storage = new StubStorage()
+    storage.store.set(STORAGE_KEY, {
+      schemaVersion: 2,
+      activeProjectId: DEFAULT_PROJECT_ID,
+      projects,
+    })
+    return storage
+  }
+
+  function project(id: string, name: string, tiles: WebTile[]): unknown {
+    return { id, name, gridColumns: 4, gridRows: 4, keepManagedTabsAlive: false, tiles }
+  }
+
+  function tile(id: string, launchUrl: string, x = 0): WebTile {
+    return {
+      id,
+      launchUrl,
+      matchMode: 'exact',
+      x,
+      y: 0,
+      w: 1,
+      h: 1,
+      refreshIntervalMs: CAPTURE_INTERVAL_MS.spanSmall,
+      fitMode: 'contain',
+      keepAlive: false,
+    }
+  }
+
+  function rowsOf(value: Fixture) {
+    return readReconnectRows(value.diagnostics?.store.get(RECONNECT_LOG_KEY))
+  }
+
+  it('records a bind with its candidate count and the active flag', async () => {
+    const value = fixture(
+      [11],
+      seeded([project(DEFAULT_PROJECT_ID, 'WebDeck', [tile('t1', 'https://example.com/11')])]),
+      new StubStorage(),
+    )
+    await value.host.load()
+
+    expect(rowsOf(value)).toEqual([
+      expect.objectContaining({
+        tileId: 't1',
+        projectId: DEFAULT_PROJECT_ID,
+        kind: 'bind',
+        candidates: 1,
+        active: true,
+      }),
+    ])
+  })
+
+  it('records a tile that found no candidate', async () => {
+    const value = fixture(
+      [11],
+      seeded([project(DEFAULT_PROJECT_ID, 'WebDeck', [tile('t1', 'https://elsewhere.test/gone')])]),
+      new StubStorage(),
+    )
+    await value.host.load()
+
+    expect(rowsOf(value)[0]).toMatchObject({ kind: 'none', candidates: 0 })
+  })
+
+  //+_+// 후보 수가 판정을 가른다. ambiguous 는 몇 개였는지가 사후 조사의 핵심이다
+  it('records how many candidates an ambiguous tile had', async () => {
+    const value = fixture(
+      [],
+      seeded([project(DEFAULT_PROJECT_ID, 'WebDeck', [tile('t1', 'https://example.com/same')])]),
+      new StubStorage(),
+    )
+    value.tabsBackend.tabs.set(11, tabInfo(11, 'https://example.com/same'))
+    value.tabsBackend.tabs.set(12, tabInfo(12, 'https://example.com/same'))
+    value.tabsBackend.tabs.set(13, tabInfo(13, 'https://example.com/same'))
+    await value.host.load()
+
+    expect(rowsOf(value)[0]).toMatchObject({ kind: 'ambiguous', candidates: 3 })
+  })
+
+  //+_+// 비활성 프로젝트의 타일이 이 계측의 출발점이었다. active 로 갈린다
+  it('marks a tile that belongs to a project that was not active', async () => {
+    const value = fixture(
+      [11],
+      seeded([
+        project(DEFAULT_PROJECT_ID, 'WebDeck', []),
+        project('project-a', 'A', [tile('t1', 'https://example.com/11')]),
+      ]),
+      new StubStorage(),
+    )
+    await value.host.load()
+
+    expect(rowsOf(value)[0]).toMatchObject({
+      tileId: 't1',
+      projectId: 'project-a',
+      kind: 'bind',
+      active: false,
+    })
+  })
+
+  //+_+// P6-D16 · D18 과 같은 자리다. 상태 봉투를 지나지 않는다
+  it('never writes the state key with its rows', async () => {
+    const value = fixture(
+      [11],
+      seeded([project(DEFAULT_PROJECT_ID, 'WebDeck', [tile('t1', 'https://example.com/11')])]),
+      new StubStorage(),
+    )
+    await value.host.load()
+
+    expect(value.diagnostics?.store.has(STORAGE_KEY)).toBe(false)
+    expect(Object.hasOwn(value.storage.store.get(STORAGE_KEY) as object, 'schemaVersion')).toBe(true)
+  })
+
+  it('writes nothing when no diagnostics backend is wired', async () => {
+    const value = fixture(
+      [11],
+      seeded([project(DEFAULT_PROJECT_ID, 'WebDeck', [tile('t1', 'https://example.com/11')])]),
+    )
+    await expect(value.host.load()).resolves.toMatchObject({ ok: true })
+    expect(value.diagnostics).toBeNull()
   })
 })

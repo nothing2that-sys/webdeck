@@ -8,6 +8,10 @@ import { createRun, writeReport } from './runner.mjs'
 const SCENARIOS = {
   's1-gate': () => import('./scenarios/s1-gate.mjs'),
   'ra-repro': () => import('./scenarios/ra-repro.mjs'),
+  //+_+// P6-D55. 활성 프로젝트에 타일을 둔 채 hidden 을 만든다. ra-repro 가 못 재는 자리다
+  'hidden-reach': () => import('./scenarios/hidden-reach.mjs'),
+  //+_+// P6-D5 · D25. --tiles N 으로 조건을 만든다
+  'tile-load': () => import('./scenarios/tile-load.mjs'),
 }
 
 function parseArgs(argv) {

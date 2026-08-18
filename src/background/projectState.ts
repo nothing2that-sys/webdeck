@@ -138,6 +138,19 @@ export function formatReconnectVerdict(
   }
 }
 
+//+_+// P6-D56. 후보 탭 수다. 판정이 후보 수로 갈리므로 그 수를 판정에서 되읽는다
+//+_+// none 은 0, bind 는 1, ambiguous 는 실제 후보 수다
+export function reconnectCandidateCount(verdict: ReconnectVerdict): number {
+  switch (verdict.kind) {
+    case 'bind':
+      return 1
+    case 'ambiguous':
+      return verdict.tabIds.length
+    case 'none':
+      return 0
+  }
+}
+
 //+_+// previewCaptureManager 는 타일별 마지막 회차를 공개하지 않는다. 정산 훅으로 따로 접는다
 //+_+// 기록 배열을 매 폴링마다 훑지 않는다. L26 이 상한 없는 배열을 이미 지적했다
 export interface TileCaptureSummary {

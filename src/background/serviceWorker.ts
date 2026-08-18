@@ -21,7 +21,8 @@ import type { KeyValueBackend, LoadResult } from '../shared/storage'
 import type { BrowserTabInfo, Project, TileRuntimeState, WebTile } from '../shared/types'
 import { DebuggerSessionManager, errorMessage } from './debuggerSessionManager'
 import type { DebuggerBackend } from './debuggerSessionManager'
-import { createRoundLogStore, recordWorkerStart } from './diagnostics'
+import { createRoundLogStore, recordReconnectVerdicts, recordWorkerStart } from './diagnostics'
+import type { ReconnectLogRow } from './diagnostics'
 import { PreviewCaptureManager, systemClock } from './previewCaptureManager'
 import type { Clock, PreviewCaptureManagerOptions } from './previewCaptureManager'
 import {
@@ -33,6 +34,7 @@ import {
   formatReconnectVerdict,
   newTile,
   planReconnect,
+  reconnectCandidateCount,
   resolveProjects,
   resolveRuntimeStatus,
 } from './projectState'
@@ -512,6 +514,10 @@ export function createDashboardHost(
     }))
     const verdicts = planReconnect(targets, await listTabs())
 
+    //+_+// P6-D56. 콘솔과 같은 판정을 storage 에도 남긴다. 콘솔은 워커가 죽으면 함께 사라진다
+    const rows: ReconnectLogRow[] = []
+    const at = Date.now()
+
     let bound = 0
     for (const verdict of verdicts) {
       const owner = owners.get(verdict.tileId)
@@ -520,6 +526,14 @@ export function createDashboardHost(
       }
       //+_+// C-e2. 붙였든 못 붙였든 한 줄씩 남긴다. 무음이던 것이 결함 추적을 14분 막았다
       console.log(formatReconnectVerdict(verdict, owner.projectId, activeProjectId))
+      rows.push({
+        at,
+        tileId: verdict.tileId,
+        projectId: owner.projectId,
+        kind: verdict.kind,
+        candidates: reconnectCandidateCount(verdict),
+        active: owner.projectId === activeProjectId,
+      })
       if (verdict.kind !== 'bind') {
         continue
       }
@@ -530,6 +544,9 @@ export function createDashboardHost(
         bindOnly(verdict.tileId, verdict.tabId)
       }
       bound += 1
+    }
+    if (diagnostics !== null) {
+      await recordReconnectVerdicts(diagnostics, rows)
     }
     if (bound > 0) {
       await persist()

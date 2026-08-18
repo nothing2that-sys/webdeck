@@ -1,15 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  RECONNECT_LOG_KEY,
+  RECONNECT_LOG_LIMIT,
   ROUND_LOG_KEY,
   WORKER_STARTS_KEY,
+  appendReconnectRows,
   appendRoundRow,
   createRoundLogStore,
   nextWorkerStarts,
+  readReconnectRows,
   readRoundRows,
   readWorkerStarts,
+  recordReconnectVerdicts,
   recordWorkerStart,
 } from '../src/background/diagnostics'
-import type { RoundLogRow } from '../src/background/diagnostics'
+import type { ReconnectLogRow, RoundLogRow } from '../src/background/diagnostics'
 import { formatCaptureRound } from '../src/background/roundLog'
 import type { CaptureRoundLog } from '../src/background/roundLog'
 import type { KeyValueBackend } from '../src/shared/storage'
@@ -274,5 +279,80 @@ describe('P6-D18 - a failing ring buffer write does not reject', () => {
     expect(readRoundRows(storage.store.get(ROUND_LOG_KEY)).map((stored) => stored.at)).toEqual([
       2, 3,
     ])
+  })
+})
+
+//+_+// P6-D56. 재연결 판정을 사후에 읽는다. 콘솔은 워커가 죽으면 함께 사라진다
+describe('P6-D56 - the reconnect verdicts reach storage', () => {
+  function row(overrides: Partial<ReconnectLogRow> = {}): ReconnectLogRow {
+    return {
+      at: 1_000,
+      tileId: 'aaaaaaaa-1111-2222-3333-444444444444',
+      projectId: 'webdeck.default',
+      kind: 'bind',
+      candidates: 1,
+      active: true,
+      ...overrides,
+    }
+  }
+
+  it('uses a key of its own', () => {
+    expect(RECONNECT_LOG_KEY).not.toBe(ROUND_LOG_KEY)
+    expect(RECONNECT_LOG_KEY).not.toBe(WORKER_STARTS_KEY)
+  })
+
+  it('reads back what it wrote', async () => {
+    const backend = new CountingStorage()
+    await recordReconnectVerdicts(backend, [row(), row({ tileId: 'b', kind: 'none', candidates: 0 })])
+
+    const stored = readReconnectRows(backend.store.get(RECONNECT_LOG_KEY))
+    expect(stored).toHaveLength(2)
+    expect(stored[0]).toMatchObject({ kind: 'bind', candidates: 1, active: true })
+    expect(stored[1]).toMatchObject({ kind: 'none', candidates: 0 })
+  })
+
+  //+_+// 기동마다 이어 붙는다. 앞 기동의 판정이 사라지면 사후 조회의 목적을 절반만 채운다
+  it('appends across worker starts rather than replacing', async () => {
+    const backend = new CountingStorage()
+    await recordReconnectVerdicts(backend, [row({ at: 1_000 })])
+    await recordReconnectVerdicts(backend, [row({ at: 2_000 })])
+
+    const stored = readReconnectRows(backend.store.get(RECONNECT_LOG_KEY))
+    expect(stored.map((entry) => entry.at)).toEqual([1_000, 2_000])
+  })
+
+  it('writes nothing when there was no verdict to record', async () => {
+    const backend = new CountingStorage()
+    await recordReconnectVerdicts(backend, [])
+    expect(backend.writes).toBe(0)
+    expect(backend.store.has(RECONNECT_LOG_KEY)).toBe(false)
+  })
+
+  //+_+// 계측 실패가 재연결을 막지 않는다. recordWorkerStart 와 같은 규칙이다
+  it('swallows a write failure and leaves one console line', async () => {
+    const backend = new CountingStorage()
+    backend.failSet = true
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await expect(recordReconnectVerdicts(backend, [row()])).resolves.toBeUndefined()
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it('drops the oldest rows once the limit is reached', () => {
+    const many = Array.from({ length: RECONNECT_LOG_LIMIT + 5 }, (_unused, index) =>
+      row({ at: index }),
+    )
+    const kept = appendReconnectRows([], many)
+    expect(kept).toHaveLength(RECONNECT_LOG_LIMIT)
+    expect(kept[0]?.at).toBe(5)
+  })
+
+  //+_+// 손상된 값에 이어 쓰지 않는다. 자기가 쓴 값도 형태를 다시 검증한다
+  it('rejects rows that do not have the shape', () => {
+    expect(readReconnectRows('nope')).toEqual([])
+    expect(readReconnectRows([{ at: 1, tileId: 't', projectId: 'p', kind: 'wat', candidates: 0, active: true }])).toEqual([])
+    expect(readReconnectRows([{ at: 1, tileId: 't', projectId: 'p', kind: 'bind', candidates: 0 }])).toEqual([])
+    expect(readReconnectRows([row(), 'junk'])).toHaveLength(1)
   })
 })

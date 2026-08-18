@@ -15,6 +15,13 @@ export const WORKER_START_LIMIT = 50
 //+_+// P6-D20. P6-D7 이 기존 기록 배열의 상한을 정하면 이 값과 같은 체계로 맞춘다
 export const ROUND_LOG_LIMIT = 2000
 
+//+_+// P6-D56. 재연결 판정을 사후에 읽기 위한 키다. 콘솔은 워커가 죽으면 함께 사라진다
+//+_+// P6-D22 가 워커 타깃 부착을 금지하므로 하네스도 그 콘솔을 읽지 못한다
+export const RECONNECT_LOG_KEY = 'webdeck.diagnostics.reconnect'
+
+//+_+// 워커 기동당 타일 수만큼이다. 회차 로그와 달리 주기적으로 늘지 않는다
+export const RECONNECT_LOG_LIMIT = 200
+
 export interface WorkerStartRecord {
   starts: number
   recentAt: number[]
@@ -24,6 +31,18 @@ export interface WorkerStartRecord {
 export interface RoundLogRow {
   at: number
   line: string
+}
+
+//+_+// P6-D56. 판정 1건이다. at 이 epoch ms 이므로 workerStarts.recentAt 과 그대로 대조된다
+//+_+// kind 는 판정이고 active 는 그 타일이 활성 프로젝트에 있었는지다. 둘은 다른 축이다
+//+_+// candidates 는 후보 탭 수다. none 은 0, bind 는 1, ambiguous 는 2 이상이다
+export interface ReconnectLogRow {
+  at: number
+  tileId: string
+  projectId: string
+  kind: 'bind' | 'none' | 'ambiguous'
+  candidates: number
+  active: boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -76,6 +95,50 @@ export async function recordWorkerStart(backend: KeyValueBackend, at: number): P
     await backend.set(WORKER_STARTS_KEY, nextWorkerStarts(stored, at))
   } catch (error: unknown) {
     console.error('[webdeck] worker start record failed', errorMessage(error))
+  }
+}
+
+const RECONNECT_KINDS: readonly ReconnectLogRow['kind'][] = ['bind', 'none', 'ambiguous']
+
+export function readReconnectRows(stored: unknown): ReconnectLogRow[] {
+  if (!Array.isArray(stored)) {
+    return []
+  }
+  return stored.filter(
+    (row): row is ReconnectLogRow =>
+      isRecord(row) &&
+      typeof row.at === 'number' &&
+      typeof row.tileId === 'string' &&
+      typeof row.projectId === 'string' &&
+      typeof row.candidates === 'number' &&
+      typeof row.active === 'boolean' &&
+      RECONNECT_KINDS.includes(row.kind as ReconnectLogRow['kind']),
+  )
+}
+
+//+_+// 오래된 것을 버린다. 회차 로그와 같은 체계다
+export function appendReconnectRows(
+  stored: unknown,
+  rows: readonly ReconnectLogRow[],
+  limit = RECONNECT_LOG_LIMIT,
+): ReconnectLogRow[] {
+  return [...readReconnectRows(stored), ...rows].slice(-limit)
+}
+
+//+_+// P6-D56. 워커 기동당 1회다. 한 기동의 판정 전부를 한 번에 이어 붙인다
+//+_+// 실패해도 재연결을 막지 않는다. 삼키되 콘솔에 1줄 남긴다. recordWorkerStart 와 같은 규칙이다
+export async function recordReconnectVerdicts(
+  backend: KeyValueBackend,
+  rows: readonly ReconnectLogRow[],
+): Promise<void> {
+  if (rows.length === 0) {
+    return
+  }
+  try {
+    const stored = await backend.get(RECONNECT_LOG_KEY)
+    await backend.set(RECONNECT_LOG_KEY, appendReconnectRows(stored, rows))
+  } catch (error: unknown) {
+    console.error('[webdeck] reconnect record failed', errorMessage(error))
   }
 }
 

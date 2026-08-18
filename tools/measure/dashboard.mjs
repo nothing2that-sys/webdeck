@@ -223,19 +223,63 @@ export async function bringDashboardToForeground(page) {
 
 //+_+// P6-D22. 서비스 워커 타깃에 붙지 않고 확장 페이지에서 chrome.storage 를 읽는다
 //+_+// 진단 키는 chrome.storage.local 에 있다 (src/background/diagnostics.ts)
-export async function dumpStorage(page, { sinceAt = 0 } = {}) {
-  return page.evaluate(async (since) => {
-    const all = await chrome.storage.local.get(null)
-    const rounds = Array.isArray(all['webdeck.diagnostics.rounds'])
-      ? all['webdeck.diagnostics.rounds']
-      : []
-    return {
-      readAt: Date.now(),
-      keys: Object.keys(all),
-      state: all['webdeck.state'] ?? null,
-      workerStarts: all['webdeck.diagnostics.workerStarts'] ?? null,
-      roundCount: rounds.length,
-      rounds: rounds.filter((row) => typeof row?.at === 'number' && row.at >= since),
+//+_+// P6-D55. 구간 경계를 양쪽으로 건다. 재개 뒤에 찍힌 행이 구간 안으로 섞이면 관측이 무너진다
+//+_+// untilAt 을 주지 않으면 종전대로 한쪽만 건다
+export async function dumpStorage(page, { sinceAt = 0, untilAt = null } = {}) {
+  return page.evaluate(
+    async (since, until) => {
+      const all = await chrome.storage.local.get(null)
+      const rounds = Array.isArray(all['webdeck.diagnostics.rounds'])
+        ? all['webdeck.diagnostics.rounds']
+        : []
+      const within = (row) =>
+        typeof row?.at === 'number' && row.at >= since && (until === null || row.at <= until)
+      return {
+        readAt: Date.now(),
+        keys: Object.keys(all),
+        state: all['webdeck.state'] ?? null,
+        workerStarts: all['webdeck.diagnostics.workerStarts'] ?? null,
+        //+_+// P6-D56. 재연결 판정이다. 콘솔이 사라져도 여기 남는다
+        reconnect: all['webdeck.diagnostics.reconnect'] ?? null,
+        roundCount: rounds.length,
+        window: { sinceAt: since, untilAt: until },
+        rounds: rounds.filter(within),
+      }
+    },
+    sinceAt,
+    untilAt,
+  )
+}
+
+//+_+// P6-D55. 구간 내 회차를 타일별로 센다. 판정하지 않는다. 세는 일만 한다
+export function countRoundsByTile(rows) {
+  const byTile = {}
+  let unparsed = 0
+  for (const row of rows) {
+    const line = typeof row?.line === 'string' ? row.line : ''
+    const match = /^\[webdeck\] \S+ (\S+) /.exec(line)
+    if (match === null) {
+      unparsed += 1
+      continue
     }
-  }, sinceAt)
+    byTile[match[1]] = (byTile[match[1]] ?? 0) + 1
+  }
+  return { total: rows.length, byTile, unparsed }
+}
+
+//+_+// 창을 앞으로 가져오는 대상이 무엇이었는지 기록에 남긴다. 어떤 탭이 앞에 왔는지가 관측의 일부다
+export async function activateSiblingTab(page) {
+  return page.evaluate(async () => {
+    const self = await chrome.tabs.getCurrent()
+    if (self === undefined || self.id === undefined) {
+      return { ok: false, reason: 'no current tab' }
+    }
+    const siblings = await chrome.tabs.query({ windowId: self.windowId })
+    const other = siblings.find((tab) => tab.id !== self.id)
+    if (other === undefined || other.id === undefined) {
+      return { ok: false, reason: 'no sibling tab' }
+    }
+    await chrome.tabs.update(other.id, { active: true })
+    return { ok: true, activatedTabId: other.id, url: other.url ?? '', title: other.title ?? '' }
+  })
 }

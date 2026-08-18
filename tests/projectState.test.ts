@@ -8,6 +8,7 @@ import {
   createProject,
   newTile,
   planReconnect,
+  reconnectCandidateCount,
   resolveProjects,
   resolveRuntimeStatus,
 } from '../src/background/projectState'
@@ -443,5 +444,20 @@ describe('v1 10 - planReconnect decides by candidate count', () => {
       { tileId: 't1', kind: 'none' },
       { tileId: 't2', kind: 'none' },
     ])
+  })
+})
+
+//+_+// P6-D56. 판정이 후보 수로 갈린다. 그 수를 판정에서 되읽어 계측에 싣는다
+describe('P6-D56 - the candidate count is read back from the verdict', () => {
+  it('reports one for a bind', () => {
+    expect(reconnectCandidateCount({ tileId: 't', kind: 'bind', tabId: 11 })).toBe(1)
+  })
+
+  it('reports zero for none', () => {
+    expect(reconnectCandidateCount({ tileId: 't', kind: 'none' })).toBe(0)
+  })
+
+  it('reports the real count for ambiguous', () => {
+    expect(reconnectCandidateCount({ tileId: 't', kind: 'ambiguous', tabIds: [11, 12, 13] })).toBe(3)
   })
 })
