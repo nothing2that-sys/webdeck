@@ -87,6 +87,8 @@ async function main() {
     noTiles: args.flags.noTiles !== undefined,
     //+_+// S2-1 · S2-2 는 P1 만 쓴다
     skipP2: args.flags.skipP2 !== undefined,
+    //+_+// P6-D79. Pause Preview 를 켠 채로 구간에 든다. attach 는 남고 캡처만 사라진다
+    pause: args.flags.pause !== undefined,
   }
 
   //+_+// 회차마다 새 프로필이다. 앞 회차의 상태가 다음 회차의 관측에 섞이지 않게 한다

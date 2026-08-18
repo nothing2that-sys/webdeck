@@ -315,3 +315,74 @@ export async function activateSiblingTab(page) {
     return { ok: true, activatedTabId: other.id, url: other.url ?? '', title: other.title ?? '' }
   })
 }
+
+//+_+// P6-D79. Pause Preview 토글이다. 문구는 App.tsx 의 'Pause Preview' / 'Pause Preview · on' 이다
+//+_+// 켜진 상태와 꺼진 상태가 같은 버튼이므로 라벨로 현재 상태를 읽는다
+export async function readPauseButtonLabel(page) {
+  return page.evaluate((scope) => {
+    const root = document.querySelector(scope)
+    if (root === null) {
+      return null
+    }
+    const button = Array.from(root.querySelectorAll('button')).find((element) =>
+      (element.textContent ?? '').startsWith('Pause Preview'),
+    )
+    return button === undefined ? null : (button.textContent ?? '')
+  }, TOOLBAR)
+}
+
+//+_+// P6-D79. 화면 라벨과 저장 키를 함께 낸다. 둘이 갈리면 그 사실이 관측이다
+//+_+// 키는 src/shared/storage.ts 의 PAUSE_KEY 다
+export async function readPauseState(page) {
+  const label = await readPauseButtonLabel(page)
+  const stored = await page.evaluate(async () => {
+    const all = await chrome.storage.local.get('webdeck.previewPaused')
+    return all['webdeck.previewPaused'] ?? null
+  })
+  return { buttonLabel: label, storedPaused: stored }
+}
+
+//+_+// 원하는 상태가 될 때까지 한 번만 누른다. 이미 그 상태면 누르지 않는다
+export async function setPreviewPaused(page, want) {
+  const before = await readPauseState(page)
+  const isOn = before.buttonLabel === 'Pause Preview · on'
+  if (isOn !== want) {
+    await clickButton(page, TOOLBAR, isOn ? 'Pause Preview · on' : 'Pause Preview')
+    await page.waitForFunction(
+      (scope, text) => {
+        const root = document.querySelector(scope)
+        if (root === null) {
+          return false
+        }
+        return Array.from(root.querySelectorAll('button')).some(
+          (element) => (element.textContent ?? '') === text,
+        )
+      },
+      { timeout: 10000 },
+      TOOLBAR,
+      want ? 'Pause Preview · on' : 'Pause Preview',
+    )
+  }
+  return { before, after: await readPauseState(page) }
+}
+
+//+_+// P6-D79. Pause 구간에는 회차가 없으므로 회차 로그로 attach 를 볼 수 없다
+//+_+// chrome.debugger.getTargets 는 목록을 읽기만 한다. 어느 타깃에도 붙지 않는다 (P6-D22)
+//+_+// attached 는 그 타깃에 디버거 클라이언트가 붙어 있는지다. 붙인 주체가 누구인지는 말하지 않는다
+export async function readDebuggerTargets(page, tabIds) {
+  return page.evaluate(async (ids) => {
+    const targets = await chrome.debugger.getTargets()
+    const wanted = targets.filter((target) => ids.includes(target.tabId ?? -1))
+    return {
+      readAt: Date.now(),
+      totalTargets: targets.length,
+      tabs: wanted.map((target) => ({
+        tabId: target.tabId ?? null,
+        type: target.type,
+        attached: target.attached,
+        title: target.title,
+        url: target.url,
+      })),
+    }
+  }, tabIds)
+}

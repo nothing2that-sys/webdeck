@@ -32,6 +32,16 @@ function spread(values) {
   }
 }
 
+//+_+// P6-D67. 값별 행 수다. 250 이 아닌 sched 토큰이 몇 행에 있는지를 보려면 분포가 있어야 한다
+function tally(values) {
+  const counts = {}
+  for (const value of values) {
+    const key = value === null ? 'null' : String(value)
+    counts[key] = (counts[key] ?? 0) + 1
+  }
+  return counts
+}
+
 export async function run({ session, run, extensionId, config }) {
   const idleMs = config.watchMs ?? 60000
   const settleMs = config.settleMs ?? 20000
@@ -96,6 +106,11 @@ export async function run({ session, run, extensionId, config }) {
       endedAt: to,
       elapsedMs: to - from,
       workerStarts: dump.workerStarts,
+      //+_+// P6-D67. 회차 로그는 상한 2000 의 링버퍼다 (ROUND_LOG_LIMIT). 넘치면 앞에서 잘린다
+      //+_+// 잘렸는지를 리포트에서 볼 수 있어야 한다. 저장된 총 행 수와 구간 첫 행 시각을 함께 낸다
+      storedRowCount: dump.roundCount,
+      firstRowAtInWindow: dump.rounds[0]?.at ?? null,
+      lastRowAtInWindow: dump.rounds[dump.rounds.length - 1]?.at ?? null,
       inWindow: countRoundsByTile(dump.rounds),
       observed: observeRounds(dump.rounds),
       //+_+// 행 끝의 tiles N attached N 이다. 등록 수와 attach 수가 갈리면 리스를 놓은 타일이 있다
@@ -108,6 +123,10 @@ export async function run({ session, run, extensionId, config }) {
       ),
       //+_+// P6-D61. 굶는 타일이 있는지를 본다. 타일별 회차 수의 최소 · 중간 · 최대다
       roundsPerTile: spread(Object.values(countRoundsByTile(dump.rounds).byTile)),
+      //+_+// P6-D67. every 는 그 타일에 걸린 주기고 sched 는 그 회차를 실제로 부른 주기다 (P6-D51)
+      //+_+// 강등이 일어나면 둘 중 하나가 DEGRADED_INTERVAL_MS 나 backoff 계단 값으로 나온다
+      everyIntervalMsTally: tally(parsed.map((item) => item.intervalMs)),
+      scheduleIntervalMsTally: tally(parsed.map((item) => item.scheduleIntervalMs)),
       sampleLines: dump.rounds.slice(0, 3).map((row) => row.line),
     })
     run.dump('tiles at the end', await readTiles(page))

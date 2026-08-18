@@ -8,8 +8,11 @@ import {
   createUnmanagedTab,
   dumpStorage,
   openDashboard,
+  readDebuggerTargets,
+  readPauseState,
   readTickTitles,
   readTiles,
+  setPreviewPaused,
   switchProject,
 } from '../dashboard.mjs'
 import { sleep } from '../runner.mjs'
@@ -47,6 +50,8 @@ function rateOf(before, after) {
 export async function run({ session, run, extensionId, config }) {
   const idleMs = config.watchMs ?? 180000
   const settleMs = config.settleMs ?? 20000
+  //+_+// P6-D79. Pause 를 켜면 attach 는 남고 캡처가 사라진다. 1차와 다른 것은 이 한 가지다
+  const wantPause = config.pause === true
 
   const controlUrl = fixtureUrl(1)
   const attachUrl = fixtureUrl(2)
@@ -55,6 +60,8 @@ export async function run({ session, run, extensionId, config }) {
   let controlTabId = null
   let attachTabId = null
   let before = null
+  let pauseAtStart = null
+  let targetsAtStart = null
 
   await run.segment('open one unmanaged tab and one tile tab', async () => {
     page = await openDashboard(session, extensionId, run)
@@ -94,6 +101,16 @@ export async function run({ session, run, extensionId, config }) {
       workerStarts: settled.workerStarts,
       lastLines: settled.rounds.slice(-2).map((row) => row.line),
     })
+
+    //+_+// P6-D79. attach 는 첫 회차의 ensureAttached 에서 생긴다. 안정화가 끝난 지금 이미 붙어 있다
+    //+_+// 그래서 Pause 는 안정화 뒤에 켠다. 처음부터 켜면 회차가 없어 attach 자체가 일어나지 않는다
+    if (wantPause) {
+      run.action('turn Pause Preview on', {})
+      const toggled = await setPreviewPaused(page, true)
+      run.dump('pause toggled', toggled)
+    }
+    pauseAtStart = await readPauseState(page)
+    run.dump('pause state at the window start', pauseAtStart)
   })
 
   const from = Date.now()
@@ -101,6 +118,10 @@ export async function run({ session, run, extensionId, config }) {
     //+_+// 구간 경계에서만 읽는다. 구간 중에는 두 탭을 앞으로 가져오지도 읽지도 않는다
     before = await readTickTitles(page, [controlTabId, attachTabId])
     run.dump('tick titles at the window start', before)
+    //+_+// P6-D79. Pause 구간에는 회차가 없어 회차 로그로 attach 를 볼 수 없다. 목록을 읽어 둔다
+    //+_+// 붙지 않고 읽기만 한다. 두 탭 어디에도 CDP 를 붙이지 않는다는 조건이 유지된다
+    targetsAtStart = await readDebuggerTargets(page, [controlTabId, attachTabId])
+    run.dump('debugger targets at the window start', targetsAtStart)
     run.action('idle, dashboard in the foreground, both tabs in the background', { ms: idleMs })
     await sleep(idleMs)
   })
@@ -111,6 +132,11 @@ export async function run({ session, run, extensionId, config }) {
     const after = await readTickTitles(page, [controlTabId, attachTabId])
     run.dump('tick titles at the window end', after)
 
+    const targetsAtEnd = await readDebuggerTargets(page, [controlTabId, attachTabId])
+    run.dump('debugger targets at the window end', targetsAtEnd)
+    const pauseAtEnd = await readPauseState(page)
+    run.dump('pause state at the window end', pauseAtEnd)
+
     const dump = await dumpStorage(page, { sinceAt: from, untilAt: to })
     const rounds = countRoundsByTile(dump.rounds)
 
@@ -118,6 +144,9 @@ export async function run({ session, run, extensionId, config }) {
       startedAt: from,
       endedAt: to,
       elapsedMs: to - from,
+      pauseRequested: wantPause,
+      pause: { atStart: pauseAtStart, atEnd: pauseAtEnd },
+      debuggerTargets: { atStart: targetsAtStart, atEnd: targetsAtEnd },
       workerStarts: dump.workerStarts,
       //+_+// attach 여부는 회차 로그의 attached N 과 등록 여부로 읽는다. 하네스가 판정하지 않는다
       roundsInWindow: rounds,
