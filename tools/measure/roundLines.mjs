@@ -6,7 +6,7 @@ const LINE = new RegExp(
     '^\\[webdeck\\] (?<clock>\\S+) (?<tile>\\S+) (?<w>[\\d-]+)x(?<h>[\\d-]+)',
     ' every (?<interval>[\\d-]+)ms took (?<round>\\d+)ms call (?<call>[\\d-]+)ms',
     ' (?<outcome>\\S+)(?: (?<kb>[\\d.]+)kB(?: (?<hash>[0-9a-f]{8}))?)?',
-    ' tiles (?<tiles>\\d+) attached (?<attached>\\d+)$',
+    ' tiles (?<tiles>\\d+) attached (?<attached>\\d+) sched (?<sched>\\d+)ms$',
   ].join(''),
 )
 
@@ -30,6 +30,8 @@ export function parseRoundLine(line) {
     frameHash: g.hash ?? null,
     registeredTiles: num(g.tiles),
     attachedTabs: num(g.attached),
+    //+_+// P6-D51. 그 회차를 부른 주기다. every 와 갈리면 계단이나 강등 주기로 불린 것이다
+    scheduleIntervalMs: num(g.sched),
   }
 }
 

@@ -19,6 +19,7 @@ function entry(overrides: Partial<CaptureRoundLog> = {}): CaptureRoundLog {
     outcome: 'success',
     bytes: 41523,
     frameHash: 'f3a91c22',
+    scheduleIntervalMs: 4000,
     registeredTiles: 3,
     attachedTabs: 2,
     ...overrides,
@@ -38,7 +39,7 @@ describe('F4 - the round clock carries milliseconds', () => {
 describe('F4 - a round line carries what the period needs to be read by eye', () => {
   it('names the prefix, the clock, the tile, the span, the interval, both durations and the outcome', () => {
     expect(formatCaptureRound(entry())).toBe(
-      `${ROUND_LOG_PREFIX} ${formatRoundClock(entry().at)} 3f2a9c11 1x1 every 4000ms took 812ms call 790ms success 40.5kB f3a91c22 tiles 3 attached 2`,
+      `${ROUND_LOG_PREFIX} ${formatRoundClock(entry().at)} 3f2a9c11 1x1 every 4000ms took 812ms call 790ms success 40.5kB f3a91c22 tiles 3 attached 2 sched 4000ms`,
     )
   })
 
@@ -58,12 +59,12 @@ describe('F4 - a round line carries what the period needs to be read by eye', ()
   //+_+// P6-D17 이 행 끝에 두 값을 붙였다. 해시는 여전히 크기 바로 뒤다
   it('prints the frame hash after the size so equal frames are visible', () => {
     expect(formatCaptureRound(entry({ frameHash: 'deadbeef' }))).toMatch(
-      / 40\.5kB deadbeef tiles 3 attached 2$/,
+      / 40\.5kB deadbeef tiles 3 attached 2 sched 4000ms$/,
     )
   })
 
   it('drops the hash when the round produced no frame', () => {
-    expect(formatCaptureRound(entry({ frameHash: null }))).toMatch(/ 40\.5kB tiles 3 attached 2$/)
+    expect(formatCaptureRound(entry({ frameHash: null }))).toMatch(/ 40\.5kB tiles 3 attached 2 sched 4000ms$/)
   })
 
   it('shortens the tile id to the first eight characters', () => {
@@ -106,14 +107,14 @@ describe('F4 - a round line carries what the period needs to be read by eye', ()
 describe('P6-D17 - the round line carries the tile count and the attach count', () => {
   it('names both counts at the end of a successful round', () => {
     expect(formatCaptureRound(entry({ registeredTiles: 16, attachedTabs: 15 }))).toMatch(
-      / tiles 16 attached 15$/,
+      / tiles 16 attached 15 sched 4000ms$/,
     )
   })
 
   //+_+// 실패 회차가 L39 의 관측 대상이다. 여기서 두 값이 빠지면 항목을 닫을 수 없다
   it('keeps both counts on a failed round that has no byte count', () => {
     const line = formatCaptureRound(entry({ outcome: 'timeout', bytes: null, frameHash: null }))
-    expect(line).toMatch(/ timeout tiles 3 attached 2$/)
+    expect(line).toMatch(/ timeout tiles 3 attached 2 sched 4000ms$/)
     expect(line).not.toContain('kB')
   })
 
@@ -126,7 +127,7 @@ describe('P6-D17 - the round line carries the tile count and the attach count', 
   //+_+// 0 을 대시로 적지 않는다. 등록 0 은 모르는 값이 아니라 관측값이다
   it('writes a zero count as zero', () => {
     expect(formatCaptureRound(entry({ registeredTiles: 0, attachedTabs: 0 }))).toMatch(
-      / tiles 0 attached 0$/,
+      / tiles 0 attached 0 sched 4000ms$/,
     )
   })
 })
@@ -149,5 +150,33 @@ describe('N2 - the frame fingerprint tells equal frames from similar ones', () =
     for (const payload of ['', 'A', 'AAAA', 'x'.repeat(5000)]) {
       expect(frameFingerprint(payload)).toMatch(/^[0-9a-f]{8}$/)
     }
+  })
+})
+
+//+_+// P6-D51 · B-e3. 회차 로그 한 줄만 보고 그 회차를 부른 주기를 알 수 있어야 한다
+describe('P6-D51 - the line names the interval that scheduled the round', () => {
+  it('puts the scheduling interval at the end of the line', () => {
+    expect(formatCaptureRound(entry())).toMatch(/ sched 4000ms$/)
+  })
+
+  //+_+// every 는 타일 설정이고 sched 는 그 회차를 실제로 부른 주기다. 갈릴 수 있어야 의미가 있다
+  it('lets the scheduling interval differ from the tile interval', () => {
+    const line = formatCaptureRound(
+      entry({ intervalMs: 4000, scheduleIntervalMs: 45000, outcome: 'timeout', bytes: null }),
+    )
+    expect(line).toContain(' every 4000ms ')
+    expect(line).toMatch(/ sched 45000ms$/)
+  })
+
+  //+_+// 실패 회차에도 나온다. 강등된 타일이 왜 드물게 도는지가 실패 행에서 읽혀야 한다
+  it('is present on a round that produced no frame', () => {
+    expect(
+      formatCaptureRound(entry({ outcome: 'attachFailed', bytes: null, frameHash: null })),
+    ).toMatch(/ sched 4000ms$/)
+  })
+
+  //+_+// P6-D17 이 붙인 두 값보다 뒤다. 기존 토큰의 순서를 바꾸지 않았다는 뜻이다
+  it('comes after the tile and attach counts', () => {
+    expect(formatCaptureRound(entry())).toMatch(/ tiles 3 attached 2 sched 4000ms$/)
   })
 })

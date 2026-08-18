@@ -10,7 +10,7 @@ import {
 } from '../src/background/serviceWorker'
 import { TabManager } from '../src/background/tabManager'
 import type { TabsBackend } from '../src/background/tabManager'
-import { CAPTURE_INTERVAL_MS, captureStats, percentile } from '../src/shared/scheduler'
+import { captureStats, percentile } from '../src/shared/scheduler'
 import type { CaptureStats } from '../src/shared/scheduler'
 import type { BrowserTabInfo, WebTile } from '../src/shared/types'
 
@@ -247,7 +247,7 @@ describe('TASK-P3-01 section 3.6 - the driver is separate from the decision', ()
     const clock = new StubClock()
     const engine = createPreviewEngine(new StubDebugger(), new StubTabs(), clock)
 
-    engine.registerTile(tile('a', 1, 1, 4000), 7, true)
+    engine.registerTile(tile('a', 1, 1, 4000), 7)
     engine.captures.tick()
     await flush()
     expect(engine.captures.inFlightCount).toBe(0)
@@ -261,22 +261,21 @@ describe('TASK-P3-01 section 3.6 - the driver is separate from the decision', ()
     expect(engine.captures.inFlightCount).toBe(1)
   })
 
-  //+_+// hidden 주기 선택은 구동자가 한다. 캡처 엔진은 받은 주기를 그대로 쓴다
-  it('picks the hidden interval while the dashboard is hidden', async () => {
+  //+_+// P6-D52. 표시 상태는 주기를 고르지 않는다. Pause 는 registerTile 이 아니라 setPaused 가 만든다
+  //+_+// A-e1. Pause 중에는 만기가 와도 회차가 생기지 않는다
+  it('runs no round while the engine is paused', async () => {
     const clock = new StubClock()
     const engine = createPreviewEngine(new StubDebugger(), new StubTabs(), clock)
 
-    engine.registerTile(tile('a', 1, 1, 4000), 7, false)
+    engine.registerTile(tile('a', 1, 1, 4000), 7)
+    engine.captures.setPaused(true)
     engine.captures.tick()
     await flush()
-
-    clock.current = CAPTURE_INTERVAL_MS.dashboardHidden - 1
-    engine.captures.tick()
     expect(engine.captures.inFlightCount).toBe(0)
 
-    clock.current = CAPTURE_INTERVAL_MS.dashboardHidden
+    clock.current = 4000
     engine.captures.tick()
-    expect(engine.captures.inFlightCount).toBe(1)
+    expect(engine.captures.inFlightCount).toBe(0)
   })
 
   //+_+// P5-D20. 타일을 잊지 않는다. DETACHED 로 표시하고 스케줄에서만 뺀다
@@ -285,7 +284,7 @@ describe('TASK-P3-01 section 3.6 - the driver is separate from the decision', ()
     const tabs = new StubTabs()
     const engine = createPreviewEngine(new StubDebugger(), tabs, clock)
 
-    engine.registerTile(tile('a', 1, 1, 4000), 7, true)
+    engine.registerTile(tile('a', 1, 1, 4000), 7)
     engine.captures.tick()
     await flush()
     expect(engine.captures.statusOf('a')).not.toBeNull()
@@ -310,7 +309,7 @@ describe('TASK-P3-01 section 3.6 - the driver is separate from the decision', ()
     const backend = new StubDebugger()
     const engine = createPreviewEngine(backend, tabs, clock)
 
-    engine.registerTile(tile('a', 1, 1, 4000), 7, true)
+    engine.registerTile(tile('a', 1, 1, 4000), 7)
     engine.captures.tick()
     await flush()
 

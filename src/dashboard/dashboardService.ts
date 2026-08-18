@@ -50,6 +50,11 @@ export function isStaleTabFailure(response: DashboardResponse): boolean {
   return !response.ok && response.errorCode === 'TAB_NOT_FOUND'
 }
 
+//+_+// P6-D47. v1 section 15.1 의 전체 Pause 다. 워커가 상태를 들고 화면은 요청만 보낸다
+export async function setPreviewPaused(paused: boolean): Promise<DashboardResponse> {
+  return send({ type: 'SET_PREVIEW_PAUSED', paused })
+}
+
 //+_+// P5-D22. 활성 프로젝트 id 는 워커가 알려 준 값이다. 상수를 하드코딩하지 않는다
 export async function fetchProjectState(
   projectId: string,

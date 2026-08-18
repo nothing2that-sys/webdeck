@@ -191,16 +191,37 @@ function fixture(
   return value
 }
 
-async function projectState(host: DashboardHost, dashboardVisible = true) {
+//+_+// P6-D49. 워커는 Pause 로 시작한다. 제품 경로에서는 첫 GET_PROJECT_STATE 폴링이 그것을 푼다
+//+_+// 엔진을 직접 구동하는 시험은 폴링을 흉내내지 않으므로 여기서 푼다. 이미 풀려 있으면 아무 일도 없다
+function driveTick(host: DashboardHost): void {
+  host.engine.captures.setPaused(false)
+  host.engine.captures.tick()
+}
+
+async function projectStateOf(host: DashboardHost, projectId: string, dashboardVisible = true) {
   const response = await host.handle({
     type: 'GET_PROJECT_STATE',
-    projectId: DEFAULT_PROJECT_ID,
+    projectId,
     dashboardVisible,
   })
   if (!response.ok || response.type !== 'GET_PROJECT_STATE') {
     throw new Error(`unexpected response ${JSON.stringify(response)}`)
   }
   return response
+}
+
+async function projectState(host: DashboardHost, dashboardVisible = true) {
+  return projectStateOf(host, DEFAULT_PROJECT_ID, dashboardVisible)
+}
+
+//+_+// 타일 1개짜리 시험이 쓴다. 폴링이 표시 상태를 나르므로 상태 조회에 그 값을 함께 넘긴다
+async function statusOfTile(host: DashboardHost, dashboardVisible: boolean): Promise<string> {
+  const state = await projectState(host, dashboardVisible)
+  const runtime = state.runtimeStates[0]
+  if (runtime === undefined) {
+    throw new Error('no runtime state')
+  }
+  return runtime.status
 }
 
 describe('P4-D7 - GET_PROJECT_STATE carries the state and the frames together', () => {
@@ -241,7 +262,7 @@ describe('P4-D7 - GET_PROJECT_STATE carries the state and the frames together', 
   it('carries the frame of a tile whose capture succeeded', async () => {
     const { host } = fixture()
     await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
-    host.engine.captures.tick()
+    driveTick(host)
     await Promise.resolve()
     await Promise.resolve()
 
@@ -261,7 +282,7 @@ describe('P4-D7 - GET_PROJECT_STATE carries the state and the frames together', 
     const { host, debuggerBackend } = fixture()
     debuggerBackend.data = null
     await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
-    host.engine.captures.tick()
+    driveTick(host)
     await Promise.resolve()
     await Promise.resolve()
 
@@ -314,7 +335,7 @@ describe('P4-D2 - BIND_TILE creates the tile the dev button asks for', () => {
     await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
     expect(debuggerBackend.attached).toEqual([])
 
-    host.engine.captures.tick()
+    driveTick(host)
     await Promise.resolve()
     expect(debuggerBackend.attached).toEqual([11])
   })
@@ -431,7 +452,7 @@ describe('F4 - every settled round leaves one console line', () => {
     try {
       const { host } = fixture()
       await host.handle({ type: 'BIND_TILE', tileId: 'abcdef1234', tabId: 11 })
-      host.engine.captures.tick()
+      driveTick(host)
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 0)
       })
@@ -441,7 +462,7 @@ describe('F4 - every settled round leaves one console line', () => {
       //+_+// P6-D17. 타일 1개를 등록하고 탭 1개에 붙은 회차다
       expect(lines).toHaveLength(1)
       expect(lines[0][0]).toBe(
-        `${ROUND_LOG_PREFIX} ${formatRoundClock(0)} abcdef12 1x1 every ${String(CAPTURE_INTERVAL_MS.spanSmall)}ms took 0ms call 0ms success 0.0kB ${frameFingerprint('AAAA')} tiles 1 attached 1`,
+        `${ROUND_LOG_PREFIX} ${formatRoundClock(0)} abcdef12 1x1 every ${String(CAPTURE_INTERVAL_MS.spanSmall)}ms took 0ms call 0ms success 0.0kB ${frameFingerprint('AAAA')} tiles 1 attached 1 sched ${String(CAPTURE_INTERVAL_MS.spanSmall)}ms`,
       )
     } finally {
       spy.mockRestore()
@@ -460,7 +481,7 @@ describe('P6-D18 - a settled round also reaches the storage ring buffer', () => 
 
     try {
       await value.host.handle({ type: 'BIND_TILE', tileId: 'abcdef1234', tabId: 11 })
-      value.host.engine.captures.tick()
+      driveTick(value.host)
       for (let turn = 0; turn < 2; turn += 1) {
         await new Promise<void>((resolve) => {
           setTimeout(resolve, 0)
@@ -530,7 +551,7 @@ describe('F2 - a tile whose tab was closed stays DETACHED', () => {
   async function boundTileWithFrame(): Promise<Fixture> {
     const value = fixture()
     await value.host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
-    value.host.engine.captures.tick()
+    driveTick(value.host)
     await flush()
     return value
   }
@@ -560,7 +581,7 @@ describe('F2 - a tile whose tab was closed stays DETACHED', () => {
 
     await projectState(value.host, false)
     await projectState(value.host, true)
-    value.host.engine.captures.tick()
+    driveTick(value.host)
     await flush()
 
     expect(value.debuggerBackend.attached).toHaveLength(attachedBefore)
@@ -591,8 +612,10 @@ describe('P4-D11 - GET_PROJECT_STATE carries the dashboard visibility', () => {
     return host.engine.captures.captureRecords.length
   }
 
+  //+_+// P6-D49. 워커는 보이지 않는 것으로 시작한다. 폴링 1회가 있어야 억제가 풀린다
   async function bindAndCapture(fixtureValue: Fixture): Promise<number> {
     await fixtureValue.host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await projectState(fixtureValue.host, true)
     return settleRound(fixtureValue.host)
   }
 
@@ -604,19 +627,31 @@ describe('P4-D11 - GET_PROJECT_STATE carries the dashboard visibility', () => {
     expect(await settleRound(value.host)).toBe(2)
   })
 
-  it('switches to the hidden interval on the poll that changed the value', async () => {
+  //+_+// A-e1. hidden 은 저주기가 아니라 Pause 다. 45000 회차가 남지 않는다
+  it('runs no round at all once the poll reports the dashboard hidden', async () => {
     const value = fixture()
     expect(await bindAndCapture(value)).toBe(1)
     await projectState(value.host, false)
 
-    //+_+// 재등록이 만기를 now 로 되돌리므로 그 자리에서 한 회차가 더 돈다
-    expect(await settleRound(value.host)).toBe(2)
+    expect(await settleRound(value.host)).toBe(1)
 
     value.clock.current = CAPTURE_INTERVAL_MS.spanSmall
-    expect(await settleRound(value.host)).toBe(2)
+    expect(await settleRound(value.host)).toBe(1)
 
-    value.clock.current = CAPTURE_INTERVAL_MS.dashboardHidden
-    expect(await settleRound(value.host)).toBe(3)
+    //+_+// 예전 hidden 주기를 한참 넘겨도 회차가 없다
+    value.clock.current = 200_000
+    expect(await settleRound(value.host)).toBe(1)
+  })
+
+  //+_+// A-e2 · D6a. Pause 는 억제 플래그다. 리스를 놓지 않으므로 타일이 DETACHED 로 바뀌지 않는다
+  it('keeps the debugger attached and the tile out of DETACHED while hidden', async () => {
+    const value = fixture()
+    expect(await bindAndCapture(value)).toBe(1)
+    await projectState(value.host, false)
+
+    expect(value.debuggerBackend.detached).toEqual([])
+    expect(value.host.engine.sessions.isAttached(11)).toBe(true)
+    expect(await statusOfTile(value.host, false)).not.toBe('DETACHED')
   })
 
   it('does not re-register on a poll that repeats the same value', async () => {
@@ -628,17 +663,43 @@ describe('P4-D11 - GET_PROJECT_STATE carries the dashboard visibility', () => {
     expect(await settleRound(value.host)).toBe(1)
   })
 
-  it('goes back to the tile interval when the dashboard is visible again', async () => {
+  //+_+// B-e1 · A-e3 · P6-D52. 전환 1회가 만기를 now 로 되돌리던 것이 몰림의 원인이었다
+  it('does not make every tile round the moment the dashboard comes back', async () => {
     const value = fixture()
     expect(await bindAndCapture(value)).toBe(1)
     await projectState(value.host, false)
 
-    value.clock.current = 1000
+    //+_+// Pause 구간 길이만큼 만기가 밀린다. 해제 시각이 아니라 남은 시간이 보존된다
+    value.clock.current = 100_000
     await projectState(value.host, true)
-    expect(await settleRound(value.host)).toBe(2)
+    expect(await settleRound(value.host)).toBe(1)
 
-    value.clock.current = 1000 + CAPTURE_INTERVAL_MS.spanSmall
-    expect(await settleRound(value.host)).toBe(3)
+    value.clock.current = 100_000 + CAPTURE_INTERVAL_MS.spanSmall - 1
+    expect(await settleRound(value.host)).toBe(1)
+
+    value.clock.current = 100_000 + CAPTURE_INTERVAL_MS.spanSmall
+    expect(await settleRound(value.host)).toBe(2)
+  })
+
+  //+_+// A-e4 · D38. Pause 구간의 경과가 신선도 판정에 들어가면 해제 직후 전 타일이 STALE 로 보인다
+  it('does not show the tile as STALE right after a long pause', async () => {
+    const value = fixture()
+    expect(await bindAndCapture(value)).toBe(1)
+    await projectState(value.host, false)
+
+    //+_+// 기본 주기 4000 의 STALE 임계는 12000 이다. Pause 구간이 그것을 한참 넘는다
+    value.clock.current = 500_000
+    expect(await statusOfTile(value.host, true)).not.toBe('STALE')
+  })
+
+  //+_+// 같은 임계가 Pause 중에도 성립해야 한다. 수동 Pause 는 화면을 켠 채로 걸 수 있다
+  it('does not show the tile as STALE while the pause is still on', async () => {
+    const value = fixture()
+    expect(await bindAndCapture(value)).toBe(1)
+    await projectState(value.host, false)
+
+    value.clock.current = 500_000
+    expect(await statusOfTile(value.host, false)).not.toBe('STALE')
   })
 })
 
@@ -1108,7 +1169,7 @@ describe('P5-D27 - ADD_TILE covers the two v1 9.1 paths', () => {
     const { host, debuggerBackend } = fixture()
     await addTile(host, { kind: 'tab', tabId: 11 })
 
-    host.engine.captures.tick()
+    driveTick(host)
     await Promise.resolve()
     expect(debuggerBackend.attached).toEqual([11])
   })
@@ -1298,7 +1359,7 @@ describe('S3 - only an interval change re-registers the tile', () => {
   }
 
   async function settleRound(value: Fixture): Promise<number> {
-    value.host.engine.captures.tick()
+    driveTick(value.host)
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 0)
     })
@@ -1522,7 +1583,7 @@ describe('P5-D14 - a successful drop is persisted at once', () => {
       },
     })
 
-    value.host.engine.captures.tick()
+    driveTick(value.host)
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 0)
     })
@@ -1530,7 +1591,7 @@ describe('P5-D14 - a successful drop is persisted at once', () => {
 
     value.clock.current = 1000
     await value.host.handle({ type: 'SET_TILE_RECT', tileId, rect: { x: 0, y: 0, w: 2, h: 2 } })
-    value.host.engine.captures.tick()
+    driveTick(value.host)
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 0)
     })
@@ -1699,7 +1760,7 @@ describe('P5-D32 - REOPEN_TILE puts the tile back on a fresh tab', () => {
     const { value, tileId } = await detachedTile()
     await value.host.handle({ type: 'REOPEN_TILE', tileId })
 
-    value.host.engine.captures.tick()
+    driveTick(value.host)
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 0)
     })
@@ -1881,7 +1942,7 @@ describe('P5-D35 - the worker reconnects once when it starts', () => {
     const value = fixture([11, 12], seeded([storedTile('t1', 'https://example.com/11')]))
     await value.host.load()
 
-    value.host.engine.captures.tick()
+    driveTick(value.host)
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 0)
     })
@@ -2167,7 +2228,7 @@ describe('P5-D6 - CAPTURE_TILE refreshes one preview on demand', () => {
     const { value, tileId } = await tiled()
 
     async function settleRound(): Promise<number> {
-      value.host.engine.captures.tick()
+      driveTick(value.host)
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 0)
       })
@@ -2209,10 +2270,279 @@ describe('P5-D6 - CAPTURE_TILE refreshes one preview on demand', () => {
 
     //+_+// 다른 타일의 다음 만기는 0 + 4000 이다. 요청 시각 1000 이 그것을 밀지 않았다
     value.clock.current = CAPTURE_INTERVAL_MS.spanSmall
-    value.host.engine.captures.tick()
+    driveTick(value.host)
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 0)
     })
     expect(roundsOf(other.tileId)).toBe(2)
+  })
+})
+
+//+_+// P6-D53. HANDOFF_P6_MID section 3.1 의 결함이다. 워커 재기동 뒤 비활성 프로젝트 타일이 굳는다
+//+_+// P5-D35 의 시험 9건이 전부 프로젝트를 하나만 저장한다. 프로젝트 경계는 어느 층에서도 시험되지 않았다
+describe('P6-D53 - the worker reconnects the tiles of every stored project', () => {
+  const OTHER_PROJECT_ID = 'project-a'
+
+  //+_+// 활성은 타일 0개짜리 기본 프로젝트다. 실측에서 워커가 죽을 때의 배치가 그것이었다
+  function seededTwoProjects(tiles: WebTile[]): StubStorage {
+    const storage = new StubStorage()
+    storage.store.set(STORAGE_KEY, {
+      schemaVersion: 2,
+      activeProjectId: DEFAULT_PROJECT_ID,
+      projects: [
+        {
+          id: DEFAULT_PROJECT_ID,
+          name: 'WebDeck',
+          gridColumns: 4,
+          gridRows: 4,
+          keepManagedTabsAlive: false,
+          tiles: [],
+        },
+        {
+          id: OTHER_PROJECT_ID,
+          name: 'A',
+          gridColumns: 4,
+          gridRows: 4,
+          keepManagedTabsAlive: false,
+          tiles,
+        },
+      ],
+    })
+    return storage
+  }
+
+  function inactiveTile(id: string, launchUrl: string, x = 0): WebTile {
+    return {
+      id,
+      launchUrl,
+      matchMode: 'exact',
+      x,
+      y: 0,
+      w: 1,
+      h: 1,
+      refreshIntervalMs: CAPTURE_INTERVAL_MS.spanSmall,
+      fitMode: 'contain',
+      keepAlive: false,
+    }
+  }
+
+  async function switched(value: Fixture) {
+    const response = await value.host.handle({
+      type: 'SET_ACTIVE_PROJECT',
+      projectId: OTHER_PROJECT_ID,
+    })
+    if (!response.ok) {
+      throw new Error(`switch failed ${JSON.stringify(response)}`)
+    }
+    return projectStateOf(value.host, OTHER_PROJECT_ID)
+  }
+
+  //+_+// C-e1. 탭이 살아 있는데도 굳는 것이 결함이다. 전환 뒤 바인딩이 돌아와야 한다
+  it('rebinds a tile that was stored under a project that was not active', async () => {
+    const value = fixture(
+      [11],
+      seededTwoProjects([inactiveTile('t1', 'https://example.com/11')]),
+    )
+    await value.host.load()
+
+    const state = await switched(value)
+    expect(state.runtimeStates[0]).toMatchObject({ tileId: 't1', tabId: 11 })
+  })
+
+  //+_+// C-e1 의 나머지 절반이다. 바인딩만 돌아오고 회차가 돌지 않으면 화면은 여전히 굳어 있다
+  it('runs rounds for the rebound tiles once the project becomes active', async () => {
+    const value = fixture(
+      [11, 12],
+      seededTwoProjects([
+        inactiveTile('t1', 'https://example.com/11', 0),
+        inactiveTile('t2', 'https://example.com/12', 1),
+      ]),
+    )
+    await value.host.load()
+    await switched(value)
+
+    value.host.engine.captures.tick()
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    expect(value.debuggerBackend.attached.slice().sort((a, b) => a - b)).toEqual([11, 12])
+  })
+
+  //+_+// 활성이 아닌 동안에는 캡처하지 않는다. 바인딩 복구가 그 규칙을 깨면 안 된다
+  it('does not capture the inactive project while it stays inactive', async () => {
+    const value = fixture(
+      [11],
+      seededTwoProjects([inactiveTile('t1', 'https://example.com/11')]),
+    )
+    await value.host.load()
+
+    value.host.engine.captures.tick()
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    expect(value.debuggerBackend.attached).toEqual([])
+  })
+
+  //+_+// P5-D36 의 한 탭 한 타일은 프로젝트 경계를 넘어 성립해야 한다
+  it('gives a shared candidate to one tile only across projects', async () => {
+    const storage = new StubStorage()
+    storage.store.set(STORAGE_KEY, {
+      schemaVersion: 2,
+      activeProjectId: DEFAULT_PROJECT_ID,
+      projects: [
+        {
+          id: DEFAULT_PROJECT_ID,
+          name: 'WebDeck',
+          gridColumns: 4,
+          gridRows: 4,
+          keepManagedTabsAlive: false,
+          tiles: [inactiveTile('active-tile', 'https://example.com/11')],
+        },
+        {
+          id: OTHER_PROJECT_ID,
+          name: 'A',
+          gridColumns: 4,
+          gridRows: 4,
+          keepManagedTabsAlive: false,
+          tiles: [inactiveTile('other-tile', 'https://example.com/11')],
+        },
+      ],
+    })
+    const value = fixture([11], storage)
+    await value.host.load()
+
+    expect((await projectState(value.host)).runtimeStates[0]).toMatchObject({ tabId: 11 })
+    const state = await switched(value)
+    expect(Object.hasOwn(state.runtimeStates[0], 'tabId')).toBe(false)
+  })
+
+  //+_+// C-e2. "14분간 단서가 없었다" 를 재발시키지 않는 것이 목적이다
+  it('logs the verdict of every tile it could not bind', async () => {
+    const value = fixture(
+      [],
+      seededTwoProjects([inactiveTile('t1', 'https://elsewhere.test/gone')]),
+    )
+    const logged = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await value.host.load()
+    const lines = logged.mock.calls.map((call) => String(call[0]))
+    logged.mockRestore()
+
+    expect(lines.some((line) => line.includes('none') && line.includes('t1'))).toBe(true)
+  })
+
+  it('distinguishes an ambiguous verdict from a missing one', async () => {
+    const value = fixture(
+      [],
+      seededTwoProjects([inactiveTile('t1', 'https://example.com/same')]),
+    )
+    value.tabsBackend.tabs.set(11, tabInfo(11, 'https://example.com/same'))
+    value.tabsBackend.tabs.set(12, tabInfo(12, 'https://example.com/same'))
+    const logged = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await value.host.load()
+    const lines = logged.mock.calls.map((call) => String(call[0]))
+    logged.mockRestore()
+
+    expect(lines.some((line) => line.includes('ambiguous') && line.includes('t1'))).toBe(true)
+  })
+
+  it('marks a bind that landed on a project that is not the active one', async () => {
+    const value = fixture(
+      [11],
+      seededTwoProjects([inactiveTile('t1', 'https://example.com/11')]),
+    )
+    const logged = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await value.host.load()
+    const lines = logged.mock.calls.map((call) => String(call[0]))
+    logged.mockRestore()
+
+    expect(lines.some((line) => line.includes('inactive') && line.includes('t1'))).toBe(true)
+  })
+})
+
+//+_+// P6-D47. v1 section 15.1 의 전체 Pause 다. P5-D4 가 Phase 6 으로 넘긴 넷 중 하나다
+describe('P6-D47 - SET_PREVIEW_PAUSED is the manual whole-dashboard pause', () => {
+  async function boundAndVisible(value: Fixture): Promise<void> {
+    await value.host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await projectState(value.host, true)
+  }
+
+  async function rounds(value: Fixture): Promise<number> {
+    value.host.engine.captures.tick()
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+    return value.host.engine.captures.captureRecords.length
+  }
+
+  it('stops the rounds while the dashboard stays visible', async () => {
+    const value = fixture()
+    await boundAndVisible(value)
+    expect(await rounds(value)).toBe(1)
+
+    await value.host.handle({ type: 'SET_PREVIEW_PAUSED', paused: true })
+    value.clock.current = 100_000
+    await projectState(value.host, true)
+    expect(await rounds(value)).toBe(1)
+  })
+
+  it('lets the rounds start again when it is turned off', async () => {
+    const value = fixture()
+    await boundAndVisible(value)
+    expect(await rounds(value)).toBe(1)
+
+    await value.host.handle({ type: 'SET_PREVIEW_PAUSED', paused: true })
+    value.clock.current = 100_000
+    await value.host.handle({ type: 'SET_PREVIEW_PAUSED', paused: false })
+
+    //+_+// 남은 시간이 보존되므로 해제 그 자리가 아니라 주기 뒤에 돈다
+    value.clock.current = 100_000 + CAPTURE_INTERVAL_MS.spanSmall
+    expect(await rounds(value)).toBe(2)
+  })
+
+  //+_+// D6a. 억제만 한다. 리스를 놓으면 타일이 DETACHED 로 바뀐다
+  it('keeps the debugger attached while it is on', async () => {
+    const value = fixture()
+    await boundAndVisible(value)
+    await rounds(value)
+
+    await value.host.handle({ type: 'SET_PREVIEW_PAUSED', paused: true })
+    expect(value.debuggerBackend.detached).toEqual([])
+    expect(value.host.engine.sessions.isAttached(11)).toBe(true)
+    expect(await statusOfTile(value.host, true)).not.toBe('DETACHED')
+  })
+
+  it('carries the state back on the poll so a reopened dashboard draws it', async () => {
+    const value = fixture()
+    await boundAndVisible(value)
+
+    expect((await projectState(value.host)).previewPaused).toBe(false)
+    await value.host.handle({ type: 'SET_PREVIEW_PAUSED', paused: true })
+    expect((await projectState(value.host)).previewPaused).toBe(true)
+  })
+
+  //+_+// A-e5 · D6c. 워커가 죽었다 살아나도 유지된다. 새 host 가 같은 저장을 읽는다
+  it('survives a worker restart', async () => {
+    const value = fixture()
+    await value.host.handle({ type: 'SET_PREVIEW_PAUSED', paused: true })
+
+    const restarted = fixture([11, 12], value.storage)
+    await restarted.host.load()
+    expect((await projectState(restarted.host)).previewPaused).toBe(true)
+  })
+
+  it('does not pause a fresh worker that never had the toggle turned on', async () => {
+    const value = fixture()
+    await value.host.load()
+    expect((await projectState(value.host)).previewPaused).toBe(false)
+  })
+
+  //+_+// P6-D46. Refresh Preview 는 사용자가 지금 보겠다고 누른 것이다. Pause 가 막지 않는다
+  it('still answers CAPTURE_TILE while it is on', async () => {
+    const value = fixture()
+    await boundAndVisible(value)
+    await value.host.handle({ type: 'SET_PREVIEW_PAUSED', paused: true })
+
+    const response = await value.host.handle({ type: 'CAPTURE_TILE', tileId: 't1' })
+    expect(response).toMatchObject({ ok: true, type: 'CAPTURE_TILE', format: 'jpeg' })
   })
 })

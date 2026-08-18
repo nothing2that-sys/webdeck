@@ -23,6 +23,7 @@ import {
   renameProject,
   reopenTile,
   setActiveProject,
+  setPreviewPaused,
   setTileRect,
   setTileSettings,
 } from './dashboardService'
@@ -82,6 +83,8 @@ export function App(): React.JSX.Element {
   const [selectedTileId, setSelectedTileId] = useState<string | null>(null)
   const [settings, setSettings] = useState<TileSettingsDraft | null>(null)
   const [editing, setEditing] = useState(false)
+  //+_+// P6-D47. 정본은 워커다. 화면은 폴링 응답이 알려 준 값을 그린다
+  const [paused, setPaused] = useState(false)
   const [drag, setDrag] = useState<DragState | null>(null)
   const [notice, setNotice] = useState('')
   const gridRef = useRef<HTMLElement | null>(null)
@@ -124,6 +127,7 @@ export function App(): React.JSX.Element {
       return
     }
     setTiles(response.project.tiles)
+    setPaused(response.previewPaused)
     setViews(buildTileViews(response.project, response.runtimeStates, response.frames))
   }, [activeProjectId, loadProjects])
 
@@ -483,6 +487,17 @@ export function App(): React.JSX.Element {
     setEditing((current) => !current)
   }, [])
 
+  //+_+// P6-D47. 다음 폴링이 워커의 값으로 덮는다. 화면이 상태를 스스로 정하지 않는다
+  const togglePaused = useCallback(async () => {
+    const response = await setPreviewPaused(!paused)
+    if (!response.ok) {
+      setNotice(`${response.errorCode}: ${response.message}`)
+      return
+    }
+    setNotice('')
+    await poll()
+  }, [paused, poll])
+
   const indicator = dropIndicator(drag)
 
   return (
@@ -525,6 +540,13 @@ export function App(): React.JSX.Element {
           onClick={toggleEditing}
         >
           {editing ? 'Edit Layout · on' : 'Edit Layout'}
+        </button>
+        <button
+          type="button"
+          className={paused ? 'toolbar-toggle toolbar-toggle--on' : 'toolbar-toggle'}
+          onClick={() => void togglePaused()}
+        >
+          {paused ? 'Pause Preview · on' : 'Pause Preview'}
         </button>
         <select
           className="toolbar-select"

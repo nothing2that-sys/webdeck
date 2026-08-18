@@ -13,11 +13,10 @@ import type {
 import {
   MIN_TILE_INTERVAL_MS,
   defaultRefreshIntervalMs,
-  effectiveIntervalMs,
   isValidIntervalOverride,
   tileIntervalMs,
 } from '../shared/scheduler'
-import { loadState, saveState } from '../shared/storage'
+import { loadPreviewPaused, loadState, savePreviewPaused, saveState } from '../shared/storage'
 import type { KeyValueBackend, LoadResult } from '../shared/storage'
 import type { BrowserTabInfo, Project, TileRuntimeState, WebTile } from '../shared/types'
 import { DebuggerSessionManager, errorMessage } from './debuggerSessionManager'
@@ -31,6 +30,7 @@ import {
   applyCaptureRecord,
   buildRuntimeState,
   createProject,
+  formatReconnectVerdict,
   newTile,
   planReconnect,
   resolveProjects,
@@ -56,7 +56,7 @@ export interface PreviewEngine {
   sessions: DebuggerSessionManager
   captures: PreviewCaptureManager
   tabs: TabManager
-  registerTile(tile: WebTile, tabId: number, dashboardVisible: boolean): void
+  registerTile(tile: WebTile, tabId: number): void
 }
 
 //+_+// 스케줄 결정은 previewCaptureManager 의 selectDueTiles 가 한다. 여기는 구동자와 배선만이다
@@ -79,10 +79,10 @@ export function createPreviewEngine(
     sessions,
     captures,
     tabs,
-    //+_+// hidden 여부에 따른 주기 선택은 구동자가 한다. 캡처 엔진은 받은 주기를 그대로 쓴다
-    //+_+// 표시 상태가 바뀌면 다시 등록해야 반영된다. 대시보드가 생기는 Phase 4 항목이다
-    registerTile: (tile, tabId, dashboardVisible) => {
-      captures.register(tile.id, tabId, effectiveIntervalMs(tile, dashboardVisible))
+    //+_+// P6-D52. 표시 상태는 더 이상 주기를 고르지 않는다. hidden 은 주기가 아니라 Pause 다
+    //+_+// 그래서 등록은 타일이 정한 주기 하나만 본다. 전환이 만기를 흔들지 않는다
+    registerTile: (tile, tabId) => {
+      captures.register(tile.id, tabId, tileIntervalMs(tile))
     },
   }
 }
@@ -152,8 +152,11 @@ export function createDashboardHost(
     return found
   }
 
-  //+_+// P4-D11. 대시보드가 보내오는 표시 상태다. 요청이 오기 전에는 보이는 것으로 둔다
-  let dashboardVisible = true
+  //+_+// P6-D49. 폴링이 알려 주기 전에는 보이지 않는 것으로 둔다. 그 구간이 곧 Pause 다
+  //+_+// 전에는 true 였다. Dashboard 가 한 번도 열리지 않은 기동에서 전속 캡처가 돌았다
+  let dashboardVisible = false
+  //+_+// D6c. 사용자가 누른 Pause 다. 표시 상태와 독립이며 저장에서 읽어 온다
+  let manualPaused = false
 
   const rounds = diagnostics === null ? null : createRoundLogStore(diagnostics)
 
@@ -175,7 +178,7 @@ export function createDashboardHost(
           tileId: record.tileId,
           w: tile?.w ?? null,
           h: tile?.h ?? null,
-          intervalMs: tile === null ? null : effectiveIntervalMs(tile, dashboardVisible),
+          intervalMs: tile === null ? null : tileIntervalMs(tile),
           roundDurationMs: record.roundDurationMs,
           callDurationMs: record.callDurationMs,
           outcome: record.outcome,
@@ -184,6 +187,8 @@ export function createDashboardHost(
           //+_+// P6-D17. 이 회차 시점의 값이다. 정산이 끝난 뒤에 읽으므로 슬롯은 이미 반납됐다
           registeredTiles: engine.captures.registeredTileCount,
           attachedTabs: engine.sessions.attachedCount,
+          //+_+// P6-D51. 이 회차의 만기를 정할 때 실제로 더해진 주기다. 회차가 시작될 때 읽힌 값이다
+          scheduleIntervalMs: record.scheduleIntervalMs,
         }
         logCaptureRound(entry)
         //+_+// S3. 콘솔과 같은 정보를 저장에도 남긴다. append 는 거부하지 않는다
@@ -193,6 +198,10 @@ export function createDashboardHost(
       }
     },
   })
+
+  //+_+// P6-D49. 초기값이 hidden 이므로 엔진도 처음부터 Pause 다. load 를 기다리지 않는다
+  //+_+// 여기서 걸지 않으면 첫 폴링 전까지 억제가 없어 D6b 의 요지가 load 호출에 매달린다
+  applyPause()
 
   //+_+// F2. 재등록은 TileState 를 새로 만들어 fault 와 신선도 기준을 초기화한다
   //+_+// 탭이 사라진 타일을 다시 등록하면 DETACHED 가 LIVE 로 뒤집히고 죽은 탭에 다시 attach 한다
@@ -205,19 +214,31 @@ export function createDashboardHost(
     if (!(await engine.tabs.exists(tabId))) {
       return
     }
-    engine.registerTile(tile, tabId, dashboardVisible)
+    engine.registerTile(tile, tabId)
   }
 
-  //+_+// P4-D11. 값이 바뀐 회차에만 재등록한다. 매 폴링마다 재등록하면 만기가 now 로 되돌아 주기가 무너진다
-  //+_+// v1 section 6 line 414~417 의 hidden 주기는 타일 값을 무시하는 별도 정책이다
-  async function applyDashboardVisible(next: boolean): Promise<void> {
+  //+_+// D6a · D6b. hidden 은 Pause 다. 수동 Pause 와 OR 로 묶어 한 자리에서 엔진에 전한다
+  //+_+// 억제만 한다. unregister 하지 않으므로 리스가 유지되고 타일이 DETACHED 로 바뀌지 않는다
+  function applyPause(): void {
+    engine.captures.setPaused(manualPaused || !dashboardVisible)
+  }
+
+  //+_+// P6-D52. 전환은 재등록하지 않는다. 재등록할 이유였던 hidden 주기가 사라졌다
+  //+_+// 전에는 전환 1회가 활성 전 타일의 만기를 now 로 되돌려 타일 수만큼 회차를 즉시 만들었다
+  function applyDashboardVisible(next: boolean): void {
     if (next === dashboardVisible) {
       return
     }
     dashboardVisible = next
-    for (const tile of activeProject().tiles) {
-      await reregister(tile)
-    }
+    applyPause()
+  }
+
+  //+_+// P6-D47. v1 section 15.1 의 전체 Pause 다. D6c 로 별도 키에 남겨 워커 재기동을 넘긴다
+  async function setPreviewPaused(paused: boolean): Promise<DashboardResponse> {
+    manualPaused = paused
+    applyPause()
+    await savePreviewPaused(storage, paused)
+    return { ok: true, type: 'SET_PREVIEW_PAUSED', paused }
   }
 
   async function persist(): Promise<void> {
@@ -277,7 +298,14 @@ export function createDashboardHost(
       }
     }
 
-    return { ok: true, type: 'GET_PROJECT_STATE', project, runtimeStates, frames }
+    return {
+      ok: true,
+      type: 'GET_PROJECT_STATE',
+      project,
+      runtimeStates,
+      frames,
+      previewPaused: manualPaused,
+    }
   }
 
   //+_+// P4-D12. 화면이 이미 판정했더라도 워커가 다시 판정한다. 같은 isPlacementValid 를 쓴다
@@ -398,8 +426,7 @@ export function createDashboardHost(
     bindings.set(tileId, tabId)
     summaries.delete(tileId)
 
-    //+_+// P4-D11 이후로는 마지막 폴링이 알려 준 표시 상태를 쓴다
-    engine.registerTile(tile, tabId, dashboardVisible)
+    engine.registerTile(tile, tabId)
     //+_+// P5-D29. ADD_TILE 과 같다. 타일이 늘거나 바뀌었으면 저장한다
     await persist()
     return { ok: true, type: 'BIND_TILE' }
@@ -439,7 +466,7 @@ export function createDashboardHost(
     project.tiles.push(tile)
     bindings.set(tileId, tabId)
     summaries.delete(tileId)
-    engine.registerTile(tile, tabId, dashboardVisible)
+    engine.registerTile(tile, tabId)
     await persist()
     return { ok: true, type: 'ADD_TILE', tileId }
   }
@@ -458,23 +485,50 @@ export function createDashboardHost(
   function attachTile(tile: WebTile, tabId: number): void {
     bindings.set(tile.id, tabId)
     summaries.delete(tile.id)
-    engine.registerTile(tile, tabId, dashboardVisible)
+    engine.registerTile(tile, tabId)
+  }
+
+  //+_+// P6-D53. 비활성 프로젝트는 바인딩만 되돌린다. 등록하면 활성이 아닌 타일을 캡처하게 된다
+  function bindOnly(tileId: string, tabId: number): void {
+    bindings.set(tileId, tabId)
+    summaries.delete(tileId)
   }
 
   //+_+// P5-D35. v1 section 10 이다. 워커 기동 시 1회이며 전용 메시지를 만들지 않는다
   //+_+// tabId 를 저장하지 않으므로 URL 로 다시 찾는다. 살아 있는 바인딩은 건드리지 않는다
+  //+_+// P6-D53. 전 프로젝트를 한 번에 판정한다. 활성만 훑으면 다른 프로젝트 타일이 영영 굳는다
+  //+_+// 그 타일은 bindings 가 비어 있어 전환해도 reregister 가 첫 줄에서 되돌아간다
+  //+_+// P5-D36 의 한 탭 한 타일은 프로젝트 경계를 넘어 성립해야 하므로 targets 를 통째로 넘긴다
   async function reconnect(): Promise<void> {
-    const project = activeProject()
-    const targets = project.tiles.map((tile) => ({ tile, boundTabId: liveBoundTabId(tile.id) }))
+    const owners = new Map<string, { tile: WebTile; projectId: string }>()
+    for (const project of projects) {
+      for (const tile of project.tiles) {
+        owners.set(tile.id, { tile, projectId: project.id })
+      }
+    }
+    const targets = [...owners.values()].map(({ tile }) => ({
+      tile,
+      boundTabId: liveBoundTabId(tile.id),
+    }))
     const verdicts = planReconnect(targets, await listTabs())
 
     let bound = 0
     for (const verdict of verdicts) {
-      const tile = project.tiles.find((item) => item.id === verdict.tileId)
-      if (verdict.kind !== 'bind' || tile === undefined) {
+      const owner = owners.get(verdict.tileId)
+      if (owner === undefined) {
         continue
       }
-      attachTile(tile, verdict.tabId)
+      //+_+// C-e2. 붙였든 못 붙였든 한 줄씩 남긴다. 무음이던 것이 결함 추적을 14분 막았다
+      console.log(formatReconnectVerdict(verdict, owner.projectId, activeProjectId))
+      if (verdict.kind !== 'bind') {
+        continue
+      }
+      //+_+// 비활성 프로젝트는 바인딩만 되돌린다. 전환이 오면 reregister 가 그것을 집어 등록한다
+      if (owner.projectId === activeProjectId) {
+        attachTile(owner.tile, verdict.tabId)
+      } else {
+        bindOnly(verdict.tileId, verdict.tabId)
+      }
       bound += 1
     }
     if (bound > 0) {
@@ -611,6 +665,10 @@ export function createDashboardHost(
   //+_+// 거부된 저장값을 덮어쓰지 않는다. 씨앗 상태를 그대로 두고 실패를 부르는 쪽에 돌려준다
   //+_+// P5-D35. 재연결은 여기 안에 둔다. 기동 시 1회라는 조건을 한 자리에서 보장한다
   async function load(): Promise<LoadResult> {
+    //+_+// A-e5 · D6c. 수동 Pause 는 워커보다 오래 산다. 저장값을 먼저 읽어 엔진에 반영한다
+    manualPaused = await loadPreviewPaused(storage)
+    applyPause()
+
     const result = await loadState(storage)
     if (result.ok) {
       await applyProjects(result.projects, result.activeProjectId)
@@ -638,7 +696,7 @@ export function createDashboardHost(
               `Unknown projectId ${request.projectId}`,
             )
           }
-          await applyDashboardVisible(request.dashboardVisible)
+          applyDashboardVisible(request.dashboardVisible)
           return projectState()
         case 'LIST_BROWSER_TABS':
           return { ok: true, type: 'LIST_BROWSER_TABS', tabs: await listTabs() }
@@ -670,6 +728,8 @@ export function createDashboardHost(
           return deleteProject(request.projectId)
         case 'SET_ACTIVE_PROJECT':
           return setActiveProject(request.projectId)
+        case 'SET_PREVIEW_PAUSED':
+          return setPreviewPaused(request.paused)
         //+_+// P5-D5 가 Reload Page 를, P5-D3 이 Keep Alive 를 Phase 6 으로 두었다
         case 'RELOAD_TILE':
         case 'SET_TILE_KEEP_ALIVE':

@@ -66,6 +66,9 @@ export interface CaptureRecord {
   calledAt: number | null
   roundDurationMs: number
   callDurationMs: number | null
+  //+_+// P6-D51. 이 회차의 만기를 정할 때 실제로 더해진 주기다. 회차가 시작될 때 읽는다
+  //+_+// 정산 뒤에 읽으면 이 회차의 결과가 이미 계단을 올려 놓은 뒤라 부른 주기와 어긋난다
+  scheduleIntervalMs: number
   outcome: CaptureOutcome
   bytes: number | null
   message: string | null
@@ -99,6 +102,8 @@ interface TileState {
   tileId: string
   tabId: number
   baseIntervalMs: number
+  //+_+// P6-D51. nextDueAt 을 정할 때 더한 값이다. 기본 주기 · backoff 계단 · 강등 주기 중 하나다
+  appliedIntervalMs: number
   nextDueAt: number
   //+_+// P4-D16. 이 회차가 예정돼 있던 시각이다. 다음 만기를 여기서부터 잡는다
   //+_+// 큐에서 슬롯을 기다린 시간이 주기에 더해지지 않도록 실행 시각이 아니라 예정 시각을 쓴다
@@ -121,6 +126,7 @@ interface InFlightAttempt {
   attemptIndex: number
   startedAt: number
   calledAt: number | null
+  scheduleIntervalMs: number
   //+_+// 마감 타이머가 실제로 끝난 시각이다. 그 밖의 사유로 포기한 회차는 null 로 남는다
   timedOutAt: number | null
   cancelTimer: () => void
@@ -201,6 +207,12 @@ export class PreviewCaptureManager {
   private readonly frames = new Map<string, CapturedFrame>()
   //+_+// P5-D6. 즉시 캡처를 기다리는 쪽이다. 회차가 정산되면 그 프레임으로 깨운다
   private readonly onceWaiters = new Map<string, ((frame: CapturedFrame | null) => void)[]>()
+  //+_+// P6-D46. Pause 는 억제 플래그다. 리스도 슬롯도 건드리지 않으므로 attach 가 유지된다 (D6a)
+  //+_+// 시각을 들고 있는 이유는 해제 시 그 길이만큼 만기와 신선도 기준을 밀어야 하기 때문이다
+  private pausedAt: number | null = null
+  //+_+// P6-D50. Pause 구간 안에서 시각을 새로 잡은 타일이다. 잃은 시간이 없으므로 밀지 않는다
+  //+_+// 두 경로가 있다. captureOnce 로 정산된 타일과, Pause 중에 등록된 타일이다
+  private readonly freshWhilePaused = new Set<string>()
   private nextToken = 0
 
   constructor(
@@ -241,6 +253,40 @@ export class PreviewCaptureManager {
     return this.tiles.size
   }
 
+  get paused(): boolean {
+    return this.pausedAt !== null
+  }
+
+  //+_+// P6-D46 · D6a. unregister 를 부르지 않는다. 리스를 놓으면 타일이 DETACHED 로 바뀐다
+  //+_+// P6-D50. 해제할 때 Pause 구간 길이만큼 만기와 마지막 프레임 시각을 함께 민다
+  //+_+// 두 값을 같은 양으로 밀어야 해제 직후에 전 타일이 몰려 돌지도(A-e3) STALE 로 보이지도(A-e4) 않는다
+  setPaused(next: boolean): void {
+    if (next === (this.pausedAt !== null)) {
+      return
+    }
+    const now = this.clock.now()
+    if (next) {
+      this.pausedAt = now
+      this.freshWhilePaused.clear()
+      return
+    }
+
+    const shiftMs = now - (this.pausedAt ?? now)
+    this.pausedAt = null
+    for (const state of this.tiles.values()) {
+      //+_+// Pause 구간 안에서 시각을 잡은 타일은 그 시각이 이미 옳다. 밀면 만기가 미래로 달아난다
+      //+_+// 워커가 Pause 로 시작하므로 기동 시 등록된 타일이 전부 여기에 해당한다
+      //+_+// 그것까지 밀면 Dashboard 를 열어도 워커가 Pause 로 산 시간만큼 첫 회차가 늦는다
+      if (this.freshWhilePaused.has(state.tileId)) {
+        continue
+      }
+      state.nextDueAt += shiftMs
+      state.scheduledAt += shiftMs
+      state.lastFrameAt += shiftMs
+    }
+    this.freshWhilePaused.clear()
+  }
+
   latestFrame(tileId: string): CapturedFrame | null {
     return this.frames.get(tileId) ?? null
   }
@@ -248,7 +294,9 @@ export class PreviewCaptureManager {
   //+_+// 첫 성공 전에는 등록 시각이 신선도의 기준이다. 한 번도 반환되지 않는 탭도 STALE 로 간다
   //+_+// P5-D20. 같은 탭으로 다시 등록하는 것은 아는 것을 지우지 않는다. 그것이 L36 이었다
   //+_+// 다른 탭에 거는 것만 새 상태다. Reopen 과 Bind 가 fault 를 지우는 유일한 명시 경로가 된다
-  //+_+// 만기와 시도 카운터는 언제나 초기화한다. 새 주기를 적용하는 것이 재등록의 목적이다
+  //+_+// 만기는 언제나 초기화한다. 새 주기를 적용하는 것이 재등록의 목적이다
+  //+_+// P6-D44. 실패 계단은 같은 탭이면 승계한다. 전에는 재등록 한 번이 계단을 통째로 지웠다
+  //+_+// 다른 탭이면 지금대로 초기화한다. 새 탭이 fault 를 지우는 명시 경로라는 P5-D32 를 지킨다
   register(tileId: string, tabId: number, baseIntervalMs: number): void {
     const now = this.clock.now()
     const previous = this.tiles.get(tileId)
@@ -257,16 +305,21 @@ export class PreviewCaptureManager {
       tileId,
       tabId,
       baseIntervalMs,
+      appliedIntervalMs: baseIntervalMs,
       nextDueAt: now,
       scheduledAt: now,
       attemptCount: 0,
-      consecutiveFailures: 0,
-      demoted: false,
+      consecutiveFailures: kept?.consecutiveFailures ?? 0,
+      demoted: kept?.demoted ?? false,
       lastFrameAt: kept?.lastFrameAt ?? now,
       holdsLease: kept?.holdsLease ?? false,
       fault: kept?.fault ?? null,
       tabGone: kept?.tabGone ?? false,
     })
+    //+_+// P6-D50. Pause 중 등록은 만기를 이미 현재 시각으로 잡았다. 해제 시프트의 대상이 아니다
+    if (this.pausedAt !== null) {
+      this.freshWhilePaused.add(tileId)
+    }
   }
 
   async unregister(tileId: string): Promise<void> {
@@ -329,7 +382,9 @@ export class PreviewCaptureManager {
       this.onceWaiters.set(tileId, waiters)
     })
     state.nextDueAt = this.clock.now()
-    this.tick()
+    //+_+// P6-D46. 사용자가 지금 보겠다고 누른 것이므로 Pause 가 막지 않는다
+    //+_+// tick 을 부르면 게이트에 걸려 이 약속이 깨어날 회차가 영영 생기지 않는다
+    this.runDue()
     return waiting
   }
 
@@ -357,12 +412,23 @@ export class PreviewCaptureManager {
     if (state === undefined) {
       return null
     }
-    const stale = isStale(this.clock.now(), state.lastFrameAt, state.baseIntervalMs)
+    //+_+// P6-D38. Pause 는 캡처를 멈춘다. 그 구간의 경과가 신선도 판정에 들어가면
+    //+_+// 수동 Pause 중에 전 타일이 STALE 로 보인다. 멈춘 시각을 그대로 현재로 읽는다
+    const at = this.pausedAt ?? this.clock.now()
+    const stale = isStale(at, state.lastFrameAt, state.baseIntervalMs)
     return resolveTileStatus([state.fault, stale ? 'STALE' : 'LIVE'])
   }
 
   //+_+// 구동자는 이 함수를 부르기만 한다. setInterval 은 serviceWorker 쪽에 둔다
+  //+_+// P6-D46. Pause 게이트는 이 정기 경로에만 건다. captureOnce 는 runDue 를 직접 부른다
   tick(): void {
+    if (this.pausedAt !== null) {
+      return
+    }
+    this.runDue()
+  }
+
+  private runDue(): void {
     const now = this.clock.now()
     //+_+// P5-D20. 탭이 사라진 타일은 만기가 와도 큐에 넣지 않는다. 붙일 탭이 없다
     //+_+// 디버거 detach 는 여기에 해당하지 않는다. 탭은 살아 있고 다음 회차가 다시 붙는다
@@ -452,6 +518,8 @@ export class PreviewCaptureManager {
       attemptIndex: state.attemptCount - 1,
       startedAt: this.clock.now(),
       calledAt: null,
+      //+_+// P6-D51. 이 회차를 부른 주기다. 정산이 계단을 올리기 전에 읽는다
+      scheduleIntervalMs: state.appliedIntervalMs,
       timedOutAt: null,
       cancelTimer: () => undefined,
     }
@@ -545,7 +613,12 @@ export class PreviewCaptureManager {
         state.demoted = false
         state.fault = null
         //+_+// P4-D16. 예정 시각 기준이다. now 기준이면 회차 소요가 매 주기에 더해져 주기가 늘어난다
+        state.appliedIntervalMs = state.baseIntervalMs
         state.nextDueAt = nextDueAtFrom(state.scheduledAt, state.baseIntervalMs, now)
+      }
+      //+_+// P6-D50. Pause 중에 끝난 회차다. 해제 시프트가 이 타일을 다시 밀면 시각이 미래가 된다
+      if (this.pausedAt !== null) {
+        this.freshWhilePaused.add(state.tileId)
       }
     }
 
@@ -576,6 +649,7 @@ export class PreviewCaptureManager {
       calledAt: attempt.calledAt,
       roundDurationMs: now - attempt.startedAt,
       callDurationMs: attempt.calledAt === null ? null : now - attempt.calledAt,
+      scheduleIntervalMs: attempt.scheduleIntervalMs,
       ...settled,
     }
     this.captureLog.push(entry)
@@ -591,11 +665,13 @@ export class PreviewCaptureManager {
     if (state.consecutiveFailures > BACKOFF_STEPS_MS.length) {
       //+_+// 계단을 소진해도 재시도를 멈추지 않는다. 주기만 강등한다
       state.demoted = true
+      state.appliedIntervalMs = DEGRADED_INTERVAL_MS
       state.nextDueAt = now + DEGRADED_INTERVAL_MS
       return
     }
     state.demoted = false
-    state.nextDueAt = now + nextDelayMs(state.consecutiveFailures, state.baseIntervalMs)
+    state.appliedIntervalMs = nextDelayMs(state.consecutiveFailures, state.baseIntervalMs)
+    state.nextDueAt = now + state.appliedIntervalMs
   }
 
   //+_+// 세션이 끊기면 다음 캡처에서 다시 붙인다. 그 사이에 무한 retry 를 돌리지 않는다

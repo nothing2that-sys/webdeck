@@ -118,6 +118,26 @@ export function planReconnect(
   return verdicts
 }
 
+//+_+// P6-D53 · C-e2. 재연결이 무엇을 하고 무엇을 못 했는지 한 줄로 남긴다
+//+_+// 전에는 성공도 실패도 무음이었다. 그래서 복구되지 않은 타일에 14분 동안 단서가 없었다
+//+_+// none 과 ambiguous 와 비활성 바인딩을 구분할 수 있어야 한다는 것이 이 문법의 조건이다
+export function formatReconnectVerdict(
+  verdict: ReconnectVerdict,
+  projectId: string,
+  activeProjectId: string,
+): string {
+  const where = projectId === activeProjectId ? 'active' : 'inactive'
+  const head = `[webdeck] reconnect ${verdict.tileId.slice(0, 8)} project ${projectId.slice(0, 8)} ${where}`
+  switch (verdict.kind) {
+    case 'bind':
+      return `${head} bind tab ${String(verdict.tabId)}`
+    case 'ambiguous':
+      return `${head} ambiguous tabs ${verdict.tabIds.join(',')}`
+    case 'none':
+      return `${head} none`
+  }
+}
+
 //+_+// previewCaptureManager 는 타일별 마지막 회차를 공개하지 않는다. 정산 훅으로 따로 접는다
 //+_+// 기록 배열을 매 폴링마다 훑지 않는다. L26 이 상한 없는 배열을 이미 지적했다
 export interface TileCaptureSummary {

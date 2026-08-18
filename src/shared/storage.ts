@@ -6,6 +6,10 @@ export const SCHEMA_VERSION = 2
 
 export const STORAGE_KEY = 'webdeck.state'
 
+//+_+// D6c. Pause 는 별도 키다. schemaVersion 과 deserializeState 경로를 지나지 않는다
+//+_+// 계측 키 두 개가 이미 같은 형태다. 상태 봉투를 건드리지 않으려고 그 형태를 따른다
+export const PAUSE_KEY = 'webdeck.previewPaused'
+
 //+_+// P5-D19. 1키 전체 상태다. 활성 프로젝트도 같은 봉투에 싣고 별도 키를 만들지 않는다
 export interface PersistedState {
   schemaVersion: typeof SCHEMA_VERSION
@@ -216,6 +220,23 @@ export async function saveState(
   activeProjectId: string,
 ): Promise<void> {
   await backend.set(STORAGE_KEY, serializeState(projects, activeProjectId))
+}
+
+//+_+// A-e5. 워커가 죽었다 살아나도 수동 Pause 가 유지되려면 이 값이 저장에 남아야 한다
+//+_+// boolean 이 아닌 값은 Pause 아님으로 읽는다. 손상된 값 때문에 캡처가 영영 멈추면 안 된다
+export function readPreviewPaused(stored: unknown): boolean {
+  return stored === true
+}
+
+export async function loadPreviewPaused(backend: KeyValueBackend): Promise<boolean> {
+  return readPreviewPaused(await backend.get(PAUSE_KEY))
+}
+
+export async function savePreviewPaused(
+  backend: KeyValueBackend,
+  paused: boolean,
+): Promise<void> {
+  await backend.set(PAUSE_KEY, paused)
 }
 
 //+_+// 키가 없는 것은 오류가 아니다. 저장된 적이 없는 상태를 빈 목록으로 본다

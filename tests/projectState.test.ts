@@ -41,6 +41,7 @@ function record(outcome: CaptureRecord['outcome'], startedAt: number, roundDurat
     calledAt: outcome === 'attachFailed' ? null : startedAt + 5,
     roundDurationMs,
     callDurationMs: outcome === 'attachFailed' ? null : roundDurationMs - 5,
+    scheduleIntervalMs: 4000,
     outcome,
     bytes: outcome === 'success' ? 1024 : null,
     message: null,

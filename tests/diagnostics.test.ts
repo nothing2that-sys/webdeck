@@ -58,6 +58,7 @@ function entry(overrides: Partial<CaptureRoundLog> = {}): CaptureRoundLog {
     outcome: 'success',
     bytes: 2048,
     frameHash: 'aabbccdd',
+    scheduleIntervalMs: 4000,
     registeredTiles: 1,
     attachedTabs: 1,
     ...overrides,

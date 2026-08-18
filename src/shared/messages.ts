@@ -32,6 +32,7 @@ export interface TileSettings {
 //+_+// P4-D12 의 SET_TILE_RECT 가 8번째다. v1 section 19 에 이름이 없어 새로 지은 유일한 요청이다
 //+_+// P5-D23 의 프로젝트 CRUD 5개가 9~13번째다. v1 section 19 에 대응 항목이 없어 명명 규칙만 따랐다
 //+_+// P5-D27 의 ADD_TILE 이 14번째다. v1 section 9.1 의 두 경로를 한 요청 아래 둔다
+//+_+// P6-D47 의 SET_PREVIEW_PAUSED 가 19번째다. v1 section 15.1 이 이름을 주지 않아 명명 규칙만 따랐다
 export type DashboardRequest =
   //+_+// P4-D11. dashboardVisible 을 폴링마다 싣는다. 표시 상태 전용 요청을 만들지 않는다. J15
   | { type: 'GET_PROJECT_STATE'; projectId: string; dashboardVisible: boolean }
@@ -58,6 +59,9 @@ export type DashboardRequest =
   | { type: 'RENAME_PROJECT'; projectId: string; name: string }
   | { type: 'DELETE_PROJECT'; projectId: string }
   | { type: 'SET_ACTIVE_PROJECT'; projectId: string }
+  //+_+// P6-D47. v1 section 15.1 의 전체 Pause 다. P5-D4 가 Phase 6 으로 넘긴 넷 중 하나다
+  //+_+// P6-D48. 타일별 Pause 는 만들지 않는다. 이것은 대시보드 전체를 멈춘다
+  | { type: 'SET_PREVIEW_PAUSED'; paused: boolean }
 
 export type DashboardRequestType = DashboardRequest['type']
 
@@ -90,6 +94,8 @@ export type DashboardResponse =
       project: Project
       runtimeStates: TileRuntimeState[]
       frames: TileFrame[]
+      //+_+// P6-D47. 화면이 새로 열려도 토글이 실제 상태를 그린다. 전용 조회를 만들지 않는다
+      previewPaused: boolean
     }
   | { ok: true; type: 'LIST_BROWSER_TABS'; tabs: BrowserTabInfo[] }
   | { ok: true; type: 'BIND_TILE' }
@@ -117,6 +123,7 @@ export type DashboardResponse =
   | { ok: true; type: 'RENAME_PROJECT' }
   | { ok: true; type: 'DELETE_PROJECT' }
   | { ok: true; type: 'SET_ACTIVE_PROJECT' }
+  | { ok: true; type: 'SET_PREVIEW_PAUSED'; paused: boolean }
   | DashboardFailure
 
 type SuccessResponseType = Extract<DashboardResponse, { ok: true }>['type']
@@ -125,7 +132,8 @@ type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : fals
 
 type AssertTrue<T extends true> = T
 
-//+_+// 요청 18개와 성공 응답이 1:1 로 대응하지 않으면 컴파일이 깨진다. 핸들러 없이 망라성을 고정한다
+//+_+// P6-D47 로 19개가 됐다. 요청과 성공 응답이 1:1 로 대응하지 않으면 컴파일이 깨진다
+//+_+// 핸들러 없이 망라성을 고정한다
 export type RequestsAndResponsesMatch = AssertTrue<
   MutuallyAssignable<DashboardRequestType, SuccessResponseType>
 >

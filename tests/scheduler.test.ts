@@ -9,7 +9,6 @@ import {
   STALE_AFTER_MULTIPLIER,
   canEnqueue,
   defaultRefreshIntervalMs,
-  effectiveIntervalMs,
   MIN_TILE_INTERVAL_MS,
   nextDelayMs,
   nextDueAtFrom,
@@ -45,15 +44,10 @@ describe('P5-D16 - the per tile override wins over the span assignment', () => {
     expect(tileIntervalMs({ ...tile(1, 1, 4000), refreshIntervalOverrideMs: 9000 })).toBe(9000)
   })
 
-  it('lets the override reach the effective interval while the dashboard is visible', () => {
+  //+_+// P6-D43. hidden 이 주기가 아니라 Pause 가 됐다. 지정값을 이기는 표시 상태 정책은 남지 않았다
+  it('is the interval a registration uses no matter what the dashboard is doing', () => {
     const overridden = { ...tile(2, 2, 2000), refreshIntervalOverrideMs: 9000 }
-    expect(effectiveIntervalMs(overridden, true)).toBe(9000)
-  })
-
-  //+_+// hidden 은 타일 값을 무시하는 별도 정책이다. 사용자 지정값도 이기지 못한다. v1 section 6
-  it('still loses to the hidden dashboard policy', () => {
-    const overridden = { ...tile(2, 2, 2000), refreshIntervalOverrideMs: 9000 }
-    expect(effectiveIntervalMs(overridden, false)).toBe(CAPTURE_INTERVAL_MS.dashboardHidden)
+    expect(tileIntervalMs(overridden)).toBe(9000)
   })
 
   it('does not treat the span assignment as an override', () => {
@@ -86,14 +80,9 @@ describe('v1 25.1 item 9 - scheduler priority', () => {
     expect(defaultRefreshIntervalMs(1, 1)).toBe(4000)
   })
 
-  it('uses the hidden dashboard interval when the dashboard is hidden', () => {
-    expect(effectiveIntervalMs(tile(2, 2, 2000), false)).toBe(45000)
-    expect(effectiveIntervalMs(tile(1, 1, 4000), false)).toBe(45000)
-  })
-
-  it('lets the tile refreshIntervalMs win while the dashboard is visible', () => {
-    expect(effectiveIntervalMs(tile(1, 1, 10000), true)).toBe(10000)
-    expect(effectiveIntervalMs(tile(4, 4, 30000), true)).toBe(30000)
+  it('lets the tile refreshIntervalMs win over the span assignment', () => {
+    expect(tileIntervalMs(tile(1, 1, 10000))).toBe(10000)
+    expect(tileIntervalMs(tile(4, 4, 30000))).toBe(30000)
   })
 
   it('always returns a positive integer', () => {
@@ -103,11 +92,9 @@ describe('v1 25.1 item 9 - scheduler priority', () => {
         expect(Number.isInteger(span)).toBe(true)
         expect(span).toBeGreaterThan(0)
 
-        for (const visible of [true, false]) {
-          const effective = effectiveIntervalMs(tile(w, h, span), visible)
-          expect(Number.isInteger(effective)).toBe(true)
-          expect(effective).toBeGreaterThan(0)
-        }
+        const effective = tileIntervalMs(tile(w, h, span))
+        expect(Number.isInteger(effective)).toBe(true)
+        expect(effective).toBeGreaterThan(0)
       }
     }
   })
@@ -207,18 +194,17 @@ describe('TASK-P3-01 item 03 - the constants added after the original six', () =
     expect(STALE_AFTER_MULTIPLIER).toBe(3)
   })
 
-  //+_+// D7. dashboardHidden 과 값은 같으나 정책이 다르다. 리터럴을 공유하지 않는다
-  it('names the degraded interval separately from the hidden dashboard interval', () => {
+  //+_+// P6-D43. hidden 정책이 Pause 가 된 뒤에도 강등 주기는 남는다. 정책이 다른 상수였다
+  it('keeps the degraded interval after the hidden dashboard interval was removed', () => {
     expect(DEGRADED_INTERVAL_MS).toBe(45000)
-    expect(CAPTURE_INTERVAL_MS.dashboardHidden).toBe(45000)
+    expect(Object.hasOwn(CAPTURE_INTERVAL_MS, 'dashboardHidden')).toBe(false)
   })
 
-  //+_+// L13 갱신은 기존 6개를 유지하라고 판정했다. 신설은 2개뿐이다
-  it('leaves the six existing constants untouched', () => {
+  //+_+// L13 갱신은 기존 6개를 유지하라고 판정했다. D6b 가 그중 dashboardHidden 하나를 뺐다
+  it('leaves the remaining five of the six original constants untouched', () => {
     expect(CAPTURE_INTERVAL_MS.spanLarge).toBe(2000)
     expect(CAPTURE_INTERVAL_MS.spanMedium).toBe(2500)
     expect(CAPTURE_INTERVAL_MS.spanSmall).toBe(4000)
-    expect(CAPTURE_INTERVAL_MS.dashboardHidden).toBe(45000)
     expect(MAX_CONCURRENT_CAPTURES).toBe(2)
     expect(BACKOFF_STEPS_MS).toEqual([2000, 5000, 15000, 30000])
   })

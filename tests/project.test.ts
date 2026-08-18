@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  PAUSE_KEY,
   STORAGE_KEY,
   deserializeProject,
   deserializeState,
+  loadPreviewPaused,
   loadState,
+  readPreviewPaused,
+  savePreviewPaused,
   saveState,
   serializeProject,
   serializeState,
@@ -269,5 +273,64 @@ describe('P5-D26 - the override floor is the driver tick', () => {
   it('leaves the span assigned refreshIntervalMs rule alone', () => {
     const belowFloor = { ...project([]), tiles: [{ ...tile('t1', 0, 0), refreshIntervalMs: 1 }] }
     expect(deserializeProject(belowFloor)).not.toBeNull()
+  })
+})
+
+
+//+_+// D6c. Pause 는 상태 봉투 밖의 별도 키다. schemaVersion 과 deserializeState 를 지나지 않는다
+describe('D6c - the pause flag lives in a key of its own', () => {
+  class Store implements KeyValueBackend {
+    readonly store = new Map<string, unknown>()
+
+    get(key: string): Promise<unknown> {
+      return Promise.resolve(this.store.get(key))
+    }
+
+    set(key: string, value: unknown): Promise<void> {
+      this.store.set(key, value)
+      return Promise.resolve()
+    }
+
+    remove(key: string): Promise<void> {
+      this.store.delete(key)
+      return Promise.resolve()
+    }
+  }
+
+  it('does not use the state key', () => {
+    expect(PAUSE_KEY).not.toBe(STORAGE_KEY)
+  })
+
+  //+_+// A-e5. 워커가 죽었다 살아나도 수동 Pause 가 유지된다는 뜻이 이 왕복이다
+  it('reads back what it wrote', async () => {
+    const backend = new Store()
+    await savePreviewPaused(backend, true)
+    expect(await loadPreviewPaused(backend)).toBe(true)
+
+    await savePreviewPaused(backend, false)
+    expect(await loadPreviewPaused(backend)).toBe(false)
+  })
+
+  it('reads a missing key as not paused', async () => {
+    expect(await loadPreviewPaused(new Store())).toBe(false)
+  })
+
+  //+_+// 손상된 값 때문에 캡처가 영영 멈추면 안 된다. 참이 아닌 것은 전부 Pause 아님이다
+  it('reads anything that is not the boolean true as not paused', () => {
+    expect(readPreviewPaused('true')).toBe(false)
+    expect(readPreviewPaused(1)).toBe(false)
+    expect(readPreviewPaused(null)).toBe(false)
+    expect(readPreviewPaused({ paused: true })).toBe(false)
+  })
+
+  //+_+// 저장 봉투를 건드리지 않는다는 것이 D6c 의 조건이다
+  it('leaves the state envelope untouched', async () => {
+    const backend = new Store()
+    await saveState(backend, [], 'p1')
+    await savePreviewPaused(backend, true)
+
+    const stored = backend.store.get(STORAGE_KEY)
+    expect(stored).toMatchObject({ schemaVersion: 2 })
+    expect(Object.hasOwn(stored as object, 'previewPaused')).toBe(false)
   })
 })

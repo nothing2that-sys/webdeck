@@ -5,7 +5,6 @@ export const CAPTURE_INTERVAL_MS = {
   spanLarge: 2000,
   spanMedium: 2500,
   spanSmall: 4000,
-  dashboardHidden: 45000,
 } as const
 
 export const MAX_CONCURRENT_CAPTURES = 2
@@ -23,8 +22,7 @@ export const CAPTURE_TIMEOUT_MS = 5000
 export const STALE_AFTER_MULTIPLIER = 3
 
 //+_+// 9번째 상수. 잠정값이다. backoff 4단을 소진한 타일의 강등 주기다
-//+_+// dashboardHidden 과 값이 같으나 정책이 다르다. 리터럴을 공유하지 않는다
-//+_+// hidden 정책이 Pause 로 바뀌어도(L17) 이 값은 따라 움직이지 않는다
+//+_+// P6-D43. hidden 정책이 Pause 가 된 뒤에도 이 값은 남는다. 강등은 실패의 결과이지 표시 상태가 아니다
 export const DEGRADED_INTERVAL_MS = 45000
 
 export interface CaptureQueueItem {
@@ -56,15 +54,6 @@ export function isValidIntervalOverride(value: unknown): value is number {
 //+_+// P5-D16. 사용자 지정값이 span 자동 배정을 이긴다. P5-D21 이 별도 필드로 정했다
 export function tileIntervalMs(tile: WebTile): number {
   return tile.refreshIntervalOverrideMs ?? tile.refreshIntervalMs
-}
-
-//+_+// hidden 은 타일 값을 무시하는 별도 정책이다. v1 section 6 line 414~417
-//+_+// 사용자 지정값도 이 정책을 이기지 못한다. 지정값은 전경 주기만 정한다
-export function effectiveIntervalMs(tile: WebTile, dashboardVisible: boolean): number {
-  if (!dashboardVisible) {
-    return CAPTURE_INTERVAL_MS.dashboardHidden
-  }
-  return tileIntervalMs(tile)
 }
 
 //+_+// 탭 단위로 판정한다. v1 section 6.1 line 451 이 동일 탭 중복 투입을 금지한다

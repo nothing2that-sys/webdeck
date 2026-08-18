@@ -779,6 +779,7 @@ describe('TASK-P3-01-S5 - the record schema after P3-D9', () => {
       calledAt: true,
       roundDurationMs: true,
       callDurationMs: true,
+      scheduleIntervalMs: true,
       outcome: true,
       bytes: true,
       message: true,
@@ -1105,5 +1106,208 @@ describe('P5-D20 - the capture engine owns the fact that a tab is gone', () => {
     manager.tick()
     await flush()
     expect(backend.attachCalls.length).toBeGreaterThan(1)
+  })
+})
+
+
+//+_+// D6a · P6-D46. Pause 는 억제 플래그다. 리스도 슬롯도 건드리지 않는다
+describe('D6a - a pause suppresses rounds without dropping the attach', () => {
+  it('runs no round while paused even after the due time passed', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('t1', 11, 4000)
+    manager.tick()
+    await flush()
+    await settleCapture(backend, 0)
+
+    manager.setPaused(true)
+    clock.advance(100_000)
+    manager.tick()
+    await flush()
+    expect(manager.captureRecords).toHaveLength(1)
+  })
+
+  //+_+// A-e2. unregister 를 부르면 리스가 풀린다. Pause 는 그 자리에 닿지 않아야 한다
+  it('keeps the lease and the registration through a pause', async () => {
+    const { manager, backend, sessions } = build()
+    manager.register('t1', 11, 4000)
+    manager.tick()
+    await flush()
+    await settleCapture(backend, 0)
+
+    manager.setPaused(true)
+    expect(manager.registeredTileCount).toBe(1)
+    expect(manager.isScheduled('t1')).toBe(true)
+    expect(sessions.isAttached(11)).toBe(true)
+    expect(manager.statusOf('t1')).not.toBe('DETACHED')
+  })
+
+  //+_+// A-e3. 해제 시각이 아니라 남은 시간이 보존된다. 그래서 전 타일이 동시에 몰리지 않는다
+  it('carries the remaining time to the next due across the pause', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('t1', 11, 4000)
+    manager.tick()
+    await flush()
+    await settleCapture(backend, 0)
+
+    manager.setPaused(true)
+    clock.advance(500_000)
+    manager.setPaused(false)
+
+    manager.tick()
+    expect(manager.inFlightCount).toBe(0)
+
+    clock.advance(3999)
+    manager.tick()
+    expect(manager.inFlightCount).toBe(0)
+
+    clock.advance(1)
+    manager.tick()
+    expect(manager.inFlightCount).toBe(1)
+  })
+
+  //+_+// A-e4 · D38. Pause 구간의 경과가 신선도에 들어가면 해제 직후 전 타일이 STALE 로 보인다
+  it('does not let the paused span make the tile stale', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('t1', 11, 4000)
+    manager.tick()
+    await flush()
+    await settleCapture(backend, 0)
+
+    manager.setPaused(true)
+    clock.advance(500_000)
+    expect(manager.statusOf('t1')).toBe('LIVE')
+
+    manager.setPaused(false)
+    expect(manager.statusOf('t1')).toBe('LIVE')
+
+    //+_+// 해제 뒤의 경과는 그대로 센다. Pause 가 신선도를 영영 얼리지는 않는다
+    clock.advance(4000 * 3 + 1)
+    expect(manager.statusOf('t1')).toBe('STALE')
+  })
+
+  //+_+// P6-D46. Refresh Preview 는 사용자가 지금 보겠다고 누른 것이므로 Pause 가 막지 않는다
+  it('still serves captureOnce while paused', async () => {
+    const { manager, backend } = build()
+    manager.register('t1', 11, 4000)
+    manager.setPaused(true)
+
+    const waiting = manager.captureOnce('t1')
+    await flush()
+    await settleCapture(backend, 0)
+    await expect(waiting).resolves.toMatchObject({ format: 'jpeg' })
+  })
+
+  //+_+// P6-D50. 워커는 Pause 로 시작하므로 기동 시 등록된 타일이 전부 이 경로다
+  //+_+// 그것까지 밀면 Dashboard 를 열어도 워커가 Pause 로 산 시간만큼 첫 회차가 늦는다
+  it('lets a tile registered during the pause run as soon as the pause ends', async () => {
+    const { manager, clock } = build()
+    //+_+// 워커가 Pause 로 5분을 산 뒤 Dashboard 가 열리는 상황이다
+    manager.setPaused(true)
+    manager.register('t1', 11, 4000)
+    clock.advance(300_000)
+    manager.setPaused(false)
+
+    manager.tick()
+    expect(manager.inFlightCount).toBe(1)
+  })
+
+  //+_+// P6-D50. Pause 중에 끝난 회차는 이미 제 시각을 가졌다. 다시 밀면 시각이 미래가 된다
+  it('does not push a tile that already settled during the pause into the future', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('t1', 11, 4000)
+    manager.setPaused(true)
+
+    clock.advance(10_000)
+    const waiting = manager.captureOnce('t1')
+    await flush()
+    await settleCapture(backend, 0)
+    await waiting
+
+    clock.advance(10_000)
+    manager.setPaused(false)
+
+    //+_+// 미래 시각이 들어갔으면 isStale 이 음수 경과를 보고 한참 동안 LIVE 로 남는다
+    clock.advance(4000 * 3 + 1)
+    expect(manager.statusOf('t1')).toBe('STALE')
+  })
+})
+
+//+_+// P6-D44 · D28. 재등록 한 번이 실패 계단을 통째로 지우던 것을 막는다
+describe('P6-D44 - a re-registration on the same tab inherits the failure ladder', () => {
+  //+_+// 회차 1건을 실패로 끝낸다. 계단은 실패 수로만 오르므로 실패를 세는 것이 이 시험의 전부다
+  async function failRound(value: ReturnType<typeof build>, index: number): Promise<void> {
+    value.manager.tick()
+    await flush()
+    value.backend.captures[index]?.reject(new Error('capture refused'))
+    await flush()
+  }
+
+  it('keeps the consecutive failure count when the tab is the same', async () => {
+    const value = build()
+    value.manager.register('t1', 11, 4000)
+    await failRound(value, 0)
+
+    //+_+// 재등록이 만기를 now 로 되돌리므로 두 번째 실패는 그 자리에서 난다
+    //+_+// 계단 1단은 2000 이고 2단은 5000 이다. 승계했으면 다음 재시도가 5000 이어야 한다
+    value.manager.register('t1', 11, 4000)
+    await failRound(value, 1)
+
+    value.clock.advance(4999)
+    value.manager.tick()
+    await flush()
+    expect(value.backend.openCaptures).toBe(2)
+
+    value.clock.advance(1)
+    value.manager.tick()
+    await flush()
+    expect(value.backend.openCaptures).toBe(3)
+  })
+
+  //+_+// P5-D32. 새 탭에 거는 것은 fault 를 지우는 명시 경로다. 그 성질을 바꾸지 않는다
+  it('clears the ladder when the tile moves to another tab', async () => {
+    const value = build()
+    value.manager.register('t1', 11, 4000)
+    await failRound(value, 0)
+
+    value.manager.register('t1', 12, 4000)
+    await failRound(value, 1)
+
+    //+_+// 계단이 지워졌으면 다음은 1단 2000 이다
+    value.clock.advance(2000)
+    value.manager.tick()
+    await flush()
+    expect(value.backend.openCaptures).toBe(3)
+  })
+})
+
+//+_+// P6-D51. every 는 타일 설정이고 이 값은 이 회차의 만기를 정할 때 실제로 더해진 주기다
+describe('P6-D51 - the record names the interval that scheduled the round', () => {
+  it('reports the base interval while the tile is healthy', async () => {
+    const { manager, backend } = build()
+    manager.register('t1', 11, 4000)
+    manager.tick()
+    await flush()
+    await settleCapture(backend, 0)
+
+    expect(manager.captureRecords[0]?.scheduleIntervalMs).toBe(4000)
+  })
+
+  //+_+// 계단으로 불린 회차는 기본 주기와 다른 값을 싣는다. 그것이 이 필드의 목적이다
+  it('reports the backoff step that actually called the round', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('t1', 11, 4000)
+    manager.tick()
+    await flush()
+    backend.captures[0]?.reject(new Error('capture refused'))
+    await flush()
+
+    clock.advance(2000)
+    manager.tick()
+    await flush()
+    backend.captures[1]?.reject(new Error('capture refused'))
+    await flush()
+
+    expect(manager.captureRecords[0]?.scheduleIntervalMs).toBe(4000)
+    expect(manager.captureRecords[1]?.scheduleIntervalMs).toBe(2000)
   })
 })

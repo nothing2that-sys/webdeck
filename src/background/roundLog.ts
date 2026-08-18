@@ -24,6 +24,9 @@ export interface CaptureRoundLog {
   //+_+// 두 값이 갈리면 리스를 놓은 타일이 있다는 뜻이다. 등록 수는 tabGone 타일도 센다
   registeredTiles: number
   attachedTabs: number
+  //+_+// P6-D51. every 는 정산 시점의 타일 설정이고 이것은 이 회차의 만기를 정할 때 실제로 더해진 주기다
+  //+_+// 두 값이 갈리면 그 회차가 backoff 계단이나 강등 주기로 불렸다는 뜻이다
+  scheduleIntervalMs: number
 }
 
 //+_+// FNV-1a 32비트다. 암호용이 아니고 충돌을 걱정하는 용도도 아니다
@@ -65,7 +68,12 @@ export function formatCaptureRound(entry: CaptureRoundLog): string {
 
   //+_+// P6-D17. 기존 토큰의 순서와 표기를 바꾸지 않고 행 끝에 붙인다
   //+_+// 실패 회차도 L39 의 관측 대상이므로 bytes 가 없어도 이 두 값은 나온다
-  const tail = `tiles ${String(entry.registeredTiles)} attached ${String(entry.attachedTabs)}`
+  //+_+// P6-D51 이 같은 자리에 sched 를 더했다. 앞의 토큰은 그대로 두고 뒤에만 붙인다
+  const tail = [
+    `tiles ${String(entry.registeredTiles)}`,
+    `attached ${String(entry.attachedTabs)}`,
+    `sched ${String(entry.scheduleIntervalMs)}ms`,
+  ].join(' ')
 
   //+_+// 실패 회차에는 바이트가 없다. 0kB 라고 적으면 빈 이미지를 받은 것처럼 읽힌다
   if (entry.bytes === null) {
