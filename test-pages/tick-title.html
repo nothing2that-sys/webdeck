@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>tick 0 0</title>
+<style>
+  body { font-family: monospace; margin: 0; padding: 16px; background: #111; color: #eee; }
+  #big { font-size: 96px; line-height: 1; font-weight: bold; }
+  #note { font-size: 14px; color: #9cf; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div id="big">0</div>
+<div id="note">L9 measurement fixture. The cumulative tick count lives in document.title.</div>
+<script>
+  //+_+// P6-D71 의 계측용 픽스처다. live-counter.html 을 고치지 않기 위해 따로 둔다 (TASK-P6-06 section 5)
+  //+_+// 누적 tick 을 document.title 에 싣는 이유는 하네스가 이 탭에 CDP 로 붙을 수 없어서다
+  //+_+// 붙으면 그 부착 자체가 L9 이 묻는 변수가 된다. chrome.tabs.query 의 title 만이 붙지 않고 읽힌다
+  //+_+// 주기가 100ms 다. 배경 탭의 통상 클램프가 1초이므로 1000ms 픽스처로는 차이가 드러나지 않는다
+  var TICK_MS = 100;
+  var startedAt = Date.now();
+  var n = 0;
+  var big = document.getElementById('big');
+  function tick() {
+    n += 1;
+    var elapsed = Date.now() - startedAt;
+    document.title = 'tick ' + n + ' ' + elapsed;
+    big.textContent = String(n);
+  }
+  tick();
+  setInterval(tick, TICK_MS);
+</script>
+</body>
+</html>

@@ -221,6 +221,38 @@ export async function bringDashboardToForeground(page) {
   })
 }
 
+//+_+// P6-D71. 확장 페이지에서 탭을 하나 연다. 하네스가 그 탭에 CDP 로 붙지 않는 것이 핵심이다
+//+_+// browser.mjs 의 decideTarget 이 확장 페이지가 아닌 타깃을 전부 거른다. 그래서 붙을 수도 없다
+export async function createUnmanagedTab(page, url) {
+  return page.evaluate(async (target) => {
+    const created = await chrome.tabs.create({ url: target, active: false })
+    return { tabId: created.id ?? null, url: target }
+  }, url)
+}
+
+//+_+// P6-D71. tabs 권한만으로 읽을 수 있는 것은 title 과 url 뿐이다. 픽스처가 누적 tick 을 title 에 싣는다
+//+_+// 판정하지 않는다. 파싱해서 그대로 낸다
+export async function readTickTitles(page, tabIds) {
+  return page.evaluate(async (ids) => {
+    const tabs = await chrome.tabs.query({})
+    const at = Date.now()
+    return ids.map((tabId) => {
+      const found = tabs.find((tab) => tab.id === tabId)
+      const title = found?.title ?? ''
+      const match = /^tick (\d+) (\d+)$/.exec(title)
+      return {
+        tabId,
+        readAt: at,
+        url: found?.url ?? null,
+        active: found?.active ?? null,
+        title,
+        ticks: match === null ? null : Number(match[1]),
+        pageElapsedMs: match === null ? null : Number(match[2]),
+      }
+    })
+  }, tabIds)
+}
+
 //+_+// P6-D22. 서비스 워커 타깃에 붙지 않고 확장 페이지에서 chrome.storage 를 읽는다
 //+_+// 진단 키는 chrome.storage.local 에 있다 (src/background/diagnostics.ts)
 //+_+// P6-D55. 구간 경계를 양쪽으로 건다. 재개 뒤에 찍힌 행이 구간 안으로 섞이면 관측이 무너진다

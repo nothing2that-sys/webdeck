@@ -12,6 +12,8 @@ const SCENARIOS = {
   'hidden-reach': () => import('./scenarios/hidden-reach.mjs'),
   //+_+// P6-D5 · D25. --tiles N 으로 조건을 만든다
   'tile-load': () => import('./scenarios/tile-load.mjs'),
+  //+_+// P6-D71. L9 다. attach 한 탭과 붙지 않은 탭의 배경 tick 속도를 나란히 잰다
+  'tick-throttle': () => import('./scenarios/tick-throttle.mjs'),
 }
 
 function parseArgs(argv) {
