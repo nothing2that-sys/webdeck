@@ -1,3 +1,5 @@
 node_modules/
 dist/
 dist-harness/
+tools/measure/.profile/
+tools/measure/reports/

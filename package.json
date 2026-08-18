@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "build": "vite build",
-    "build:harness": "vite build --mode harness"
+    "build:harness": "vite build --mode harness",
+    "measure": "node tools/measure/run.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -20,6 +21,7 @@
     "@vitejs/plugin-react": "^6.0.5",
     "eslint": "^10.8.0",
     "prettier": "^3.9.6",
+    "puppeteer-core": "^24.43.1",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.66.0",
     "vite": "^8.2.0",
