@@ -38,6 +38,10 @@ function windowOf(startedAt, endedAt, dump) {
 export async function run({ session, run, extensionId, config }) {
   const idleMs = config.watchMs ?? 120000
   const settleMs = config.settleMs ?? 20000
+  //+_+// P6-D60 S2-2. 대조군은 활성 프로젝트에 타일을 두지 않는다. 그 밖은 같은 절차다
+  const tileUrls = config.noTiles === true ? [] : config.tileUrls
+  //+_+// S2-1 · S2-2 는 P1 만 쓴다. 긴 구간을 두 번 돌 이유가 없다
+  const skipP2 = config.skipP2 === true
 
   let page = null
   let startsBefore = null
@@ -47,10 +51,11 @@ export async function run({ session, run, extensionId, config }) {
     run.action('create project', { name: 'A' })
     await createProject(page, 'A')
     await switchProject(page, 'A')
-    for (const url of config.tileUrls) {
+    for (const url of tileUrls) {
       run.action('add tile from url', { url })
       await addTileFromUrl(page, url)
     }
+    run.dump('active tiles before the window', { count: tileUrls.length })
     run.action('settle', { ms: settleMs })
     await sleep(settleMs)
 
@@ -90,6 +95,10 @@ export async function run({ session, run, extensionId, config }) {
     run.dump('P1 tiles at reopen', await readTiles(page))
     run.dump('P1 reconnect rows', dump.reconnect)
   })
+
+  if (skipP2) {
+    return
+  }
 
   //+_+// 구간 P2. Dashboard 는 열어 둔 채 다른 탭을 앞으로 가져온다. 탭 닫기와 다른 경로다
   let p2From = 0

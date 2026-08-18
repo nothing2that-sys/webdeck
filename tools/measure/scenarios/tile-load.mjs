@@ -6,6 +6,8 @@ import {
   dumpStorage,
   openDashboard,
   readTiles,
+  selectTile,
+  setSelectedTileIntervalMs,
   switchProject,
 } from '../dashboard.mjs'
 import { observeRounds, parseRoundLine } from '../roundLines.mjs'
@@ -60,6 +62,15 @@ export async function run({ session, run, extensionId, config }) {
     }
     placed = await countTiles(page)
     run.dump('tiles placed', { wanted, placed })
+
+    //+_+// P6-D61. 주기를 주면 타일마다 override 를 건다. 하한은 MIN_TILE_INTERVAL_MS 250 이다
+    if (config.intervalMs !== undefined) {
+      for (let index = 0; index < placed; index += 1) {
+        await selectTile(page, index)
+        await setSelectedTileIntervalMs(page, config.intervalMs)
+      }
+      run.action('interval override applied to every tile', { intervalMs: config.intervalMs })
+    }
   })
 
   const from = Date.now()
@@ -80,6 +91,7 @@ export async function run({ session, run, extensionId, config }) {
     run.dump('tile load window', {
       wanted,
       placed,
+      intervalMs: config.intervalMs ?? null,
       startedAt: from,
       endedAt: to,
       elapsedMs: to - from,
@@ -94,6 +106,8 @@ export async function run({ session, run, extensionId, config }) {
       callDurationMs: spread(
         parsed.map((item) => item.callDurationMs).filter((value) => value !== null),
       ),
+      //+_+// P6-D61. 굶는 타일이 있는지를 본다. 타일별 회차 수의 최소 · 중간 · 최대다
+      roundsPerTile: spread(Object.values(countRoundsByTile(dump.rounds).byTile)),
       sampleLines: dump.rounds.slice(0, 3).map((row) => row.line),
     })
     run.dump('tiles at the end', await readTiles(page))

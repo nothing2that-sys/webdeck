@@ -1211,6 +1211,75 @@ describe('D6a - a pause suppresses rounds without dropping the attach', () => {
     expect(manager.inFlightCount).toBe(1)
   })
 
+  //+_+// P6-D59. hidden-reach P2 가 잡은 결함이다. 구간 안에서 정산된 타일만 STALE 로 보였다
+  //+_+// 정산 직후에는 제 시각이 옳지만 그 뒤로도 Pause 가 이어지면 그만큼은 그 타일도 잃는다
+  it('shifts a tile that settled inside the pause by the part of the pause that followed', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('t1', 11, 4000)
+    manager.setPaused(true)
+
+    //+_+// Pause 가 시작되고 10초 뒤에 회차 하나가 끝난다. captureOnce 는 Pause 를 통과한다
+    clock.advance(10_000)
+    const waiting = manager.captureOnce('t1')
+    await flush()
+    await settleCapture(backend, 0)
+    await waiting
+
+    //+_+// 그 뒤로 Pause 가 100초 더 이어진다. 그 100초는 이 타일도 잃은 시간이다
+    clock.advance(100_000)
+    manager.setPaused(false)
+
+    expect(manager.statusOf('t1')).toBe('LIVE')
+  })
+
+  //+_+// 만기 쪽도 같은 양으로 밀린다. 해제 직후에 몰려 돌지 않는다
+  it('gives that tile a full interval from the moment the pause ended', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('t1', 11, 4000)
+    manager.setPaused(true)
+
+    clock.advance(10_000)
+    const waiting = manager.captureOnce('t1')
+    await flush()
+    await settleCapture(backend, 0)
+    await waiting
+
+    clock.advance(100_000)
+    manager.setPaused(false)
+
+    manager.tick()
+    expect(manager.inFlightCount).toBe(0)
+
+    clock.advance(3999)
+    manager.tick()
+    expect(manager.inFlightCount).toBe(0)
+
+    clock.advance(1)
+    manager.tick()
+    expect(manager.inFlightCount).toBe(1)
+  })
+
+  //+_+// Pause 시작 전에 정산된 타일은 종전대로 구간 전체를 받는다. 그 동작을 바꾸지 않는다
+  it('still shifts a tile that settled before the pause by the whole pause', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('t1', 11, 4000)
+    manager.tick()
+    await flush()
+    await settleCapture(backend, 0)
+
+    manager.setPaused(true)
+    clock.advance(500_000)
+    manager.setPaused(false)
+
+    expect(manager.statusOf('t1')).toBe('LIVE')
+    clock.advance(3999)
+    manager.tick()
+    expect(manager.inFlightCount).toBe(0)
+    clock.advance(1)
+    manager.tick()
+    expect(manager.inFlightCount).toBe(1)
+  })
+
   //+_+// P6-D50. Pause 중에 끝난 회차는 이미 제 시각을 가졌다. 다시 밀면 시각이 미래가 된다
   it('does not push a tile that already settled during the pause into the future', async () => {
     const { manager, backend, clock } = build()

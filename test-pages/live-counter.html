@@ -5,6 +5,7 @@
 <title>live-counter</title>
 <style>
   body { font-family: monospace; margin: 0; padding: 16px; background: #111; color: #eee; }
+  #tag { position: absolute; top: 0; right: 0; padding: 8px 16px; font-size: 40px; font-weight: bold; color: #111; }
   #big { font-size: 140px; line-height: 1; font-weight: bold; }
   #clock { font-size: 48px; }
   #bar { height: 40px; background: #3a7; width: 0; transition: none; }
@@ -16,6 +17,7 @@
 </style>
 </head>
 <body>
+<div id="tag">#?</div>
 <div id="big">0</div>
 <div id="clock">--:--:--</div>
 <div id="bar"></div>
@@ -23,6 +25,17 @@
 <div id="started">started --:--:--</div>
 <div id="small">작은 글씨 가독성 확인용 문자열. 1x1 타일에서 이 줄이 읽히는지 기록하라. ABCDEFG 0123456789</div>
 <script>
+  //+_+// P6-D62. 타일마다 다른 화면을 그린다. tile-load 에서 여러 타일의 프레임 해시열이 통째로 겹쳤다
+  //+_+// 같은 페이지를 같은 시각에 열면 같은 그림이 나온다. 그것이 계측 조건의 성질이었다
+  const TILE = Number(new URLSearchParams(location.search).get('tile') ?? '0');
+  //+_+// 황금각으로 벌린다. 타일 수가 몇이든 이웃한 번호끼리 색이 붙지 않는다
+  const hue = (TILE * 137) % 360;
+  const tag = document.getElementById('tag');
+  tag.textContent = '#' + String(TILE);
+  tag.style.background = 'hsl(' + String(hue) + ', 70%, 55%)';
+  document.body.style.background = 'hsl(' + String(hue) + ', 45%, 12%)';
+  document.title = 'live-counter #' + String(TILE);
+
   const big = document.getElementById('big');
   const clock = document.getElementById('clock');
   const bar = document.getElementById('bar');
@@ -36,12 +49,14 @@
   }
   document.getElementById('started').textContent =
     'started ' + new Date().toLocaleTimeString('ko-KR', { hour12: false });
-  let n = 0;
+  //+_+// 시작값을 타일마다 어긋나게 둔다. 숫자와 막대와 격자가 동시에 같아지지 않는다
+  let n = TILE * 7;
   function tick() {
     n += 1;
     big.textContent = String(n);
     clock.textContent = new Date().toLocaleTimeString('ko-KR', { hour12: false });
     bar.style.width = (n % 20) * 5 + '%';
+    bar.style.background = 'hsl(' + String(hue) + ', 60%, 45%)';
     cells.forEach((c, i) => {
       c.className = 'cell' + (i === n % 10 ? ' on' : '');
     });

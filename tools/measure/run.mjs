@@ -18,10 +18,18 @@ function parseArgs(argv) {
   const args = { scenario: argv[0] ?? '', flags: {} }
   for (let index = 1; index < argv.length; index += 1) {
     const token = argv[index]
-    if (token.startsWith('--')) {
-      args.flags[token.slice(2)] = argv[index + 1] ?? ''
-      index += 1
+    if (!token.startsWith('--')) {
+      continue
     }
+    //+_+// 값 없는 스위치를 허용한다. 다음 토큰이 또 플래그면 그것을 값으로 삼키지 않는다
+    //+_+// 삼키면 뒤 플래그가 조용히 사라진다. 관측 조건이 말없이 달라지는 자리다
+    const next = argv[index + 1]
+    if (next === undefined || next.startsWith('--')) {
+      args.flags[token.slice(2)] = ''
+      continue
+    }
+    args.flags[token.slice(2)] = next
+    index += 1
   }
   return args
 }
@@ -71,6 +79,12 @@ async function main() {
     deathWaitMs: args.flags.death === undefined ? undefined : Number(args.flags.death) * 1000,
     watchMs: args.flags.watch === undefined ? undefined : Number(args.flags.watch) * 1000,
     settleMs: args.flags.settle === undefined ? undefined : Number(args.flags.settle) * 1000,
+    //+_+// P6-D61. 타일마다 주기 override 를 걸어 과포화 조건을 만든다. ms 단위 그대로다
+    intervalMs: args.flags.interval === undefined ? undefined : Number(args.flags.interval),
+    //+_+// P6-D60 S2-2 의 대조군이다. 활성 프로젝트를 타일 0개로 둔다
+    noTiles: args.flags.noTiles !== undefined,
+    //+_+// S2-1 · S2-2 는 P1 만 쓴다
+    skipP2: args.flags.skipP2 !== undefined,
   }
 
   //+_+// 회차마다 새 프로필이다. 앞 회차의 상태가 다음 회차의 관측에 섞이지 않게 한다

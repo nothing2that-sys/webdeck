@@ -105,6 +105,9 @@ interface TileState {
   //+_+// P6-D51. nextDueAt 을 정할 때 더한 값이다. 기본 주기 · backoff 계단 · 강등 주기 중 하나다
   appliedIntervalMs: number
   nextDueAt: number
+  //+_+// P6-D59. 이 타일이 마지막으로 제 시각을 잡은 때다. 등록과 정산이 그것을 옮긴다
+  //+_+// Pause 해제 시프트가 타일마다 다른 양을 쓰려면 그 기준점이 타일마다 있어야 한다
+  touchedAt: number
   //+_+// P4-D16. 이 회차가 예정돼 있던 시각이다. 다음 만기를 여기서부터 잡는다
   //+_+// 큐에서 슬롯을 기다린 시간이 주기에 더해지지 않도록 실행 시각이 아니라 예정 시각을 쓴다
   scheduledAt: number
@@ -210,9 +213,6 @@ export class PreviewCaptureManager {
   //+_+// P6-D46. Pause 는 억제 플래그다. 리스도 슬롯도 건드리지 않으므로 attach 가 유지된다 (D6a)
   //+_+// 시각을 들고 있는 이유는 해제 시 그 길이만큼 만기와 신선도 기준을 밀어야 하기 때문이다
   private pausedAt: number | null = null
-  //+_+// P6-D50. Pause 구간 안에서 시각을 새로 잡은 타일이다. 잃은 시간이 없으므로 밀지 않는다
-  //+_+// 두 경로가 있다. captureOnce 로 정산된 타일과, Pause 중에 등록된 타일이다
-  private readonly freshWhilePaused = new Set<string>()
   private nextToken = 0
 
   constructor(
@@ -258,8 +258,11 @@ export class PreviewCaptureManager {
   }
 
   //+_+// P6-D46 · D6a. unregister 를 부르지 않는다. 리스를 놓으면 타일이 DETACHED 로 바뀐다
-  //+_+// P6-D50. 해제할 때 Pause 구간 길이만큼 만기와 마지막 프레임 시각을 함께 민다
-  //+_+// 두 값을 같은 양으로 밀어야 해제 직후에 전 타일이 몰려 돌지도(A-e3) STALE 로 보이지도(A-e4) 않는다
+  //+_+// P6-D59. 시프트량을 타일마다 따로 잰다. 그 타일이 실제로 잃은 시간만 민다
+  //+_+// 잃은 시간 = 해제 시각 - max(Pause 시작, 그 타일이 마지막으로 시각을 잡은 때)
+  //+_+// 전에는 구간 안에서 시각을 잡은 타일을 집합으로 빼 0 을 줬다. 그러면 그 뒤로 이어진
+  //+_+// Pause 를 그 타일만 고스란히 뒤집어쓴다. hidden-reach P2 에서 한 타일만 STALE 로 보였다
+  //+_+// 만기와 신선도를 같은 양으로 밀어야 해제 직후에 몰려 돌지도(A-e3) STALE 로 보이지도(A-e4) 않는다
   setPaused(next: boolean): void {
     if (next === (this.pausedAt !== null)) {
       return
@@ -267,24 +270,19 @@ export class PreviewCaptureManager {
     const now = this.clock.now()
     if (next) {
       this.pausedAt = now
-      this.freshWhilePaused.clear()
       return
     }
 
-    const shiftMs = now - (this.pausedAt ?? now)
+    const pausedAt = this.pausedAt ?? now
     this.pausedAt = null
     for (const state of this.tiles.values()) {
-      //+_+// Pause 구간 안에서 시각을 잡은 타일은 그 시각이 이미 옳다. 밀면 만기가 미래로 달아난다
-      //+_+// 워커가 Pause 로 시작하므로 기동 시 등록된 타일이 전부 여기에 해당한다
-      //+_+// 그것까지 밀면 Dashboard 를 열어도 워커가 Pause 로 산 시간만큼 첫 회차가 늦는다
-      if (this.freshWhilePaused.has(state.tileId)) {
-        continue
-      }
+      //+_+// 구간 시작보다 나중에 시각을 잡았으면 그 뒤로 이어진 만큼만 잃었다
+      //+_+// 음수가 나오지 않는다. touchedAt 은 언제나 현재 시각으로만 놓인다
+      const shiftMs = now - Math.max(pausedAt, state.touchedAt)
       state.nextDueAt += shiftMs
       state.scheduledAt += shiftMs
       state.lastFrameAt += shiftMs
     }
-    this.freshWhilePaused.clear()
   }
 
   latestFrame(tileId: string): CapturedFrame | null {
@@ -306,6 +304,7 @@ export class PreviewCaptureManager {
       tabId,
       baseIntervalMs,
       appliedIntervalMs: baseIntervalMs,
+      touchedAt: now,
       nextDueAt: now,
       scheduledAt: now,
       attemptCount: 0,
@@ -316,10 +315,6 @@ export class PreviewCaptureManager {
       fault: kept?.fault ?? null,
       tabGone: kept?.tabGone ?? false,
     })
-    //+_+// P6-D50. Pause 중 등록은 만기를 이미 현재 시각으로 잡았다. 해제 시프트의 대상이 아니다
-    if (this.pausedAt !== null) {
-      this.freshWhilePaused.add(tileId)
-    }
   }
 
   async unregister(tileId: string): Promise<void> {
@@ -616,10 +611,9 @@ export class PreviewCaptureManager {
         state.appliedIntervalMs = state.baseIntervalMs
         state.nextDueAt = nextDueAtFrom(state.scheduledAt, state.baseIntervalMs, now)
       }
-      //+_+// P6-D50. Pause 중에 끝난 회차다. 해제 시프트가 이 타일을 다시 밀면 시각이 미래가 된다
-      if (this.pausedAt !== null) {
-        this.freshWhilePaused.add(state.tileId)
-      }
+      //+_+// P6-D59. 성공이든 실패든 이 회차가 만기를 현재 시각 기준으로 다시 잡았다
+      //+_+// 그 사실을 남겨야 Pause 해제 시프트가 이 타일에 얼마를 물릴지 알 수 있다
+      state.touchedAt = now
     }
 
     this.write(attempt, settled, frame)

@@ -2262,6 +2262,9 @@ describe('P5-D6 - CAPTURE_TILE refreshes one preview on demand', () => {
     if (!other.ok || other.type !== 'ADD_TILE') {
       throw new Error('add failed')
     }
+    //+_+// J125 는 Pause 와 무관한 성질이다. 형제 시험이 첫 settleRound 로 억제를 푸는 것과 같은 자리다
+    //+_+// 여기서 풀지 않으면 P6-D59 의 해제 시프트가 섞여 무엇을 재는 시험인지 흐려진다
+    value.host.engine.captures.setPaused(false)
 
     value.clock.current = 1000
     await value.host.handle({ type: 'CAPTURE_TILE', tileId })
