@@ -18,6 +18,9 @@ import { sleep } from '../runner.mjs'
 //+_+// P6-D24 · D45. 판정 문장을 쓰지 않는다
 export const description = '타일 수 조건. --tiles N 으로 만들고 방치한 뒤 회차와 소요를 센다'
 
+//+_+// P6-D98. 이 한정을 리포트 필드 안에 싣는다. 나중에 리포트만 보는 사람이 용도를 오해하지 않게 한다
+const USE = '관측 집계 전용. 스케줄러 입력이나 진단 표시로 쓰지 않는다 (L22 · P6-D10)'
+
 //+_+// P6-D10. 평균을 쓰지 않는다. 분포가 이봉형이라 평균이 대표값이 아니다 (L22)
 function spread(values) {
   if (values.length === 0) {
@@ -32,6 +35,40 @@ function spread(values) {
   }
 }
 
+//+_+// P6-D95 · D98. spread 를 대신하지 않는다. 그 옆에 더한다. 앞선 리포트와의 대조가 깨지지 않게 한다
+//+_+// 용도를 관측 집계로 한정한다. 스케줄러 입력으로도 진단 표시로도 쓰지 않는다 (L22 · P6-D10)
+//+_+// 분위수는 nearest-rank 다. 보간하지 않는다. src/shared/scheduler.ts 의 percentile 과 같은 규칙이다
+function distribution(values) {
+  if (values.length === 0) {
+    return {
+      count: 0,
+      sumMs: 0,
+      meanMs: null,
+      p50: null,
+      p90: null,
+      p99: null,
+      min: null,
+      max: null,
+      use: USE,
+    }
+  }
+  const sorted = [...values].sort((a, b) => a - b)
+  const rank = (fraction) =>
+    sorted[Math.min(Math.max(Math.ceil(fraction * sorted.length), 1), sorted.length) - 1]
+  const sumMs = sorted.reduce((total, value) => total + value, 0)
+  return {
+    count: sorted.length,
+    sumMs,
+    meanMs: Number((sumMs / sorted.length).toFixed(3)),
+    p50: rank(0.5),
+    p90: rank(0.9),
+    p99: rank(0.99),
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+    use: USE,
+  }
+}
+
 //+_+// P6-D67. 값별 행 수다. 250 이 아닌 sched 토큰이 몇 행에 있는지를 보려면 분포가 있어야 한다
 function tally(values) {
   const counts = {}
@@ -40,6 +77,22 @@ function tally(values) {
     counts[key] = (counts[key] ?? 0) + 1
   }
   return counts
+}
+
+//+_+// P6-D95. 슬롯 점유율이다. 비율만 내지 않는다. 분자와 분모를 함께 낸다
+const CONCURRENT_SLOTS = 2
+
+function occupancyOf(durationsMs, windowMs) {
+  const busyMsSum = durationsMs.reduce((total, value) => total + value, 0)
+  const capacityMs = CONCURRENT_SLOTS * windowMs
+  return {
+    busyMsSum,
+    slots: CONCURRENT_SLOTS,
+    slotsSource: 'src/shared/scheduler.ts MAX_CONCURRENT_CAPTURES',
+    windowMs,
+    capacityMs,
+    ratio: capacityMs === 0 ? null : Number((busyMsSum / capacityMs).toFixed(4)),
+  }
 }
 
 export async function run({ session, run, extensionId, config }) {
@@ -128,6 +181,19 @@ export async function run({ session, run, extensionId, config }) {
       roundDurationMs: spread(parsed.map((item) => item.roundDurationMs)),
       callDurationMs: spread(
         parsed.map((item) => item.callDurationMs).filter((value) => value !== null),
+      ),
+      //+_+// P6-D95 · D98. 위 세 값을 그대로 두고 더한다. 합계와 평균이 있어야 점유율이 닫힌다
+      roundDurationDistribution: distribution(parsed.map((item) => item.roundDurationMs)),
+      callDurationDistribution: distribution(
+        parsed.map((item) => item.callDurationMs).filter((value) => value !== null),
+      ),
+      //+_+// P6-D95. 분자는 회차 소요의 합이다. 회차 소요는 슬롯을 잡은 때부터 놓는 때까지의 길이다
+      //+_+// 분모의 슬롯 수 2 는 src/shared/scheduler.ts 의 MAX_CONCURRENT_CAPTURES 를 옮겨 적은 값이다
+      //+_+// 구간 경계를 걸친 회차는 소요 전체가 분자에 들어간다. 양 끝에서 반대 방향으로 어긋난다
+      //+_+// 판정하지 않는다. 분자와 분모를 함께 실어 다시 계산할 수 있게 한다
+      slotOccupancy: occupancyOf(
+        parsed.map((item) => item.roundDurationMs),
+        to - from,
       ),
       //+_+// P6-D61. 굶는 타일이 있는지를 본다. 타일별 회차 수의 최소 · 중간 · 최대다
       roundsPerTile: spread(Object.values(countRoundsByTile(dump.rounds).byTile)),
