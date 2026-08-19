@@ -1,3 +1,4 @@
+import { pushBounded } from '../shared/recordLimit'
 import type { TileStatus } from '../shared/types'
 
 //+_+// v1 section 21 line 1201~1213 의 이름을 그대로 쓴다. 캡처 자체의 실패는 이 모듈이 내지 않는다
@@ -158,7 +159,8 @@ export class DebuggerSessionManager {
       return { ok: true, reused: false }
     } catch (error) {
       const message = errorMessage(error)
-      this.attachFailureLog.push({ tabId, attempt, message })
+      //+_+// P6-D7. 상한 있는 기록이다. 넘치면 앞에서 잘린다. L26
+      pushBounded(this.attachFailureLog, { tabId, attempt, message })
       return {
         ok: false,
         errorCode: 'DEBUGGER_ATTACH_FAILED',
@@ -191,7 +193,7 @@ export class DebuggerSessionManager {
     try {
       await this.backend.detach(tabId)
     } catch (error) {
-      this.detachFailureLog.push({ tabId, message: errorMessage(error) })
+      pushBounded(this.detachFailureLog, { tabId, message: errorMessage(error) })
     }
   }
 
@@ -202,7 +204,7 @@ export class DebuggerSessionManager {
       reason,
       errorCode: classifyDetachReason(reason, this.devtoolsDetachReasons),
     }
-    this.detachEventLog.push(event)
+    pushBounded(this.detachEventLog, event)
     this.leases.delete(tabId)
     for (const listener of this.detachListeners) {
       listener(event)

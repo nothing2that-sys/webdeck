@@ -1,4 +1,5 @@
 import type { CaptureImageFormat } from '../shared/messages'
+import { pushBounded } from '../shared/recordLimit'
 import {
   BACKOFF_STEPS_MS,
   CAPTURE_TIMEOUT_MS,
@@ -563,7 +564,8 @@ export class PreviewCaptureManager {
       //+_+// lateByMs 를 마감 시각에서 재므로 구조적으로 음수가 될 수 없다
       if (attempt.timedOutAt !== null) {
         const now = this.clock.now()
-        this.lateArrivalLog.push({
+        //+_+// P6-D7. 상한 있는 기록이다. 넘치면 앞에서 잘린다. L26
+        pushBounded(this.lateArrivalLog, {
           tileId: attempt.tileId,
           tabId: attempt.tabId,
           attemptToken: attempt.token,
@@ -663,7 +665,7 @@ export class PreviewCaptureManager {
       scheduleIntervalMs: attempt.scheduleIntervalMs,
       ...settled,
     }
-    this.captureLog.push(entry)
+    pushBounded(this.captureLog, entry)
     this.onCaptureSettled?.(entry, frame)
   }
 

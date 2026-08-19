@@ -76,6 +76,22 @@ body {
   border-bottom: 1px solid var(--border-soft);
 }
 
+.diagnosticsbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  align-items: center;
+  padding: 6px 12px;
+  font-size: 12px;
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.diagnosticsbar-note {
+  flex-basis: 100%;
+  color: var(--text-muted);
+}
+
 .settingsbar-label {
   color: var(--text-muted);
 }

@@ -3,12 +3,16 @@ import {
   NOTICE_DROP_REJECTED,
   NOTICE_NONE,
   browserTabLabel,
+  diagnosticsScopeLabel,
   dropNotice,
+  durationSpreadLabel,
   failureNotice,
   openedTabsNotice,
+  recordLogLabel,
   tileSettingsLabel,
   toggleClassName,
   toggleLabel,
+  workerStartsLabel,
 } from '../src/dashboard/screenText'
 import type { DashboardFailure } from '../src/shared/messages'
 import type { BrowserTabInfo } from '../src/shared/types'
@@ -91,5 +95,37 @@ describe('P6-D2 - the browser tab option label', () => {
   //+_+// 제목이 비어 있으면 빈 줄이 목록에 남는다. URL 로 대신한다
   it('falls back to the url when the title is empty', () => {
     expect(browserTabLabel(tab(7, '', 'https://example.com/'))).toBe('7 · https://example.com/')
+  })
+})
+
+//+_+// P6-D112 · D113. Diagnostics 의 문구도 순수 함수다. 화면 층에서 조립하지 않는다. L43
+describe('P6-D113 - the diagnostics labels', () => {
+  //+_+// B-e4. 전체 누적으로 읽히면 안 된다
+  it('says the numbers are from the most recent sample', () => {
+    expect(diagnosticsScopeLabel(200)).toBe('회차 소요와 타임아웃은 최근 200개 기준')
+  })
+
+  it('names the three numbers and the sample size', () => {
+    expect(durationSpreadLabel({ count: 4, min: 50, mid: 70, max: 90 })).toBe(
+      '50 / 70 / 90 ms · n 4',
+    )
+  })
+
+  //+_+// 표본이 없으면 값을 지어내지 않는다
+  it('says there is no sample instead of printing zeros', () => {
+    expect(durationSpreadLabel({ count: 0, min: null, mid: null, max: null })).toBe('표본 없음')
+  })
+
+  //+_+// 계측 배선이 없으면 모르는 것이다. 0 과 구별한다
+  it('separates an unknown worker start count from zero', () => {
+    expect(workerStartsLabel(null)).toBe('모름')
+    expect(workerStartsLabel(0)).toBe('0')
+    expect(workerStartsLabel(42)).toBe('42')
+  })
+
+  it('shows a record log length against its limit', () => {
+    expect(recordLogLabel({ name: 'captureRecords', length: 200, limit: 200 })).toBe(
+      'captureRecords 200 / 200',
+    )
   })
 })

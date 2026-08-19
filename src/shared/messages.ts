@@ -33,6 +33,7 @@ export interface TileSettings {
 //+_+// P5-D23 의 프로젝트 CRUD 5개가 9~13번째다. v1 section 19 에 대응 항목이 없어 명명 규칙만 따랐다
 //+_+// P5-D27 의 ADD_TILE 이 14번째다. v1 section 9.1 의 두 경로를 한 요청 아래 둔다
 //+_+// P6-D47 의 SET_PREVIEW_PAUSED 가 19번째다. v1 section 15.1 이 이름을 주지 않아 명명 규칙만 따랐다
+//+_+// P6-D9 의 GET_DIAGNOSTICS 가 20번째다. v1 section 15.5 도 화면만 말하고 요청 이름을 주지 않았다
 export type DashboardRequest =
   //+_+// P4-D11. dashboardVisible 을 폴링마다 싣는다. 표시 상태 전용 요청을 만들지 않는다. J15
   | { type: 'GET_PROJECT_STATE'; projectId: string; dashboardVisible: boolean }
@@ -62,6 +63,8 @@ export type DashboardRequest =
   //+_+// P6-D47. v1 section 15.1 의 전체 Pause 다. P5-D4 가 Phase 6 으로 넘긴 넷 중 하나다
   //+_+// P6-D48. 타일별 Pause 는 만들지 않는다. 이것은 대시보드 전체를 멈춘다
   | { type: 'SET_PREVIEW_PAUSED'; paused: boolean }
+  //+_+// P6-D9. v1 section 15.5 의 Diagnostics 다. 조회 1종만 더한다. 20번째다
+  | { type: 'GET_DIAGNOSTICS' }
 
 export type DashboardRequestType = DashboardRequest['type']
 
@@ -83,6 +86,37 @@ export interface TileFrame {
   imageBase64: string
   format: CaptureImageFormat
   bytes: number
+}
+
+//+_+// P6-D10 · D113. 최소 · 중간 · 최대다. 평균을 넣지 않는다. 분포가 이봉형이라 대표값이 아니다 (L22)
+//+_+// 중간은 nearest-rank 중앙값이다. 보간하지 않으므로 관측되지 않은 수를 만들지 않는다
+//+_+// 분위수도 넣지 않는다. P6-D113 이 표시 항목을 여기 적힌 것으로 한정했다
+export interface DurationSpread {
+  count: number
+  min: number | null
+  mid: number | null
+  max: number | null
+}
+
+//+_+// P6-D112. 기록 배열 하나의 현재 길이와 상한이다. 이름이 화면에 그대로 나온다
+export interface RecordLogSize {
+  name: string
+  length: number
+  limit: number
+}
+
+//+_+// P6-D113. Diagnostics 가 나르는 전부다. 계측 키(webdeck.diagnostics.*)를 여기에 싣지 않는다
+//+_+// 그것은 실측 도구이고 사용자 화면의 것이 아니다
+export interface DiagnosticsSnapshot {
+  //+_+// P6-D112. 소요와 타임아웃 수가 최근 몇 개를 기준으로 한 값인지다. 전체 누적이 아니다
+  sampleLimit: number
+  roundDurationMs: DurationSpread
+  timeouts: number
+  registeredTiles: number
+  attachedTabs: number
+  //+_+// 누적이다. 상한과 무관하게 는다. 계측 배선이 없으면 null 이다. 0 과 구별한다
+  workerStarts: number | null
+  recordLogs: RecordLogSize[]
 }
 
 //+_+// P4-D7. 프레임은 GET_PROJECT_STATE 응답에 얹는다. union 구성원 수를 늘리지 않는다
@@ -124,6 +158,7 @@ export type DashboardResponse =
   | { ok: true; type: 'DELETE_PROJECT' }
   | { ok: true; type: 'SET_ACTIVE_PROJECT' }
   | { ok: true; type: 'SET_PREVIEW_PAUSED'; paused: boolean }
+  | { ok: true; type: 'GET_DIAGNOSTICS'; diagnostics: DiagnosticsSnapshot }
   | DashboardFailure
 
 type SuccessResponseType = Extract<DashboardResponse, { ok: true }>['type']
@@ -132,7 +167,7 @@ type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : fals
 
 type AssertTrue<T extends true> = T
 
-//+_+// P6-D47 로 19개가 됐다. 요청과 성공 응답이 1:1 로 대응하지 않으면 컴파일이 깨진다
+//+_+// P6-D9 로 20개가 됐다. 요청과 성공 응답이 1:1 로 대응하지 않으면 컴파일이 깨진다
 //+_+// 핸들러 없이 망라성을 고정한다
 export type RequestsAndResponsesMatch = AssertTrue<
   MutuallyAssignable<DashboardRequestType, SuccessResponseType>

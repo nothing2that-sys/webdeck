@@ -55,6 +55,11 @@ export async function setPreviewPaused(paused: boolean): Promise<DashboardRespon
   return send({ type: 'SET_PREVIEW_PAUSED', paused })
 }
 
+//+_+// P6-D9. v1 section 15.5 의 Diagnostics 다. 값은 전부 워커가 만든다. 화면은 받아 그리기만 한다
+export async function fetchDiagnostics(): Promise<DashboardResponse> {
+  return send({ type: 'GET_DIAGNOSTICS' })
+}
+
 //+_+// P5-D22. 활성 프로젝트 id 는 워커가 알려 준 값이다. 상수를 하드코딩하지 않는다
 export async function fetchProjectState(
   projectId: string,

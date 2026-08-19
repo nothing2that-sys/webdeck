@@ -1,5 +1,5 @@
 import type { BrowserTabInfo } from '../shared/types'
-import type { DashboardFailure } from '../shared/messages'
+import type { DashboardFailure, DurationSpread, RecordLogSize } from '../shared/messages'
 
 //+_+// P6-D2. (a) 응답 -> 문구다. React state 를 만지지 않으므로 node 에서 시험할 수 있다. L43
 //+_+// App.tsx 는 여기서 만든 문자열을 setNotice 에 넘기기만 한다. 문구를 화면 층에서 조립하지 않는다
@@ -46,6 +46,29 @@ export function toggleClassName(on: boolean): string {
 //+_+// 타일을 고르기 전에는 설정 폼이 비어 있고 라벨이 안내문이다
 export function tileSettingsLabel(open: boolean): string {
   return open ? 'Tile' : '타일을 고르면 설정이 열린다'
+}
+
+//+_+// P6-D112. 표시가 최근 N개 기준이라는 것을 화면이 밝힌다. 전체 누적으로 읽히면 안 된다
+export function diagnosticsScopeLabel(sampleLimit: number): string {
+  return `회차 소요와 타임아웃은 최근 ${String(sampleLimit)}개 기준`
+}
+
+//+_+// P6-D10 · D113. 최소 · 중간 · 최대다. 평균을 만들지 않는다. 표본이 없으면 값을 지어내지 않는다
+export function durationSpreadLabel(spread: DurationSpread): string {
+  if (spread.count === 0 || spread.min === null || spread.mid === null || spread.max === null) {
+    return '표본 없음'
+  }
+  return `${String(spread.min)} / ${String(spread.mid)} / ${String(spread.max)} ms · n ${String(spread.count)}`
+}
+
+//+_+// 계측 배선이 없으면 모르는 것이다. 0 으로 적으면 관측했다는 뜻이 된다
+export function workerStartsLabel(starts: number | null): string {
+  return starts === null ? '모름' : String(starts)
+}
+
+//+_+// P6-D112. 배열 하나의 현재 길이와 상한이다. 상한에 닿았는지가 한눈에 보여야 한다
+export function recordLogLabel(log: RecordLogSize): string {
+  return `${log.name} ${String(log.length)} / ${String(log.limit)}`
 }
 
 //+_+// 제목이 비어 있는 탭은 URL 로 보인다. 빈 줄이 목록에 남지 않게 한다

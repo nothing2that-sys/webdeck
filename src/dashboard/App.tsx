@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GRID_COLUMNS, GRID_ROWS } from '../shared/grid'
 import type { GridPosition } from '../shared/grid'
-import type { DashboardResponse } from '../shared/messages'
+import type { DashboardResponse, DiagnosticsSnapshot } from '../shared/messages'
 import type { BrowserTabInfo, Project, WebTile } from '../shared/types'
 import { TileCard } from './TileCard'
 import {
@@ -12,6 +12,7 @@ import {
   createProject,
   createVisibilityGate,
   deleteProject,
+  fetchDiagnostics,
   fetchProjectState,
   focusTile,
   isDashboardVisible,
@@ -46,12 +47,16 @@ import {
   NOTICE_TAB_REQUIRED,
   NOTICE_URL_REQUIRED,
   browserTabLabel,
+  diagnosticsScopeLabel,
   dropNotice,
+  durationSpreadLabel,
   failureNotice,
   openedTabsNotice,
+  recordLogLabel,
   tileSettingsLabel,
   toggleClassName,
   toggleLabel,
+  workerStartsLabel,
 } from './screenText'
 import { buildTileViews, gridArea, parseTileSettings, tileSettingsDraft } from './tileView'
 import type { TileSettingsDraft, TileViewModel } from './tileView'
@@ -98,6 +103,9 @@ export function App(): React.JSX.Element {
   const [editing, setEditing] = useState(false)
   //+_+// P6-D47. 정본은 워커다. 화면은 폴링 응답이 알려 준 값을 그린다
   const [paused, setPaused] = useState(false)
+  //+_+// P6-D9. 열려 있는 동안만 읽는다. 닫혀 있으면 요청을 보내지 않는다
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null)
+  const [showDiagnostics, setShowDiagnostics] = useState(false)
   const [drag, setDrag] = useState<DragState | null>(null)
   const [notice, setNotice] = useState('')
   const gridRef = useRef<HTMLElement | null>(null)
@@ -511,6 +519,39 @@ export function App(): React.JSX.Element {
     await poll()
   }, [paused, poll])
 
+  //+_+// P6-D9. 값은 워커가 만든다. 화면은 받아 그리기만 한다. 계측 키를 화면이 읽지 않는다
+  const loadDiagnostics = useCallback(async () => {
+    const response = await fetchDiagnostics()
+    if (!response.ok) {
+      setNotice(failureNotice(response))
+      return
+    }
+    if (response.type !== 'GET_DIAGNOSTICS') {
+      return
+    }
+    setNotice(NOTICE_NONE)
+    setDiagnostics(response.diagnostics)
+  }, [])
+
+  //+_+// 열려 있는 동안만 폴링에 얹는다. 닫으면 값을 버려 낡은 수치가 다시 열릴 때 비치지 않게 한다
+  useEffect(() => {
+    if (!showDiagnostics) {
+      setDiagnostics(null)
+      return undefined
+    }
+    void loadDiagnostics()
+    const handle: ReturnType<typeof setInterval> = setInterval(() => {
+      void loadDiagnostics()
+    }, POLL_INTERVAL_MS)
+    return () => {
+      clearInterval(handle)
+    }
+  }, [loadDiagnostics, showDiagnostics])
+
+  const toggleDiagnostics = useCallback(() => {
+    setShowDiagnostics((current) => !current)
+  }, [])
+
   const indicator = dropIndicator(drag)
 
   return (
@@ -560,6 +601,13 @@ export function App(): React.JSX.Element {
           onClick={() => void togglePaused()}
         >
           {toggleLabel('Pause Preview', paused)}
+        </button>
+        <button
+          type="button"
+          className={toggleClassName(showDiagnostics)}
+          onClick={toggleDiagnostics}
+        >
+          {toggleLabel('Diagnostics', showDiagnostics)}
         </button>
         <select
           className="toolbar-select"
@@ -677,6 +725,24 @@ export function App(): React.JSX.Element {
           Remove Tile
         </button>
       </section>
+
+      {showDiagnostics && diagnostics !== null ? (
+        <section className="diagnosticsbar">
+          <span className="diagnosticsbar-note">
+            {diagnosticsScopeLabel(diagnostics.sampleLimit)}
+          </span>
+          <span>
+            회차 소요 최소 / 중간 / 최대 {durationSpreadLabel(diagnostics.roundDurationMs)}
+          </span>
+          <span>타임아웃 {diagnostics.timeouts}</span>
+          <span>등록 타일 {diagnostics.registeredTiles}</span>
+          <span>attach {diagnostics.attachedTabs}</span>
+          <span>워커 기동 {workerStartsLabel(diagnostics.workerStarts)}</span>
+          {diagnostics.recordLogs.map((log) => (
+            <span key={log.name}>{recordLogLabel(log)}</span>
+          ))}
+        </section>
+      ) : null}
 
       <main
         className="grid"

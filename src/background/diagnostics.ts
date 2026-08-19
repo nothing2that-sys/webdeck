@@ -1,3 +1,5 @@
+import type { DiagnosticsSnapshot, DurationSpread, RecordLogSize } from '../shared/messages'
+import { RECORD_LOG_LIMIT } from '../shared/recordLimit'
 import type { KeyValueBackend } from '../shared/storage'
 import { errorMessage } from './debuggerSessionManager'
 import { formatCaptureRound } from './roundLog'
@@ -175,5 +177,41 @@ export function createRoundLogStore(
         })
       return chain
     },
+  }
+}
+
+//+_+// P6-D10 · D113. 순수 함수다. 평균을 내지 않는다. 최소 · 중간 · 최대뿐이다
+//+_+// 중간은 nearest-rank 다. src/shared/scheduler.ts 의 percentile 과 같은 규칙이고 보간하지 않는다
+export function durationSpread(values: readonly number[]): DurationSpread {
+  if (values.length === 0) {
+    return { count: 0, min: null, mid: null, max: null }
+  }
+  const sorted = [...values].sort((a, b) => a - b)
+  return {
+    count: sorted.length,
+    min: sorted[0],
+    mid: sorted[Math.ceil(sorted.length / 2) - 1],
+    max: sorted[sorted.length - 1],
+  }
+}
+
+//+_+// P6-D9 · D113. Diagnostics 응답을 만드는 유일한 자리다. 순수하다. chrome 도 storage 도 만지지 않는다
+//+_+// 회차 소요와 타임아웃 수는 captureRecords 에서 나오고 그 배열은 상한 200 이다 (P6-D7)
+//+_+// 그래서 sampleLimit 를 함께 싣는다. 전체 누적으로 읽히면 안 된다 (P6-D112)
+export function buildDiagnostics(input: {
+  captureRecords: readonly { roundDurationMs: number; outcome: string }[]
+  registeredTiles: number
+  attachedTabs: number
+  workerStarts: number | null
+  recordLogs: readonly RecordLogSize[]
+}): DiagnosticsSnapshot {
+  return {
+    sampleLimit: RECORD_LOG_LIMIT,
+    roundDurationMs: durationSpread(input.captureRecords.map((record) => record.roundDurationMs)),
+    timeouts: input.captureRecords.filter((record) => record.outcome === 'timeout').length,
+    registeredTiles: input.registeredTiles,
+    attachedTabs: input.attachedTabs,
+    workerStarts: input.workerStarts,
+    recordLogs: [...input.recordLogs],
   }
 }

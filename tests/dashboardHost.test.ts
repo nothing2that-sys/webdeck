@@ -3,6 +3,7 @@ import type { DebuggerBackend } from '../src/background/debuggerSessionManager'
 import {
   RECONNECT_LOG_KEY,
   ROUND_LOG_KEY,
+  WORKER_STARTS_KEY,
   readReconnectRows,
   readRoundRows,
 } from '../src/background/diagnostics'
@@ -13,6 +14,7 @@ import type { CreateTab, DashboardHost, FocusTab, ListTabs } from '../src/backgr
 import type { TabsBackend } from '../src/background/tabManager'
 import { DEFAULT_PROJECT_ID } from '../src/shared/messages'
 import type { TileSettings } from '../src/shared/messages'
+import { RECORD_LOG_LIMIT } from '../src/shared/recordLimit'
 import { CAPTURE_INTERVAL_MS, tileIntervalMs } from '../src/shared/scheduler'
 import { STORAGE_KEY } from '../src/shared/storage'
 import type { KeyValueBackend } from '../src/shared/storage'
@@ -2754,5 +2756,107 @@ describe('P6-D3 - a restricted url tile', () => {
     driveTick(value.host)
     await Promise.resolve()
     expect(value.debuggerBackend.attached).toEqual([])
+  })
+})
+
+//+_+// P6-D9 · D113. v1 section 15.5 다. 조회 1종만 더했고 표시 항목이 한정돼 있다
+describe('P6-D9 - GET_DIAGNOSTICS', () => {
+  //+_+// 회차가 정산될 때까지 마이크로태스크를 비운다. F2 절의 flush 와 같은 방식이다
+  async function flush(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+  }
+
+  async function diagnosticsOf(host: DashboardHost) {
+    const response = await host.handle({ type: 'GET_DIAGNOSTICS' })
+    if (!response.ok || response.type !== 'GET_DIAGNOSTICS') {
+      throw new Error(`unexpected response ${JSON.stringify(response)}`)
+    }
+    return response.diagnostics
+  }
+
+  //+_+// A-e2
+  it('answers on an empty project without inventing numbers', async () => {
+    const snapshot = await diagnosticsOf(fixture().host)
+    expect(snapshot.roundDurationMs).toEqual({ count: 0, min: null, mid: null, max: null })
+    expect(snapshot.timeouts).toBe(0)
+    expect(snapshot.registeredTiles).toBe(0)
+    expect(snapshot.attachedTabs).toBe(0)
+  })
+
+  it('counts the registered tiles and the attached tabs', async () => {
+    const value = fixture([11, 12])
+    await value.host.handle({ type: 'BIND_TILE', tileId: 'a', tabId: 11 })
+    await value.host.handle({ type: 'BIND_TILE', tileId: 'b', tabId: 12 })
+    driveTick(value.host)
+    await flush()
+
+    const snapshot = await diagnosticsOf(value.host)
+    expect(snapshot.registeredTiles).toBe(2)
+    expect(snapshot.attachedTabs).toBe(2)
+  })
+
+  it('spreads the round durations of the rounds that ran', async () => {
+    const value = fixture([11])
+    await value.host.handle({ type: 'BIND_TILE', tileId: 'a', tabId: 11 })
+    driveTick(value.host)
+    await flush()
+
+    const snapshot = await diagnosticsOf(value.host)
+    expect(snapshot.roundDurationMs.count).toBeGreaterThan(0)
+    expect(snapshot.roundDurationMs.min).not.toBeNull()
+  })
+
+  //+_+// B-e4. 최근 몇 개 기준인지를 응답이 밝힌다
+  it('states the sample limit and the five record log sizes', async () => {
+    const snapshot = await diagnosticsOf(fixture().host)
+    expect(snapshot.sampleLimit).toBe(RECORD_LOG_LIMIT)
+    expect(snapshot.recordLogs.map((log) => log.name)).toEqual([
+      'captureRecords',
+      'lateArrivals',
+      'attachFailures',
+      'detachEvents',
+      'detachFailures',
+    ])
+    for (const log of snapshot.recordLogs) {
+      expect(log.limit).toBe(RECORD_LOG_LIMIT)
+    }
+  })
+
+  //+_+// B-e3. 누적 카운터는 상한과 무관하게 는다. 워커 기동 수가 그것이다
+  it('reads the cumulative worker start count from the diagnostics wiring', async () => {
+    const diagnostics = new StubStorage()
+    diagnostics.store.set(WORKER_STARTS_KEY, { starts: 42, recentAt: [1, 2] })
+    const value = fixture([11], new StubStorage(), diagnostics)
+    expect((await diagnosticsOf(value.host)).workerStarts).toBe(42)
+  })
+
+  //+_+// 모르는 것은 null 이다. 0 으로 적으면 관측했다는 뜻이 된다
+  it('reports an unknown worker start count as null when nothing is wired', async () => {
+    expect((await diagnosticsOf(fixture().host)).workerStarts).toBeNull()
+  })
+
+  //+_+// A-e4. 계측 키를 응답에 싣지 않는다. 그것은 실측 도구다
+  it('carries no diagnostics storage key and no round log', async () => {
+    const diagnostics = new StubStorage()
+    const value = fixture([11], new StubStorage(), diagnostics)
+    await value.host.handle({ type: 'BIND_TILE', tileId: 'a', tabId: 11 })
+    driveTick(value.host)
+    await flush()
+
+    const text = JSON.stringify(await diagnosticsOf(value.host))
+    expect(text).not.toContain('webdeck.diagnostics')
+    expect(text).not.toContain(ROUND_LOG_KEY)
+    expect(text).not.toContain(RECONNECT_LOG_KEY)
+    expect(text).not.toContain('[webdeck]')
+  })
+
+  //+_+// P6-D10. 평균도 분위수도 없다
+  it('carries no average and no percentile', async () => {
+    const text = JSON.stringify(await diagnosticsOf(fixture().host))
+    for (const forbidden of ['average', 'mean', 'p50', 'p95', 'p99']) {
+      expect(text).not.toContain(forbidden)
+    }
   })
 })

@@ -15,6 +15,7 @@ import type {
   Clock,
   PreviewCaptureManagerOptions,
 } from '../src/background/previewCaptureManager'
+import { RECORD_LOG_LIMIT } from '../src/shared/recordLimit'
 
 interface FakeTimer {
   at: number
@@ -1471,5 +1472,120 @@ describe('P6-D104 - a restricted tile makes no capture round', () => {
     await flush()
 
     expect(backend.attachCalls).toEqual([])
+  })
+})
+
+//+_+// P6-D7. L26 이 연 항목이다. captureRecords 와 lateArrivals 가 상한 있는 기록이 됐다
+describe('P6-D7 - the capture record logs are bounded', () => {
+  it('keeps at most RECORD_LOG_LIMIT capture records', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('a', 1, 2000)
+
+    for (let round = 0; round < RECORD_LOG_LIMIT + 25; round += 1) {
+      clock.advance(2000)
+      manager.tick()
+      await flush()
+      await settleCapture(backend, round)
+    }
+
+    expect(manager.captureRecords).toHaveLength(RECORD_LOG_LIMIT)
+  })
+
+  //+_+// B-e2. 최근 것이 남는다. 앞을 버린다
+  it('keeps the newest records and drops the oldest', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('a', 1, 2000)
+
+    for (let round = 0; round < RECORD_LOG_LIMIT + 25; round += 1) {
+      clock.advance(2000)
+      manager.tick()
+      await flush()
+      await settleCapture(backend, round)
+    }
+
+    const tokens = manager.captureRecords.map((record) => record.attemptToken)
+    expect(tokens[tokens.length - 1]).toBe(RECORD_LOG_LIMIT + 25)
+    expect(tokens[0]).toBe(26)
+  })
+
+  //+_+// B-e3 의 반대쪽이다. 배열 길이는 누적 카운터가 아니다. 시도 카운터는 따로 계속 는다
+  it('does not stop the per tile attempt counter at the limit', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('a', 1, 2000)
+
+    for (let round = 0; round < RECORD_LOG_LIMIT + 25; round += 1) {
+      clock.advance(2000)
+      manager.tick()
+      await flush()
+      await settleCapture(backend, round)
+    }
+
+    const last = manager.captureRecords[manager.captureRecords.length - 1]
+    expect(last?.attemptIndex).toBe(RECORD_LOG_LIMIT + 24)
+  })
+})
+
+//+_+// P6-D111 · P3-D5. STALE 의 의미를 고정한다. "캡처가 되고 있지 않다" 이지 "화면이 안 바뀐다" 가 아니다
+//+_+// L9 가 배경 탭 페이지 타이머의 스로틀을 확정했다. 화면 변화로 판정하면 배경 탭에서 상시 켜진다
+describe('P6-D111 - STALE means the capture stopped, not that the picture stopped', () => {
+  //+_+// D-e1. 같은 프레임이 20회 이어져도 캡처가 성공하는 한 STALE 이 아니다
+  it('stays LIVE while the frame hash never changes', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('a', 1, 2000)
+
+    for (let round = 0; round < 20; round += 1) {
+      clock.advance(2000)
+      manager.tick()
+      await flush()
+      //+_+// 매 회차 같은 데이터다. 프레임 지문이 바뀌지 않는다
+      await settleCapture(backend, round, 'AAAA')
+    }
+
+    expect(manager.statusOf('a')).toBe('LIVE')
+    const frames = manager.captureRecords.map((record) => record.bytes)
+    expect(new Set(frames).size).toBe(1)
+  })
+
+  //+_+// D-e2. 캡처가 임계를 넘겨 성공하지 못하면 STALE 이다
+  it('turns STALE once no capture has succeeded past the threshold', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('a', 1, 2000)
+
+    clock.advance(2000)
+    manager.tick()
+    await flush()
+    await settleCapture(backend, 0)
+    expect(manager.statusOf('a')).toBe('LIVE')
+
+    //+_+// 그 뒤로 아무 회차도 성공하지 않는다. 임계는 2000 x 3 이다
+    clock.advance(6001)
+    expect(manager.statusOf('a')).toBe('STALE')
+  })
+
+  //+_+// D-e3. 임계를 바꾸지 않았다. baseIntervalMs x 3 그대로다
+  it('keeps the threshold at three times the base interval', () => {
+    expect(isStale(6000, 0, 2000)).toBe(false)
+    expect(isStale(6001, 0, 2000)).toBe(true)
+    expect(isStale(12000, 0, 4000)).toBe(false)
+    expect(isStale(12001, 0, 4000)).toBe(true)
+  })
+
+  //+_+// D-e4. P6-D59 의 시프트가 Pause 구간을 덮는다. 멈춘 동안의 경과가 신선도에 들어가지 않는다
+  it('does not turn STALE across a long pause', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('a', 1, 2000)
+
+    clock.advance(2000)
+    manager.tick()
+    await flush()
+    await settleCapture(backend, 0)
+    expect(manager.statusOf('a')).toBe('LIVE')
+
+    manager.setPaused(true)
+    //+_+// 임계 6000 을 한참 넘긴다
+    clock.advance(600000)
+    expect(manager.statusOf('a')).toBe('LIVE')
+    manager.setPaused(false)
+    expect(manager.statusOf('a')).toBe('LIVE')
   })
 })

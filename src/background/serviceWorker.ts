@@ -16,13 +16,21 @@ import {
   isValidIntervalOverride,
   tileIntervalMs,
 } from '../shared/scheduler'
+import { RECORD_LOG_LIMIT } from '../shared/recordLimit'
 import { isRestrictedUrl } from '../shared/restrictedUrl'
 import { loadPreviewPaused, loadState, savePreviewPaused, saveState } from '../shared/storage'
 import type { KeyValueBackend, LoadResult } from '../shared/storage'
 import type { BrowserTabInfo, Project, TileRuntimeState, WebTile } from '../shared/types'
 import { DebuggerSessionManager, errorMessage } from './debuggerSessionManager'
 import type { DebuggerBackend } from './debuggerSessionManager'
-import { createRoundLogStore, recordReconnectVerdicts, recordWorkerStart } from './diagnostics'
+import {
+  WORKER_STARTS_KEY,
+  buildDiagnostics,
+  createRoundLogStore,
+  readWorkerStarts,
+  recordReconnectVerdicts,
+  recordWorkerStart,
+} from './diagnostics'
 import type { ReconnectLogRow } from './diagnostics'
 import { PreviewCaptureManager, systemClock } from './previewCaptureManager'
 import type { Clock, PreviewCaptureManagerOptions } from './previewCaptureManager'
@@ -693,6 +701,59 @@ export function createDashboardHost(
     return { ok: true, type: 'SET_ACTIVE_PROJECT' }
   }
 
+  //+_+// P6-D9 · D113. v1 section 15.5 다. 값은 전부 엔진이 이미 들고 있는 것이다
+  //+_+// 워커 기동 수만 계측 배선에서 읽는다. 배선이 없으면 null 이다. 0 과 구별한다
+  //+_+// 계측 키 이름도 회차 로그도 재연결 판정도 응답에 싣지 않는다. 그것은 실측 도구다
+  async function diagnosticsSnapshot(): Promise<DashboardResponse> {
+    let workerStarts: number | null = null
+    if (diagnostics !== null) {
+      try {
+        workerStarts = readWorkerStarts(await diagnostics.get(WORKER_STARTS_KEY)).starts
+      } catch {
+        //+_+// 계측 읽기 실패가 Diagnostics 조회를 깨지 않는다. 모르는 것은 null 로 둔다
+        workerStarts = null
+      }
+    }
+    return {
+      ok: true,
+      type: 'GET_DIAGNOSTICS',
+      diagnostics: buildDiagnostics({
+        captureRecords: engine.captures.captureRecords,
+        registeredTiles: engine.captures.registeredTileCount,
+        attachedTabs: engine.sessions.attachedCount,
+        workerStarts,
+        //+_+// P6-D7 의 다섯 배열이다. 이름은 화면에 그대로 나온다
+        recordLogs: [
+          {
+            name: 'captureRecords',
+            length: engine.captures.captureRecords.length,
+            limit: RECORD_LOG_LIMIT,
+          },
+          {
+            name: 'lateArrivals',
+            length: engine.captures.lateArrivals.length,
+            limit: RECORD_LOG_LIMIT,
+          },
+          {
+            name: 'attachFailures',
+            length: engine.sessions.attachFailures.length,
+            limit: RECORD_LOG_LIMIT,
+          },
+          {
+            name: 'detachEvents',
+            length: engine.sessions.detachEvents.length,
+            limit: RECORD_LOG_LIMIT,
+          },
+          {
+            name: 'detachFailures',
+            length: engine.sessions.detachFailures.length,
+            limit: RECORD_LOG_LIMIT,
+          },
+        ],
+      }),
+    }
+  }
+
   //+_+// 거부된 저장값을 덮어쓰지 않는다. 씨앗 상태를 그대로 두고 실패를 부르는 쪽에 돌려준다
   //+_+// P5-D35. 재연결은 여기 안에 둔다. 기동 시 1회라는 조건을 한 자리에서 보장한다
   async function load(): Promise<LoadResult> {
@@ -761,6 +822,8 @@ export function createDashboardHost(
           return setActiveProject(request.projectId)
         case 'SET_PREVIEW_PAUSED':
           return setPreviewPaused(request.paused)
+        case 'GET_DIAGNOSTICS':
+          return diagnosticsSnapshot()
         //+_+// P5-D5 가 Reload Page 를, P5-D3 이 Keep Alive 를 Phase 6 으로 두었다
         case 'RELOAD_TILE':
         case 'SET_TILE_KEEP_ALIVE':
