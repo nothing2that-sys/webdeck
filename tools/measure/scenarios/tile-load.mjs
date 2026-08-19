@@ -83,13 +83,18 @@ export async function run({ session, run, extensionId, config }) {
     }
   })
 
+  //+_+// P6-D88. 구간은 여기서 시작한다. 안정화가 구간 안에 든다. 주기 override 는 그 전에 걸렸으므로
+  //+_+// 안정화도 같은 조건으로 돈다. 제목이 idle 만 말하면 분모를 잘못 읽게 된다. 둘을 다 적는다
   const from = Date.now()
-  await run.segment(`idle ${String(Math.round(idleMs / 1000))}s`, async () => {
-    run.action('settle', { ms: settleMs })
-    await sleep(settleMs)
-    run.action('idle with dashboard in the foreground', { ms: idleMs })
-    await sleep(idleMs)
-  })
+  await run.segment(
+    `settle ${String(Math.round(settleMs / 1000))}s + idle ${String(Math.round(idleMs / 1000))}s`,
+    async () => {
+      run.action('settle', { ms: settleMs })
+      await sleep(settleMs)
+      run.action('idle with dashboard in the foreground', { ms: idleMs })
+      await sleep(idleMs)
+    },
+  )
   const to = Date.now()
 
   await run.segment('count', async () => {
@@ -104,7 +109,10 @@ export async function run({ session, run, extensionId, config }) {
       intervalMs: config.intervalMs ?? null,
       startedAt: from,
       endedAt: to,
+      //+_+// P6-D88. 회차 수의 분모는 이 값이다. 안정화 + 방치이며 지정한 방치 시간 하나가 아니다
       elapsedMs: to - from,
+      settleMs,
+      idleMs,
       workerStarts: dump.workerStarts,
       //+_+// P6-D67. 회차 로그는 상한 2000 의 링버퍼다 (ROUND_LOG_LIMIT). 넘치면 앞에서 잘린다
       //+_+// 잘렸는지를 리포트에서 볼 수 있어야 한다. 저장된 총 행 수와 구간 첫 행 시각을 함께 낸다

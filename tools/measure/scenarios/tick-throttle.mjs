@@ -90,6 +90,21 @@ export async function run({ session, run, extensionId, config }) {
     }, attachUrl)
     run.action('tile tab located', { tabId: attachTabId, url: attachUrl })
     if (attachTabId === null) {
+      //+_+// 못 찾은 것도 관측이다. 그때 실제로 어떤 탭이 있었는지를 남기지 않으면 사유를 못 가린다
+      run.dump(
+        'tabs when the tile tab was not found',
+        await page.evaluate(async () => {
+          const tabs = await chrome.tabs.query({})
+          return tabs.map((tab) => ({
+            tabId: tab.id ?? null,
+            url: tab.url ?? null,
+            pendingUrl: tab.pendingUrl ?? null,
+            status: tab.status ?? null,
+            discarded: tab.discarded ?? null,
+            title: tab.title ?? null,
+          }))
+        }),
+      )
       throw new Error(`타일 탭을 찾지 못했다: ${attachUrl}`)
     }
 
