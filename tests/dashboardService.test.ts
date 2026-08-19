@@ -4,12 +4,12 @@ import {
   createVisibilityGate,
   isStaleTabFailure,
 } from '../src/dashboard/dashboardService'
-import type { DashboardResponse } from '../src/shared/messages'
+import type { DashboardErrorCode, DashboardResponse } from '../src/shared/messages'
 
 //+_+// chrome 을 부르는 것은 send 안이며 이 파일은 그것을 import 하지 않는다
 //+_+// 순수 판정만 시험한다. sendMessage 자체는 Chrome 실측 항목이다
 describe('P5-D30 - a stale tab list is refreshed rather than reported', () => {
-  function failure(errorCode: string): DashboardResponse {
+  function failure(errorCode: DashboardErrorCode): DashboardResponse {
     return { ok: false, type: 'BIND_TILE', errorCode, message: 'test' }
   }
 
@@ -18,7 +18,13 @@ describe('P5-D30 - a stale tab list is refreshed rather than reported', () => {
   })
 
   it('leaves the other failures to the notice line', () => {
-    for (const code of ['GRID_FULL', 'TILE_NOT_FOUND', 'INVALID_LAYOUT', 'SEND_FAILED']) {
+    const codes: DashboardErrorCode[] = [
+      'GRID_FULL',
+      'TILE_NOT_FOUND',
+      'INVALID_LAYOUT',
+      'SEND_FAILED',
+    ]
+    for (const code of codes) {
       expect(isStaleTabFailure(failure(code))).toBe(false)
     }
   })

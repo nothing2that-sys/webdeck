@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { CaptureImageFormat, DashboardResponse } from '../src/shared/messages'
+import type {
+  CaptureImageFormat,
+  DashboardErrorCode,
+  DashboardFailure,
+  DashboardResponse,
+} from '../src/shared/messages'
 import type { TileStatus } from '../src/shared/types'
 
 type CaptureSuccess = Extract<DashboardResponse, { ok: true; type: 'CAPTURE_TILE' }>
@@ -75,5 +80,51 @@ describe('TASK-P3-01 item 02 - TileStatus after L19 and P6-D3', () => {
     expect(Object.hasOwn(statuses, 'DEVTOOLS')).toBe(true)
     expect(Object.hasOwn(statuses, 'CAPTURE PAUSED')).toBe(false)
     expect(Object.hasOwn(statuses, 'CAPTURE_PAUSED')).toBe(false)
+  })
+})
+
+describe('P6-D135 - DashboardFailure.errorCode is a twelve member union', () => {
+  //+_+// 값을 빠뜨리거나 더하면 컴파일이 깨진다. 12개를 타입에서 직접 끌어온다
+  //+_+// P6-D127 이 좁혔고 P6-D135 가 13 을 12 로 정정했다. 근거는 docs/V1_DEVIATIONS.md 9
+  const codes: Record<DashboardErrorCode, true> = {
+    TILE_NOT_FOUND: true,
+    TAB_NOT_FOUND: true,
+    PROJECT_NOT_FOUND: true,
+    GRID_FULL: true,
+    TILE_NOT_BOUND: true,
+    INVALID_LAYOUT: true,
+    INVALID_INTERVAL: true,
+    NO_LAUNCH_URL: true,
+    CAPTURE_FAILED: true,
+    NOT_IMPLEMENTED: true,
+    HANDLER_THREW: true,
+    SEND_FAILED: true,
+  }
+
+  it('holds exactly twelve codes', () => {
+    expect(Object.keys(codes)).toHaveLength(12)
+  })
+
+  //+_+// AttachResult 에서 나서 TileStatus 로만 흐른다. DashboardFailure 에 담기는 경로가 없다
+  it('does not admit the debugger layer code', () => {
+    expect(Object.hasOwn(codes, 'DEBUGGER_ATTACH_FAILED')).toBe(false)
+  })
+
+  //+_+// 이 지시가 쓸모없어지면 tsc 가 "unused" 로 잡는다. 좁히기가 풀리면 시험이 깨진다
+  it('rejects a code outside the union at compile time', () => {
+    const rejected: DashboardFailure = {
+      ok: false,
+      type: 'BIND_TILE',
+      // @ts-expect-error UNKNOWN_CODE 는 union 에 없다
+      errorCode: 'UNKNOWN_CODE',
+      message: 'test',
+    }
+
+    expect(rejected.ok).toBe(false)
+  })
+
+  //+_+// SEND_FAILED 만 화면 층이 만들고 나머지 11 은 워커가 만든다. docs/V1_DEVIATIONS.md 9.2
+  it('keeps the one code the dashboard layer produces', () => {
+    expect(Object.hasOwn(codes, 'SEND_FAILED')).toBe(true)
   })
 })

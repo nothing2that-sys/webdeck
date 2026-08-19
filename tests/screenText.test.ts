@@ -14,10 +14,10 @@ import {
   toggleLabel,
   workerStartsLabel,
 } from '../src/dashboard/screenText'
-import type { DashboardFailure } from '../src/shared/messages'
+import type { DashboardErrorCode, DashboardFailure } from '../src/shared/messages'
 import type { BrowserTabInfo } from '../src/shared/types'
 
-function failure(errorCode: string, message: string): DashboardFailure {
+function failure(errorCode: DashboardErrorCode, message: string): DashboardFailure {
   return { ok: false, type: 'GET_PROJECT_STATE', errorCode, message }
 }
 

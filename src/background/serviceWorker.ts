@@ -3,6 +3,7 @@ import type { GridRect } from '../shared/grid'
 import { assertNever } from '../shared/messages'
 import type {
   AddTileSource,
+  DashboardErrorCode,
   DashboardFailure,
   DashboardRequest,
   DashboardRequestType,
@@ -127,7 +128,7 @@ export type CreateTab = (url: string) => Promise<BrowserTabInfo>
 
 function failure(
   type: DashboardRequestType,
-  errorCode: string,
+  errorCode: DashboardErrorCode,
   message: string,
 ): DashboardFailure {
   return { ok: false, type, errorCode, message }

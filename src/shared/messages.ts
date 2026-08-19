@@ -68,11 +68,27 @@ export type DashboardRequest =
 
 export type DashboardRequestType = DashboardRequest['type']
 
-//+_+// errorCode 를 union 으로 좁히지 않는다. 오류 분류는 WEBDECK_PLAN section 8 이 Phase 6 으로 배정했다
+//+_+// P6-D127 이 이 판단을 뒤집었다. 12종 union 이다. 이전 판단은 "좁히지 않는다" 였다
+//+_+// 12종은 실제로 생산되는 값이다. AttachResult 의 DEBUGGER_ATTACH_FAILED 는 여기 담기지 않는다
+//+_+// v1 21 의 11종 명칭에 맞추지 않는다. 대조는 docs/V1_DEVIATIONS.md 9 를 본다
+export type DashboardErrorCode =
+  | 'TILE_NOT_FOUND'
+  | 'TAB_NOT_FOUND'
+  | 'PROJECT_NOT_FOUND'
+  | 'GRID_FULL'
+  | 'TILE_NOT_BOUND'
+  | 'INVALID_LAYOUT'
+  | 'INVALID_INTERVAL'
+  | 'NO_LAUNCH_URL'
+  | 'CAPTURE_FAILED'
+  | 'NOT_IMPLEMENTED'
+  | 'HANDLER_THREW'
+  | 'SEND_FAILED'
+
 export interface DashboardFailure {
   ok: false
   type: DashboardRequestType
-  errorCode: string
+  errorCode: DashboardErrorCode
   message: string
 }
 
