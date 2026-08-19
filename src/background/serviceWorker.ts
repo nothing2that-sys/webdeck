@@ -16,6 +16,7 @@ import {
   isValidIntervalOverride,
   tileIntervalMs,
 } from '../shared/scheduler'
+import { isRestrictedUrl } from '../shared/restrictedUrl'
 import { loadPreviewPaused, loadState, savePreviewPaused, saveState } from '../shared/storage'
 import type { KeyValueBackend, LoadResult } from '../shared/storage'
 import type { BrowserTabInfo, Project, TileRuntimeState, WebTile } from '../shared/types'
@@ -280,11 +281,18 @@ export function createDashboardHost(
       const tabId = bindings.get(tile.id)
       const tab = tabId === undefined ? null : await engine.tabs.info(tabId)
       const summary = summaries.get(tile.id) ?? EMPTY_CAPTURE_SUMMARY
+      //+_+// P6-D3. 판정 근거는 바인딩된 탭의 현재 URL 이다. 그것이 attach 대상이기 때문이다
+      //+_+// 탭이 없으면 launchUrl 로 본다. 그 타일이 열려고 하는 곳이 그것이다
+      //+_+// 폴링마다 다시 본다. 사용자가 탭을 chrome:// 로 옮기면 다음 폴링이 그것을 집는다
+      const restricted = isRestrictedUrl(tab?.currentUrl ?? tile.launchUrl)
+      //+_+// P6-D104. 표시와 스케줄이 같은 판정을 쓴다. 규칙을 두 곳에 두지 않는다
+      engine.captures.setRestricted(tile.id, restricted)
       const status = resolveRuntimeStatus(
         engine.captures.statusOf(tile.id),
         tabId,
         tab,
         summary.lastCaptureAt !== undefined,
+        restricted,
       )
       runtimeStates.push(buildRuntimeState(tile.id, tabId, tab, status, summary))
 
@@ -429,6 +437,9 @@ export function createDashboardHost(
     summaries.delete(tileId)
 
     engine.registerTile(tile, tabId)
+    //+_+// P6-D104. 첫 폴링을 기다리면 그 사이에 회차가 돈다. 탭을 이미 읽었으므로 여기서 정한다
+    //+_+// 기존 타일을 다른 탭에 다시 걸 때 launchUrl 은 낡았다. 탭의 현재 URL 만이 옳다
+    engine.captures.setRestricted(tile.id, isRestrictedUrl(tab.currentUrl))
     //+_+// P5-D29. ADD_TILE 과 같다. 타일이 늘거나 바뀌었으면 저장한다
     await persist()
     return { ok: true, type: 'BIND_TILE' }
@@ -469,6 +480,9 @@ export function createDashboardHost(
     bindings.set(tileId, tabId)
     summaries.delete(tileId)
     engine.registerTile(tile, tabId)
+    //+_+// P6-D104. tab 경로의 launchUrl 은 탭의 현재 URL 이고 url 경로의 그것은 사용자가 준 값이다
+    //+_+// 두 경로 모두 이 시점에 아는 가장 정확한 URL 이다
+    engine.captures.setRestricted(tileId, isRestrictedUrl(launchUrl))
     await persist()
     return { ok: true, type: 'ADD_TILE', tileId }
   }

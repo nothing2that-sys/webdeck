@@ -1380,3 +1380,96 @@ describe('P6-D51 - the record names the interval that scheduled the round', () =
     expect(manager.captureRecords[1]?.scheduleIntervalMs).toBe(2000)
   })
 })
+
+//+_+// P6-D104. L29 의 요지가 "영원히 붙을 수 없는 탭도 계속 재시도한다" 이다
+//+_+// 표시만 바꾸고 재시도를 그대로 두면 L29 가 닫히지 않는다. 회차 자체를 만들지 않는다
+describe('P6-D104 - a restricted tile makes no capture round', () => {
+  it('never attaches and never sends a command', async () => {
+    const { manager, backend } = build()
+    manager.register('a', 7, 2000)
+    manager.setRestricted('a', true)
+
+    manager.tick()
+    await flush()
+    manager.tick()
+    await flush()
+
+    expect(backend.attachCalls).toEqual([])
+    expect(backend.commands).toEqual([])
+    expect(manager.captureRecords).toHaveLength(0)
+  })
+
+  it('keeps retrying nothing as the clock runs on', async () => {
+    const { manager, backend, clock } = build()
+    manager.register('a', 7, 2000)
+    manager.setRestricted('a', true)
+
+    for (let round = 0; round < 20; round += 1) {
+      clock.advance(2000)
+      manager.tick()
+      await flush()
+    }
+
+    expect(backend.attachCalls).toEqual([])
+    expect(manager.captureRecords).toHaveLength(0)
+  })
+
+  //+_+// P5-D6. Refresh Preview 는 Pause 를 우회한다. 제한 URL 은 우회 대상이 아니다
+  it('refuses the immediate capture as well', async () => {
+    const { manager, backend } = build()
+    manager.register('a', 7, 2000)
+    manager.setRestricted('a', true)
+
+    await expect(manager.captureOnce('a')).resolves.toBeNull()
+    expect(backend.attachCalls).toEqual([])
+  })
+
+  //+_+// P5-D35. 스케줄에서 빠진 것이 아니다. 재연결 대상으로 잡히면 Open Missing Tabs 가 탭을 또 연다
+  it('stays scheduled so that reconnect does not treat it as missing', () => {
+    const { manager } = build()
+    manager.register('a', 7, 2000)
+    manager.setRestricted('a', true)
+    expect(manager.isScheduled('a')).toBe(true)
+  })
+
+  //+_+// B-e5. 제한이 풀리면 다시 돈다. 상태는 최신 탭 URL 이 정한다
+  it('runs again once the restriction is lifted', async () => {
+    const { manager, backend } = build()
+    manager.register('a', 7, 2000)
+    manager.setRestricted('a', true)
+    manager.tick()
+    await flush()
+    expect(backend.attachCalls).toEqual([])
+
+    manager.setRestricted('a', false)
+    manager.tick()
+    await flush()
+    expect(backend.attachCalls).toEqual([7])
+  })
+
+  //+_+// B-e5. 제한이 아닌 타일은 그대로 돈다
+  it('leaves the other tiles alone', async () => {
+    const { manager, backend } = build()
+    manager.register('a', 7, 2000)
+    manager.register('b', 8, 2000)
+    manager.setRestricted('a', true)
+
+    manager.tick()
+    await flush()
+
+    expect(backend.attachCalls).toEqual([8])
+  })
+
+  //+_+// 재등록이 제한을 지우지 않는다. fault 와 tabGone 을 승계하는 것과 같은 규칙이다
+  it('keeps the restriction across a re-register of the same tab', async () => {
+    const { manager, backend } = build()
+    manager.register('a', 7, 2000)
+    manager.setRestricted('a', true)
+    manager.register('a', 7, 4000)
+
+    manager.tick()
+    await flush()
+
+    expect(backend.attachCalls).toEqual([])
+  })
+})

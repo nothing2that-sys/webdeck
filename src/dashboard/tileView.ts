@@ -21,6 +21,9 @@ export interface TileViewModel {
   statusClassName: string
   previewDataUrl: string | null
   lastCaptureLabel: string
+  //+_+// P6-D2 (b). 타일 표시 규칙을 여기로 모은다. TileCard 는 값을 그리기만 한다
+  tabLabel: string
+  showsRecoveryActions: boolean
   //+_+// v1 section 15.6. CSS object-fit 값 그대로다. 크롭 로직을 직접 쓰지 않는다
   fitMode: TileFitMode
 }
@@ -105,6 +108,23 @@ export function statusClassName(status: TileStatus): string {
   return `tile-badge tile-badge--${status.toLowerCase()}`
 }
 
+//+_+// P6-D2 (b). 바인딩이 없으면 탭 번호 자리를 비운다. 0 이나 -1 을 지어내지 않는다
+export function tabLabel(tabId: number | null): string {
+  return tabId === null ? 'tab -' : `tab ${String(tabId)}`
+}
+
+//+_+// P6-D2 (b). v1 section 9.4 의 세 버튼이다. 붙을 탭이 없는 타일에서만 낸다
+export function showsRecoveryActions(status: TileStatus): boolean {
+  return status === 'DETACHED'
+}
+
+//+_+// P6-D2 (b). 빈 조각을 걸러 이어 붙인다. 클래스 조립 규칙을 컴포넌트에 두지 않는다
+export function tileClassName(selected: boolean, editing: boolean, dragClassName: string): string {
+  return ['tile', selected ? 'tile--selected' : '', editing ? 'tile--editing' : '', dragClassName]
+    .filter((part) => part.length > 0)
+    .join(' ')
+}
+
 //+_+// 프로젝트의 타일 목록이 기준이다. 워커가 보낸 런타임 상태와 프레임을 여기에 맞춘다
 export function buildTileViews(
   project: Project,
@@ -128,6 +148,8 @@ export function buildTileViews(
       statusClassName: statusClassName(status),
       previewDataUrl: previewDataUrl(frameById.get(tile.id)),
       lastCaptureLabel: formatCaptureTime(state?.lastCaptureAt),
+      tabLabel: tabLabel(state?.tabId ?? null),
+      showsRecoveryActions: showsRecoveryActions(status),
       fitMode: tile.fitMode,
     }
   })

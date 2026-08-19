@@ -38,8 +38,9 @@ describe('TASK-P3-01 item 01 - CAPTURE_TILE success payload', () => {
   })
 })
 
-describe('TASK-P3-01 item 02 - TileStatus after L19', () => {
-  //+_+// 값을 빠뜨리거나 더하면 컴파일이 깨진다. 8개를 타입에서 직접 끌어온다
+describe('TASK-P3-01 item 02 - TileStatus after L19 and P6-D3', () => {
+  //+_+// 값을 빠뜨리거나 더하면 컴파일이 깨진다. 9개를 타입에서 직접 끌어온다
+  //+_+// P6-D3. RESTRICTED 가 9번째다. v1 section 22 의 Restricted URL 이다
   const statuses: Record<TileStatus, true> = {
     LIVE: true,
     LOADING: true,
@@ -49,10 +50,16 @@ describe('TASK-P3-01 item 02 - TileStatus after L19', () => {
     DETACHED: true,
     DEVTOOLS: true,
     ERROR: true,
+    RESTRICTED: true,
   }
 
-  it('holds exactly eight statuses', () => {
-    expect(Object.keys(statuses)).toHaveLength(8)
+  it('holds exactly nine statuses', () => {
+    expect(Object.keys(statuses)).toHaveLength(9)
+  })
+
+  //+_+// P6-D3. v1 section 22 가 이름을 주지 않았다. L29 와 v1 section 22 가 쓰는 말이 Restricted URL 이다
+  it('adds RESTRICTED for v1 section 22', () => {
+    expect(Object.hasOwn(statuses, 'RESTRICTED')).toBe(true)
   })
 
   it('keeps all seven statuses that v1 section 7 line 523~529 listed', () => {

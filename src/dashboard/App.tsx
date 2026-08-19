@@ -36,6 +36,23 @@ import {
   pointerToCell,
 } from './layoutDrag'
 import type { DragMode, DragState, GridMetrics } from './layoutDrag'
+import {
+  NOTICE_BIND_TAB_REQUIRED,
+  NOTICE_INTERVAL_INVALID,
+  NOTICE_NONE,
+  NOTICE_PROJECT_NAME_REQUIRED,
+  NOTICE_RENAME_REQUIRED,
+  NOTICE_STALE_TABS,
+  NOTICE_TAB_REQUIRED,
+  NOTICE_URL_REQUIRED,
+  browserTabLabel,
+  dropNotice,
+  failureNotice,
+  openedTabsNotice,
+  tileSettingsLabel,
+  toggleClassName,
+  toggleLabel,
+} from './screenText'
 import { buildTileViews, gridArea, parseTileSettings, tileSettingsDraft } from './tileView'
 import type { TileSettingsDraft, TileViewModel } from './tileView'
 
@@ -45,10 +62,6 @@ const GRID_SLOTS = Array.from({ length: GRID_ROWS * GRID_COLUMNS }, (_unused, in
   const x = index % GRID_COLUMNS
   return { key: `slot-${String(index)}`, area: gridArea({ x, y, w: 1, h: 1 }) }
 })
-
-function tabLabel(tab: BrowserTabInfo): string {
-  return `${String(tab.tabId)} · ${tab.title.length === 0 ? tab.currentUrl : tab.title}`
-}
 
 function px(value: string): number {
   const parsed = Number.parseFloat(value)
@@ -93,7 +106,7 @@ export function App(): React.JSX.Element {
   const loadProjects = useCallback(async () => {
     const response = await listProjects()
     if (!response.ok) {
-      setNotice(`${response.errorCode}: ${response.message}`)
+      setNotice(failureNotice(response))
       return
     }
     if (response.type !== 'LIST_PROJECTS') {
@@ -120,7 +133,7 @@ export function App(): React.JSX.Element {
         await loadProjects()
         return
       }
-      setNotice(`${response.errorCode}: ${response.message}`)
+      setNotice(failureNotice(response))
       return
     }
     if (response.type !== 'GET_PROJECT_STATE') {
@@ -162,11 +175,11 @@ export function App(): React.JSX.Element {
     async (projectId: string) => {
       const response = await setActiveProject(projectId)
       if (!response.ok) {
-        setNotice(`${response.errorCode}: ${response.message}`)
+        setNotice(failureNotice(response))
         return
       }
       //+_+// 성공한 동작은 이전 안내를 지운다. loadProjects 보다 먼저다. 그쪽 오류를 덮지 않기 위해서다
-      setNotice('')
+      setNotice(NOTICE_NONE)
       setTiles([])
       setViews([])
       await loadProjects()
@@ -178,12 +191,12 @@ export function App(): React.JSX.Element {
   const addProject = useCallback(async () => {
     const name = projectName.trim()
     if (name.length === 0) {
-      setNotice('프로젝트 이름을 입력한다')
+      setNotice(NOTICE_PROJECT_NAME_REQUIRED)
       return
     }
     const response = await createProject(name)
     if (!response.ok) {
-      setNotice(`${response.errorCode}: ${response.message}`)
+      setNotice(failureNotice(response))
       return
     }
     if (response.type !== 'CREATE_PROJECT') {
@@ -196,16 +209,16 @@ export function App(): React.JSX.Element {
   const renameActiveProject = useCallback(async () => {
     const name = projectName.trim()
     if (activeProjectId === null || name.length === 0) {
-      setNotice('바꿀 이름을 입력한다')
+      setNotice(NOTICE_RENAME_REQUIRED)
       return
     }
     const response = await renameProject(activeProjectId, name)
     if (!response.ok) {
-      setNotice(`${response.errorCode}: ${response.message}`)
+      setNotice(failureNotice(response))
       return
     }
     setProjectName('')
-    setNotice('')
+    setNotice(NOTICE_NONE)
     await loadProjects()
   }, [activeProjectId, loadProjects, projectName])
 
@@ -216,10 +229,10 @@ export function App(): React.JSX.Element {
     }
     const response = await deleteProject(activeProjectId)
     if (!response.ok) {
-      setNotice(`${response.errorCode}: ${response.message}`)
+      setNotice(failureNotice(response))
       return
     }
-    setNotice('')
+    setNotice(NOTICE_NONE)
     setTiles([])
     setViews([])
     await loadProjects()
@@ -231,7 +244,7 @@ export function App(): React.JSX.Element {
   const loadTabs = useCallback(async (): Promise<boolean> => {
     const response = await listBrowserTabs()
     if (!response.ok) {
-      setNotice(`${response.errorCode}: ${response.message}`)
+      setNotice(failureNotice(response))
       return false
     }
     if (response.type !== 'LIST_BROWSER_TABS') {
@@ -247,7 +260,7 @@ export function App(): React.JSX.Element {
   //+_+// 탭 새로고침 버튼 전용이다. 사용자가 직접 부른 회차만 안내를 지운다
   const refreshTabs = useCallback(async () => {
     if (await loadTabs()) {
-      setNotice('')
+      setNotice(NOTICE_NONE)
     }
   }, [loadTabs])
 
@@ -259,12 +272,12 @@ export function App(): React.JSX.Element {
   const reportFailure = useCallback(
     async (response: DashboardResponse) => {
       if (isStaleTabFailure(response)) {
-        setNotice('탭 목록이 낡았다. 다시 읽었다')
+        setNotice(NOTICE_STALE_TABS)
         await loadTabs()
         return
       }
       if (!response.ok) {
-        setNotice(`${response.errorCode}: ${response.message}`)
+        setNotice(failureNotice(response))
       }
     },
     [loadTabs],
@@ -273,7 +286,7 @@ export function App(): React.JSX.Element {
   //+_+// v1 section 9.1 의 (a) 경로다. 기존 탭을 걸기만 한다. reload 도 창 이동도 하지 않는다
   const addTileFromTab = useCallback(async () => {
     if (selectedTabId === null) {
-      setNotice('탭 목록에서 탭을 고른다')
+      setNotice(NOTICE_TAB_REQUIRED)
       return
     }
     const response = await addTile({ kind: 'tab', tabId: selectedTabId })
@@ -281,7 +294,7 @@ export function App(): React.JSX.Element {
       await reportFailure(response)
       return
     }
-    setNotice('')
+    setNotice(NOTICE_NONE)
     await poll()
   }, [poll, reportFailure, selectedTabId])
 
@@ -293,7 +306,7 @@ export function App(): React.JSX.Element {
         await reportFailure(response)
         return
       }
-      setNotice('')
+      setNotice(NOTICE_NONE)
       await poll()
       await loadTabs()
     },
@@ -304,7 +317,7 @@ export function App(): React.JSX.Element {
   const bindExisting = useCallback(
     async (tileId: string) => {
       if (selectedTabId === null) {
-        setNotice('먼저 탭 목록에서 붙일 탭을 고른다')
+        setNotice(NOTICE_BIND_TAB_REQUIRED)
         return
       }
       const response = await bindTile(tileId, selectedTabId)
@@ -312,7 +325,7 @@ export function App(): React.JSX.Element {
         await reportFailure(response)
         return
       }
-      setNotice('')
+      setNotice(NOTICE_NONE)
       await poll()
     },
     [poll, reportFailure, selectedTabId],
@@ -329,7 +342,7 @@ export function App(): React.JSX.Element {
       await reportFailure(response)
       return
     }
-    setNotice('')
+    setNotice(NOTICE_NONE)
     await poll()
   }, [poll, reportFailure, selectedTileId])
 
@@ -343,7 +356,7 @@ export function App(): React.JSX.Element {
     if (response.type !== 'OPEN_MISSING_TABS') {
       return
     }
-    setNotice(`${String(response.openedTileIds.length)} tabs opened`)
+    setNotice(openedTabsNotice(response.openedTileIds.length))
     await poll()
     await loadTabs()
   }, [loadTabs, poll, reportFailure])
@@ -359,7 +372,7 @@ export function App(): React.JSX.Element {
         setSelectedTileId(null)
         setSettings(null)
       }
-      setNotice('')
+      setNotice(NOTICE_NONE)
       await poll()
     },
     [poll, reportFailure, selectedTileId],
@@ -369,16 +382,16 @@ export function App(): React.JSX.Element {
   const addTileFromUrl = useCallback(async () => {
     const url = tileUrl.trim()
     if (url.length === 0) {
-      setNotice('URL 을 입력한다')
+      setNotice(NOTICE_URL_REQUIRED)
       return
     }
     const response = await addTile({ kind: 'url', url })
     if (!response.ok) {
-      setNotice(`${response.errorCode}: ${response.message}`)
+      setNotice(failureNotice(response))
       return
     }
     setTileUrl('')
-    setNotice('')
+    setNotice(NOTICE_NONE)
     await poll()
     await loadTabs()
   }, [loadTabs, poll, tileUrl])
@@ -400,15 +413,15 @@ export function App(): React.JSX.Element {
     }
     const parsed = parseTileSettings(settings)
     if (parsed === null) {
-      setNotice('주기는 250 이상의 정수이거나 비어 있어야 한다')
+      setNotice(NOTICE_INTERVAL_INVALID)
       return
     }
     const response = await setTileSettings(selectedTileId, parsed)
     if (!response.ok) {
-      setNotice(`${response.errorCode}: ${response.message}`)
+      setNotice(failureNotice(response))
       return
     }
-    setNotice('')
+    setNotice(NOTICE_NONE)
     await poll()
   }, [poll, selectedTileId, settings])
 
@@ -416,10 +429,10 @@ export function App(): React.JSX.Element {
   const focus = useCallback(async (tileId: string) => {
     const response = await focusTile(tileId)
     if (!response.ok) {
-      setNotice(`${response.errorCode}: ${response.message}`)
+      setNotice(failureNotice(response))
       return
     }
-    setNotice('')
+    setNotice(NOTICE_NONE)
   }, [])
 
   const cellAt = useCallback((event: React.PointerEvent): GridPosition | null => {
@@ -464,15 +477,15 @@ export function App(): React.JSX.Element {
     const rect = dropRect(drag)
     setDrag(null)
     if (rect === null) {
-      setNotice(drag.valid ? '' : '그 자리에는 놓을 수 없다. 원래 자리로 되돌린다')
+      setNotice(dropNotice(drag.valid))
       return
     }
     const response = await setTileRect(drag.tileId, rect)
     if (!response.ok) {
-      setNotice(`${response.errorCode}: ${response.message}`)
+      setNotice(failureNotice(response))
       return
     }
-    setNotice('')
+    setNotice(NOTICE_NONE)
     await poll()
   }, [drag, poll])
 
@@ -491,10 +504,10 @@ export function App(): React.JSX.Element {
   const togglePaused = useCallback(async () => {
     const response = await setPreviewPaused(!paused)
     if (!response.ok) {
-      setNotice(`${response.errorCode}: ${response.message}`)
+      setNotice(failureNotice(response))
       return
     }
-    setNotice('')
+    setNotice(NOTICE_NONE)
     await poll()
   }, [paused, poll])
 
@@ -536,17 +549,17 @@ export function App(): React.JSX.Element {
         <span className="toolbar-spacer" />
         <button
           type="button"
-          className={editing ? 'toolbar-toggle toolbar-toggle--on' : 'toolbar-toggle'}
+          className={toggleClassName(editing)}
           onClick={toggleEditing}
         >
-          {editing ? 'Edit Layout · on' : 'Edit Layout'}
+          {toggleLabel('Edit Layout', editing)}
         </button>
         <button
           type="button"
-          className={paused ? 'toolbar-toggle toolbar-toggle--on' : 'toolbar-toggle'}
+          className={toggleClassName(paused)}
           onClick={() => void togglePaused()}
         >
-          {paused ? 'Pause Preview · on' : 'Pause Preview'}
+          {toggleLabel('Pause Preview', paused)}
         </button>
         <select
           className="toolbar-select"
@@ -558,7 +571,7 @@ export function App(): React.JSX.Element {
           <option value="">탭을 고른다</option>
           {tabs.map((tab) => (
             <option key={tab.tabId} value={String(tab.tabId)}>
-              {tabLabel(tab)}
+              {browserTabLabel(tab)}
             </option>
           ))}
         </select>
@@ -586,7 +599,7 @@ export function App(): React.JSX.Element {
 
       <section className="settingsbar">
         <span className="settingsbar-label">
-          {settings === null ? '타일을 고르면 설정이 열린다' : 'Tile'}
+          {tileSettingsLabel(settings !== null)}
         </span>
         <input
           className="toolbar-input"

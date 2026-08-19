@@ -1,4 +1,5 @@
 import type { DragMode } from './layoutDrag'
+import { tileClassName } from './tileView'
 import type { TileViewModel } from './tileView'
 
 export interface TileCardProps {
@@ -41,9 +42,8 @@ export function TileCard({
   onBindExisting,
   onRemove,
 }: TileCardProps): React.JSX.Element {
-  const className = ['tile', selected ? 'tile--selected' : '', editing ? 'tile--editing' : '', dragClassName]
-    .filter((part) => part.length > 0)
-    .join(' ')
+  //+_+// P6-D2 (b). 조립 규칙은 tileView 에 있다. 여기서는 부르기만 한다
+  const className = tileClassName(selected, editing, dragClassName)
 
   return (
     <article
@@ -92,7 +92,7 @@ export function TileCard({
         )}
       </div>
 
-      {view.status === 'DETACHED' ? (
+      {view.showsRecoveryActions ? (
         <div className="tile-detached">
           <button type="button" disabled={editing} onClick={onReopen}>
             Reopen
@@ -108,7 +108,7 @@ export function TileCard({
 
       <footer className="tile-foot">
         <span>{view.lastCaptureLabel}</span>
-        <span>{view.tabId === null ? 'tab -' : `tab ${String(view.tabId)}`}</span>
+        <span>{view.tabLabel}</span>
       </footer>
 
       {editing ? <span className="tile-resize" data-resize="" /> : null}

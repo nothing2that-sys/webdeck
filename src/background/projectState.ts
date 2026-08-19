@@ -177,6 +177,8 @@ export function applyCaptureRecord(
   }
 }
 
+//+_+// P6-D3. RESTRICTED 는 resolveTileStatus 의 우선순위 목록에 넣지 않는다. 그쪽은 fault 와 신선도만 겨룬다
+//+_+// 캡처 엔진은 URL 을 모르므로 RESTRICTED 를 만들 수 없다. 판정은 이 층에서 한 번만 한다
 //+_+// 캡처 엔진이 아는 타일은 엔진의 판정을 그대로 쓴다. 우선순위는 resolveTileStatus 가 이미 정했다
 //+_+// FROZEN / DISCARDED 는 v1 section 11 의 탭 상태이고 Phase 4 에 구현이 없다
 //+_+// DEVTOOLS 는 L25 로 도달 불가다. 배지는 만들지만 여기서 만들어 내지 않는다
@@ -188,7 +190,13 @@ export function resolveRuntimeStatus(
   tabId: number | undefined,
   tab: BrowserTabInfo | null,
   hasCapture: boolean,
+  restricted: boolean,
 ): TileStatus {
+  //+_+// P6-D3. v1 section 22 다. 다른 어떤 사유보다 앞선다
+  //+_+// 붙을 수 없다는 사실이 캡처 실패의 결과(ERROR)나 첫 프레임 전(LOADING)보다 먼저 참이다
+  if (restricted) {
+    return 'RESTRICTED'
+  }
   if (captureStatus === 'LIVE' && !hasCapture) {
     return 'LOADING'
   }

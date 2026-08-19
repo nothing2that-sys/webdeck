@@ -165,40 +165,40 @@ describe('P4-D9 - the capture summary carries the round duration', () => {
 
 describe('P4 runtime status - the capture engine decides first', () => {
   it('takes the capture engine status when the engine knows the tile', () => {
-    expect(resolveRuntimeStatus('STALE', 11, tabInfo(11), true)).toBe('STALE')
-    expect(resolveRuntimeStatus('ERROR', 11, null, true)).toBe('ERROR')
+    expect(resolveRuntimeStatus('STALE', 11, tabInfo(11), true, false)).toBe('STALE')
+    expect(resolveRuntimeStatus('ERROR', 11, null, true, false)).toBe('ERROR')
   })
 
   //+_+// P5-D38. v1 section 10 의 5단계다. 후보가 없으면 타일은 DETACHED 다
   //+_+// Phase 4 에는 미바인딩 타일이 존재할 수 없어 이 시험이 LOADING 을 고정하고 있었다
   //+_+// S1 이 저장을 붙이면서 저장값에서 올라온 미바인딩 타일이 처음 생겼다
   it('reports DETACHED for a tile that is not bound', () => {
-    expect(resolveRuntimeStatus(null, undefined, null, false)).toBe('DETACHED')
+    expect(resolveRuntimeStatus(null, undefined, null, false, false)).toBe('DETACHED')
   })
 
   //+_+// LOADING 은 두 경로로 남는다. 엔진이 등록했으나 첫 프레임 전, 그리고 탭은 살아 있으나 미등록
   it('still reports LOADING before the first frame of a registered tile', () => {
-    expect(resolveRuntimeStatus('LIVE', 11, tabInfo(11), false)).toBe('LOADING')
+    expect(resolveRuntimeStatus('LIVE', 11, tabInfo(11), false, false)).toBe('LOADING')
   })
 
   it('reports DETACHED for a bound tile whose tab is gone', () => {
-    expect(resolveRuntimeStatus(null, 11, null, false)).toBe('DETACHED')
+    expect(resolveRuntimeStatus(null, 11, null, false, false)).toBe('DETACHED')
   })
 
   it('reports LOADING while the tab exists but no round has settled', () => {
-    expect(resolveRuntimeStatus(null, 11, tabInfo(11), false)).toBe('LOADING')
+    expect(resolveRuntimeStatus(null, 11, tabInfo(11), false, false)).toBe('LOADING')
   })
 
   it('does not report LIVE before the first frame has arrived', () => {
-    expect(resolveRuntimeStatus('LIVE', 11, tabInfo(11), false)).toBe('LOADING')
+    expect(resolveRuntimeStatus('LIVE', 11, tabInfo(11), false, false)).toBe('LOADING')
   })
 
   it('reports LIVE once a frame has arrived', () => {
-    expect(resolveRuntimeStatus('LIVE', 11, tabInfo(11), true)).toBe('LIVE')
+    expect(resolveRuntimeStatus('LIVE', 11, tabInfo(11), true, false)).toBe('LIVE')
   })
 
   it('keeps STALE even when no frame has ever arrived', () => {
-    expect(resolveRuntimeStatus('STALE', 11, tabInfo(11), false)).toBe('STALE')
+    expect(resolveRuntimeStatus('STALE', 11, tabInfo(11), false, false)).toBe('STALE')
   })
 })
 

@@ -2677,3 +2677,82 @@ describe('P6-D56 - the reconnect verdicts are readable after the fact', () => {
     expect(value.diagnostics).toBeNull()
   })
 })
+
+//+_+// P6-D3 · D104. v1 section 22 의 Restricted URL 이 제품 경로에서 어떻게 보이고 어떻게 도는가
+//+_+// L29 를 닫는 자리다. 표시와 재시도 중단이 같은 판정을 쓴다
+describe('P6-D3 - a restricted url tile', () => {
+  async function boundToChromePage() {
+    const value = fixture([11])
+    value.tabsBackend.tabs.set(11, tabInfo(11, 'chrome://extensions'))
+    const bound = await value.host.handle({ type: 'BIND_TILE', tileId: 'restricted', tabId: 11 })
+    expect(bound.ok).toBe(true)
+    return value
+  }
+
+  //+_+// B-e1
+  it('reports RESTRICTED', async () => {
+    const { host } = await boundToChromePage()
+    const state = await projectState(host)
+    expect(state.runtimeStates[0]?.status).toBe('RESTRICTED')
+  })
+
+  //+_+// B-e2. L29 의 "영원히 붙을 수 없는 탭도 계속 재시도한다" 가 끝나는 자리다
+  it('never attaches even after many ticks', async () => {
+    const { host, debuggerBackend, clock } = await boundToChromePage()
+    for (let round = 0; round < 20; round += 1) {
+      clock.current += 4000
+      driveTick(host)
+      await Promise.resolve()
+    }
+    expect(debuggerBackend.attached).toEqual([])
+  })
+
+  //+_+// 재시도를 멈춰도 재연결 대상이 되지는 않는다. 그러면 Open Missing Tabs 가 탭을 또 연다
+  it('is not treated as a tile that lost its tab', async () => {
+    const { host } = await boundToChromePage()
+    const opened = await host.handle({ type: 'OPEN_MISSING_TABS' })
+    if (!opened.ok || opened.type !== 'OPEN_MISSING_TABS') {
+      throw new Error('unexpected response')
+    }
+    expect(opened.openedTileIds).toEqual([])
+  })
+
+  //+_+// P5-D6. Refresh Preview 도 회차를 만들지 않는다
+  it('refuses Refresh Preview', async () => {
+    const { host, debuggerBackend } = await boundToChromePage()
+    const captured = await host.handle({ type: 'CAPTURE_TILE', tileId: 'restricted' })
+    expect(captured.ok).toBe(false)
+    expect(debuggerBackend.attached).toEqual([])
+  })
+
+  //+_+// B-e5. 같은 배선에서 제한이 아닌 타일은 그대로 돈다
+  it('leaves an ordinary tile capturing', async () => {
+    const value = await boundToChromePage()
+    value.tabsBackend.tabs.set(12, tabInfo(12, 'https://example.com/12'))
+    await value.host.handle({ type: 'BIND_TILE', tileId: 'ordinary', tabId: 12 })
+    await projectState(value.host)
+
+    value.clock.current += 4000
+    driveTick(value.host)
+    await Promise.resolve()
+
+    expect(value.debuggerBackend.attached).toEqual([12])
+  })
+
+  //+_+// 사용자가 타일 탭을 chrome:// 로 옮기면 다음 폴링이 그것을 집는다
+  it('picks up a tab that navigates into a restricted url', async () => {
+    const value = fixture([11])
+    await value.host.handle({ type: 'BIND_TILE', tileId: 'drifting', tabId: 11 })
+    expect((await projectState(value.host)).runtimeStates[0]?.status).not.toBe('RESTRICTED')
+
+    value.tabsBackend.tabs.set(11, tabInfo(11, 'chrome://version'))
+    const after = await projectState(value.host)
+    expect(after.runtimeStates[0]?.status).toBe('RESTRICTED')
+
+    value.debuggerBackend.attached.length = 0
+    value.clock.current += 4000
+    driveTick(value.host)
+    await Promise.resolve()
+    expect(value.debuggerBackend.attached).toEqual([])
+  })
+})

@@ -5,7 +5,10 @@ import {
   gridArea,
   parseTileSettings,
   previewDataUrl,
+  showsRecoveryActions,
   statusClassName,
+  tabLabel,
+  tileClassName,
   tileSettingsDraft,
 } from '../src/dashboard/tileView'
 import type { TileFrame } from '../src/shared/messages'
@@ -20,6 +23,8 @@ const ALL_STATUSES: readonly TileStatus[] = [
   'DETACHED',
   'DEVTOOLS',
   'ERROR',
+  //+_+// P6-D3. 9번째다. v1 section 22 의 Restricted URL 이다
+  'RESTRICTED',
 ]
 
 function tile(id: string, x: number, y: number, w = 1, h = 1): WebTile {
@@ -110,10 +115,10 @@ describe('v1 7 - the last preview time', () => {
   })
 })
 
-describe('P3-D-L19 - every one of the eight statuses has a badge class', () => {
-  it('produces a distinct class for all eight statuses', () => {
+describe('P3-D-L19 · P6-D3 - every one of the nine statuses has a badge class', () => {
+  it('produces a distinct class for all nine statuses', () => {
     const classes = ALL_STATUSES.map(statusClassName)
-    expect(new Set(classes).size).toBe(8)
+    expect(new Set(classes).size).toBe(9)
   })
 
   it('keeps the shared badge class and adds a lowercase modifier', () => {
@@ -121,8 +126,12 @@ describe('P3-D-L19 - every one of the eight statuses has a badge class', () => {
     expect(statusClassName('DEVTOOLS')).toBe('tile-badge tile-badge--devtools')
   })
 
-  it('names no status outside the eight', () => {
-    expect(ALL_STATUSES).toHaveLength(8)
+  it('names no status outside the nine', () => {
+    expect(ALL_STATUSES).toHaveLength(9)
+  })
+
+  it('gives RESTRICTED its own badge class', () => {
+    expect(statusClassName('RESTRICTED')).toBe('tile-badge tile-badge--restricted')
   })
 })
 
@@ -307,5 +316,46 @@ describe('v1 15.6 - fitMode reaches the view model', () => {
     const covered = { ...tile('t1', 0, 0), fitMode: 'cover' as const }
     const views = buildTileViews(project([covered]), [], [])
     expect(views[0].fitMode).toBe('cover')
+  })
+})
+
+//+_+// P6-D2 (b). TileCard 안에서만 성립하던 규칙이다. 여기로 옮겨 node 에서 고정한다. L43
+describe('P6-D2 - the tile display rules live in tileView', () => {
+  it('leaves the tab number blank when nothing is bound', () => {
+    expect(tabLabel(null)).toBe('tab -')
+  })
+
+  it('names the bound tab', () => {
+    expect(tabLabel(11)).toBe('tab 11')
+  })
+
+  //+_+// v1 section 9.4 의 세 버튼이다. 붙을 탭이 없는 타일에서만 낸다
+  it('offers the recovery buttons only for DETACHED', () => {
+    expect(showsRecoveryActions('DETACHED')).toBe(true)
+    for (const status of ALL_STATUSES.filter((item) => item !== 'DETACHED')) {
+      expect(showsRecoveryActions(status)).toBe(false)
+    }
+  })
+
+  it('drops the empty parts when it joins the tile classes', () => {
+    expect(tileClassName(false, false, '')).toBe('tile')
+  })
+
+  it('keeps the order selected, editing, drag', () => {
+    expect(tileClassName(true, true, 'tile--dragging')).toBe(
+      'tile tile--selected tile--editing tile--dragging',
+    )
+  })
+
+  it('carries both rules into the view model', () => {
+    const views = buildTileViews(project([tile('t1', 0, 0)]), [runtime('t1', 'DETACHED', { tabId: 11 })], [])
+    expect(views[0]?.tabLabel).toBe('tab 11')
+    expect(views[0]?.showsRecoveryActions).toBe(true)
+  })
+
+  it('reports no bound tab for a tile the worker sent no state for', () => {
+    const views = buildTileViews(project([tile('t1', 0, 0)]), [], [])
+    expect(views[0]?.tabLabel).toBe('tab -')
+    expect(views[0]?.showsRecoveryActions).toBe(false)
   })
 })

@@ -1,6 +1,8 @@
-//+_+// v1 section 7 line 523~529 의 7개에 DEVTOOLS 하나만 더한 8개다
+//+_+// v1 section 7 line 523~529 의 7개에 DEVTOOLS 하나만 더한 8개였다
 //+_+// v1 section 12 line 826 이 DevTools 충돌을 ERROR 로 만들지 말라고 요구한다. L19 해소
-//+_+// CAPTURE PAUSED 는 더하지 않는다. Preview Pause 는 WEBDECK_PLAN section 8 이 Phase 6 에 배정했다
+//+_+// P6-D3. RESTRICTED 가 9번째다. v1 section 22 의 Restricted URL 이며 L29 를 닫는다
+//+_+// P6-D102. 이름은 v1 section 22 와 L29 가 쓰는 말 그대로다. 줄임말을 새로 만들지 않는다
+//+_+// CAPTURE PAUSED 는 더하지 않는다. 전체 Pause 는 상태가 아니라 억제 플래그다 (P6-D6a · D46)
 export type TileStatus =
   | 'LIVE'
   | 'LOADING'
@@ -10,6 +12,7 @@ export type TileStatus =
   | 'DETACHED'
   | 'DEVTOOLS'
   | 'ERROR'
+  | 'RESTRICTED'
 
 export type TileMatchMode = 'exact' | 'origin' | 'prefix'
 

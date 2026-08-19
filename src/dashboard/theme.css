@@ -15,6 +15,7 @@
   --status-detached: #a05a2c;
   --status-devtools: #8155c4;
   --status-error: #b3453f;
+  --status-restricted: #7a7f88;
   --select-ring: #4a7cc4;
   --drop-valid: #2f9e5e;
   --drop-invalid: #b3453f;
@@ -241,6 +242,10 @@ body {
 
 .tile-badge--error {
   background: var(--status-error);
+}
+
+.tile-badge--restricted {
+  background: var(--status-restricted);
 }
 
 .tile-preview {

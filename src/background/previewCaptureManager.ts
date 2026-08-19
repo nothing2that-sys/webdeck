@@ -120,6 +120,9 @@ interface TileState {
   //+_+// P5-D20. 탭이 닫혔다는 사실이다. fault 와 나누는 이유는 디버거 detach 가 탭 소멸이 아니어서다
   //+_+// detach 는 다음 회차가 다시 붙어야 하고 탭 소멸은 붙을 곳이 없다
   tabGone: boolean
+  //+_+// P6-D104. v1 section 22 의 Restricted URL 이다. tabGone 과 같은 성질이며 사유가 다르다
+  //+_+// 탭은 살아 있으나 영원히 붙을 수 없다. 등록은 유지하고 회차만 만들지 않는다. L29
+  restricted: boolean
 }
 
 interface InFlightAttempt {
@@ -314,7 +317,19 @@ export class PreviewCaptureManager {
       holdsLease: kept?.holdsLease ?? false,
       fault: kept?.fault ?? null,
       tabGone: kept?.tabGone ?? false,
+      //+_+// 재등록이 제한을 지우지 않는다. 같은 탭이면 승계한다. fault 와 같은 규칙이다
+      restricted: kept?.restricted ?? false,
     })
+  }
+
+  //+_+// P6-D104. 판정은 여기서 하지 않는다. 최신 탭 URL 을 아는 serviceWorker 가 알려 준다
+  //+_+// 모르는 타일은 조용히 지나간다. 등록 전에 오는 호출이 예외를 만들지 않게 한다
+  setRestricted(tileId: string, restricted: boolean): void {
+    const state = this.tiles.get(tileId)
+    if (state === undefined) {
+      return
+    }
+    state.restricted = restricted
   }
 
   async unregister(tileId: string): Promise<void> {
@@ -367,7 +382,8 @@ export class PreviewCaptureManager {
   //+_+// 같은 탭에 회차가 이미 떠 있으면 canEnqueue 가 막고 그 회차의 결과가 이 약속을 깨운다
   captureOnce(tileId: string): Promise<CapturedFrame | null> {
     const state = this.tiles.get(tileId)
-    if (state === undefined || state.tabGone) {
+    //+_+// P6-D104. Refresh Preview 는 Pause 를 우회하지만 제한 URL 은 우회 대상이 아니다
+    if (state === undefined || state.tabGone || state.restricted) {
       return Promise.resolve(null)
     }
 
@@ -427,7 +443,8 @@ export class PreviewCaptureManager {
     const now = this.clock.now()
     //+_+// P5-D20. 탭이 사라진 타일은 만기가 와도 큐에 넣지 않는다. 붙일 탭이 없다
     //+_+// 디버거 detach 는 여기에 해당하지 않는다. 탭은 살아 있고 다음 회차가 다시 붙는다
-    const alive = [...this.tiles.values()].filter((state) => !state.tabGone)
+    //+_+// P6-D104. 제한 URL 타일도 넣지 않는다. 붙어도 실패할 것을 주기마다 되풀이하지 않는다. L29
+    const alive = [...this.tiles.values()].filter((state) => !state.tabGone && !state.restricted)
     const due = selectDueTiles(alive, now)
     const running = [...this.slots.entries()].map(([tileId, tabId]) => ({ tileId, tabId }))
     for (const tile of due) {
