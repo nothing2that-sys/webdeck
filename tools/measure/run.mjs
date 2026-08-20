@@ -14,6 +14,8 @@ const SCENARIOS = {
   'tile-load': () => import('./scenarios/tile-load.mjs'),
   //+_+// P6-D71. L9 다. attach 한 탭과 붙지 않은 탭의 배경 tick 속도를 나란히 잰다
   'tick-throttle': () => import('./scenarios/tick-throttle.mjs'),
+  //+_+// L49. 같은 탭에 건 타일 둘이 워커 재기동 뒤 어떻게 되는가. --only same | control
+  'same-tab-tiles': () => import('./scenarios/same-tab-tiles.mjs'),
 }
 
 function parseArgs(argv) {
@@ -89,6 +91,12 @@ async function main() {
     skipP2: args.flags.skipP2 !== undefined,
     //+_+// P6-D79. Pause Preview 를 켠 채로 구간에 든다. attach 는 남고 캡처만 사라진다
     pause: args.flags.pause !== undefined,
+    //+_+// L49. same-tab-tiles 의 조건 선택이다. 다른 시나리오는 읽지 않는다
+    only: args.flags.only ?? null,
+    //+_+// L49. ra-repro 의 워커 사망 경로를 그대로 쓴다. 0타일 프로젝트로 전환해 attach 를 푼다
+    emptyActive: args.flags.emptyActive !== undefined,
+    //+_+// P7-D47. 공유 탭을 닫아 워커를 죽인다. 활성 프로젝트가 유지되는 경로다
+    closeTab: args.flags.closeTab !== undefined,
   }
 
   //+_+// 회차마다 새 프로필이다. 앞 회차의 상태가 다음 회차의 관측에 섞이지 않게 한다

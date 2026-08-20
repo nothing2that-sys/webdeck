@@ -386,3 +386,130 @@ export async function readDebuggerTargets(page, tabIds) {
     }
   }, tabIds)
 }
+
+//+_+// L49. 같은 탭에 타일 둘을 걸려면 ADD_TILE {kind:'tab'} 경로가 필요하다
+//+_+// addTileFromUrl 은 호출마다 워커가 탭을 새로 만들므로 같은 탭이 되지 않는다
+//+_+// UI 문구 근거는 App.tsx 의 '탭 새로고침' / 'Add Tab' 이다
+export async function refreshBrowserTabs(page) {
+  await clickButton(page, TOOLBAR, '탭 새로고침')
+}
+
+//+_+// 탭 목록 select 는 툴바의 두 번째다. 첫 번째는 프로젝트 목록이다 (switchProject 가 쓴다)
+export async function readBrowserTabs(page) {
+  return readSelectOptions(page, selectIn(TOOLBAR, 2))
+}
+
+//+_+// 이미 열려 있는 탭에 타일을 하나 더 건다. 탭을 만들지 않는다
+//+_+// 중복 탭 검사는 제품에 없다 (serviceWorker.addTile). 그래서 이 조작이 성립한다
+export async function addTileFromTab(page, tabId) {
+  const before = await countTiles(page)
+  await refreshBrowserTabs(page)
+  await page.waitForFunction(
+    (selector, value) => {
+      const element = document.querySelector(selector)
+      return element !== null && Array.from(element.options).some((o) => o.value === value)
+    },
+    { timeout: 15000 },
+    selectIn(TOOLBAR, 2),
+    String(tabId),
+  )
+  await page.select(selectIn(TOOLBAR, 2), String(tabId))
+  await clickButton(page, TOOLBAR, 'Add Tab')
+  await page.waitForFunction(
+    (expected) => document.querySelectorAll('article.tile').length >= expected,
+    { timeout: 20000 },
+    before + 1,
+  )
+  return { tabId, tilesBefore: before, tilesAfter: await countTiles(page) }
+}
+
+//+_+// T1. 저장된 타일 수다. 화면 타일 수와 다른 축이다
+//+_+// dumpStorage().state 가 PersistedState 다 (src/shared/storage.ts). 판정하지 않고 센다
+export function countStoredTiles(state) {
+  const projects = Array.isArray(state?.projects) ? state.projects : null
+  if (projects === null) {
+    return { total: null, byProject: null, reason: 'state.projects is not an array' }
+  }
+  const byProject = {}
+  let total = 0
+  for (const project of projects) {
+    const tiles = Array.isArray(project?.tiles) ? project.tiles : []
+    const key = typeof project?.id === 'string' ? project.id.slice(0, 8) : '?'
+    byProject[key] = { name: project?.name ?? null, tiles: tiles.length }
+    total += tiles.length
+  }
+  return { total, byProject, activeProjectId: state?.activeProjectId ?? null }
+}
+
+//+_+// T3 의 입력이다. readTiles 의 tabLabel 은 tileView.tabLabel 이 만든 'tab N' 또는 'tab -' 이다
+//+_+// 판정하지 않는다. 파싱해서 그대로 낸다
+export function tileTabIds(tiles) {
+  return tiles.map((tile, index) => {
+    const match = /^tab (\d+)$/.exec(tile.tabLabel ?? '')
+    return { index, title: tile.title, status: tile.status, tabId: match === null ? null : Number(match[1]) }
+  })
+}
+
+//+_+// Diagnostics 바가 화면에 내는 값 그대로다. 사람이 읽는 숫자와 같은 축을 잰다
+//+_+// '등록 타일' 은 registeredTiles 이고 저장된 타일 수와 다른 축이다 (countStoredTiles 를 함께 본다)
+//+_+// 'attach' 는 attachedTabs 다. 요청 이름은 src/shared/messages.ts 의 GET_DIAGNOSTICS 다
+export async function readDiagnostics(page) {
+  return page.evaluate(async () => {
+    const response = await chrome.runtime.sendMessage({ type: 'GET_DIAGNOSTICS' })
+    return response?.ok === true ? response.diagnostics : { error: response ?? null }
+  })
+}
+
+//+_+// 워커의 reconnect() 는 projects 를 돌고 그 안의 tiles 를 돌아 owners 를 만든다
+//+_+// 전역 taken 이 그 순서로 탭을 배정하므로 배열 순서가 승자를 정한다
+//+_+// 저장된 순서를 평평하게 펴서 그대로 낸다. 판정하지 않는다
+export function tileOrder(state) {
+  const projects = Array.isArray(state?.projects) ? state.projects : null
+  if (projects === null) {
+    return { order: null, reason: 'state.projects is not an array' }
+  }
+  const order = []
+  for (const [projectIndex, project] of projects.entries()) {
+    const tiles = Array.isArray(project?.tiles) ? project.tiles : []
+    for (const [tileIndex, tile] of tiles.entries()) {
+      order.push({
+        seq: order.length,
+        projectIndex,
+        projectId: typeof project?.id === 'string' ? project.id.slice(0, 8) : null,
+        projectName: project?.name ?? null,
+        active: project?.id === state?.activeProjectId,
+        tileIndex,
+        tileId: typeof tile?.id === 'string' ? tile.id.slice(0, 8) : null,
+        launchUrl: tile?.launchUrl ?? null,
+        matchMode: tile?.matchMode ?? null,
+      })
+    }
+  }
+  return { order, activeProjectId: state?.activeProjectId ?? null }
+}
+
+//+_+// P7-D47. 공유 탭을 닫아 리스를 푼다. 프로젝트 전환을 쓰지 않으므로 활성 프로젝트가 유지된다
+//+_+// 0타일 전환 경로는 활성 프로젝트를 비우고 그래서 활성 우선 배정을 가르지 못한다
+//+_+// 닫은 탭의 URL 을 함께 낸다. 같은 URL 로 다시 열어야 재연결 후보가 생긴다
+export async function closeTabs(page, tabIds) {
+  return page.evaluate(async (ids) => {
+    const all = await chrome.tabs.query({})
+    const closing = all
+      .filter((tab) => ids.includes(tab.id ?? -1))
+      .map((tab) => ({ tabId: tab.id ?? null, url: tab.url ?? '' }))
+    const removable = closing.map((tab) => tab.tabId).filter((id) => typeof id === 'number')
+    await chrome.tabs.remove(removable)
+    return { closed: closing, tabsBefore: all.length, tabsAfter: (await chrome.tabs.query({})).length }
+  }, tabIds)
+}
+
+//+_+// P7-D47. 다시 연 탭은 번호가 바뀐다. 픽스처 URL 로 새 번호를 찾는다
+//+_+// 판정하지 않는다. chrome.tabs.query 의 값을 그대로 낸다
+export async function findTabsByUrl(page, urls) {
+  return page.evaluate(async (wanted) => {
+    const all = await chrome.tabs.query({})
+    return all
+      .filter((tab) => wanted.includes(tab.url ?? ''))
+      .map((tab) => ({ tabId: tab.id ?? null, url: tab.url ?? '', active: tab.active ?? null }))
+  }, urls)
+}

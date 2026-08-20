@@ -531,7 +531,14 @@ export function createDashboardHost(
         owners.set(tile.id, { tile, projectId: project.id })
       }
     }
-    const targets = [...owners.values()].map(({ tile }) => ({
+    //+_+// P7-D41. 활성 프로젝트 타일을 앞에 둔다. taken 이 배열 순서로 탭을 주므로 순서가 승자를 정한다
+    //+_+// 앞에 두지 않으면 비활성 타일이 탭을 가져가고 bindOnly 라 활성 프로젝트가 통째로 굶는다 (L49)
+    //+_+// 정렬이 아니라 분할이다. 두 그룹 안의 저장 순서가 그대로 남아야 결정성이 유지된다 (P5-D36)
+    const owned = [...owners.values()]
+    const targets = [
+      ...owned.filter((entry) => entry.projectId === activeProjectId),
+      ...owned.filter((entry) => entry.projectId !== activeProjectId),
+    ].map(({ tile }) => ({
       tile,
       boundTabId: liveBoundTabId(tile.id),
     }))

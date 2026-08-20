@@ -110,6 +110,18 @@ export async function launchMeasured({ extensionPath, userDataDir, windowSize = 
         .targets()
         .filter((target) => target.type() === 'service_worker')
         .map((target) => target.url()),
+    //+_+// P7-D47. 타일 탭을 다시 여는 자리다. 브라우저 수준 CDP 로 만들고 세션을 잡지 않는다
+    //+_+// targetFilter 가 확장 페이지 밖을 거르므로 Puppeteer 는 이 탭에 붙지 않는다
+    //+_+// openBlankPage 로 열면 about:blank 에 세션이 붙은 뒤 goto 로 남아 제품의 attach 와 겨룬다
+    async openBareTab(url) {
+      const cdp = await browser.target().createCDPSession()
+      try {
+        const created = await cdp.send('Target.createTarget', { url })
+        return { targetId: created.targetId, url }
+      } finally {
+        await cdp.detach().catch(() => undefined)
+      }
+    },
     //+_+// 새 페이지는 about:blank 로 태어난다. 그 창 안에서만 blank 를 받아들인다
     async openBlankPage() {
       state.acceptBlank = true

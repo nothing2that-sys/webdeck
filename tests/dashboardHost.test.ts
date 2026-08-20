@@ -2469,6 +2469,110 @@ describe('P6-D53 - the worker reconnects the tiles of every stored project', () 
   })
 })
 
+//+_+// P7-D41. L49 의 처분이다. reconnect 이 targets 를 만들 때 활성 프로젝트 타일을 앞에 둔다
+//+_+// 전역 taken 이 배열 순서로 탭을 주므로 순서가 승자를 정한다 (P5-D36)
+//+_+// 앞에 두지 않으면 비활성 타일이 탭을 가져가고 bindOnly 라 활성 프로젝트가 통째로 굶는다
+describe('P7-D41 - reconnect gives the shared tab to the active project first', () => {
+  const LATER_PROJECT_ID = 'project-later'
+
+  function tile(id: string, launchUrl: string, x = 0): WebTile {
+    return {
+      id,
+      launchUrl,
+      matchMode: 'exact',
+      x,
+      y: 0,
+      w: 1,
+      h: 1,
+      refreshIntervalMs: CAPTURE_INTERVAL_MS.spanSmall,
+      fitMode: 'contain',
+      keepAlive: false,
+    }
+  }
+
+  //+_+// 비활성 프로젝트는 GET_PROJECT_STATE 가 거부한다. 판정은 reconnect 로그로 읽는다
+  function rowsOf(value: Fixture) {
+    return readReconnectRows(value.diagnostics?.store.get(RECONNECT_LOG_KEY))
+  }
+
+  //+_+// 활성 프로젝트를 배열 뒤에 둔다. 저장 순서만 보면 앞 프로젝트가 이기는 배치다
+  function activeStoredLast(firstTiles: WebTile[], laterTiles: WebTile[]): StubStorage {
+    const storage = new StubStorage()
+    storage.store.set(STORAGE_KEY, {
+      schemaVersion: 2,
+      activeProjectId: LATER_PROJECT_ID,
+      projects: [
+        {
+          id: DEFAULT_PROJECT_ID,
+          name: 'WebDeck',
+          gridColumns: 4,
+          gridRows: 4,
+          keepManagedTabsAlive: false,
+          tiles: firstTiles,
+        },
+        {
+          id: LATER_PROJECT_ID,
+          name: 'Later',
+          gridColumns: 4,
+          gridRows: 4,
+          keepManagedTabsAlive: false,
+          tiles: laterTiles,
+        },
+      ],
+    })
+    return storage
+  }
+
+  //+_+// L49 의 핵심이다. 저장 배열 뒤에 있어도 활성 타일이 탭을 받는다
+  it('binds the active tile even when its project is stored after the other one', async () => {
+    const value = fixture(
+      [11],
+      activeStoredLast([tile('stored-first', 'https://example.com/11')], [tile('active-tile', 'https://example.com/11')]),
+      new StubStorage(),
+    )
+    await value.host.load()
+
+    const active = await projectStateOf(value.host, LATER_PROJECT_ID)
+    expect(active.runtimeStates[0]).toMatchObject({ tileId: 'active-tile', tabId: 11 })
+    expect(rowsOf(value)).toEqual([
+      expect.objectContaining({ tileId: 'active-tile', kind: 'bind', candidates: 1, active: true }),
+      expect.objectContaining({ tileId: 'stored-first', kind: 'none', candidates: 0, active: false }),
+    ])
+  })
+
+  //+_+// 같은 프로젝트 안에서는 종전과 같다. 저장 순서가 먼저인 타일이 잡는다 (P5-D36)
+  it('still lets the earlier tile of one project take a shared candidate', async () => {
+    const value = fixture(
+      [11],
+      activeStoredLast([], [tile('first', 'https://example.com/11'), tile('second', 'https://example.com/11', 1)]),
+    )
+    await value.host.load()
+
+    const active = await projectStateOf(value.host, LATER_PROJECT_ID)
+    expect(active.runtimeStates[0]).toMatchObject({ tileId: 'first', tabId: 11 })
+    expect(Object.hasOwn(active.runtimeStates[1], 'tabId')).toBe(false)
+  })
+
+  //+_+// 분할이 안정적이다. 활성 타일 둘 사이의 저장 순서가 유지되므로 앞 타일이 잡는다
+  it('keeps the order of the active tiles among themselves', async () => {
+    const value = fixture(
+      [11],
+      activeStoredLast(
+        [tile('stored-first', 'https://example.com/11')],
+        [tile('active-first', 'https://example.com/11'), tile('active-second', 'https://example.com/11', 1)],
+      ),
+      new StubStorage(),
+    )
+    await value.host.load()
+
+    const active = await projectStateOf(value.host, LATER_PROJECT_ID)
+    expect(active.runtimeStates[0]).toMatchObject({ tileId: 'active-first', tabId: 11 })
+    expect(Object.hasOwn(active.runtimeStates[1], 'tabId')).toBe(false)
+    //+_+// 판정 순서가 곧 배정 순서다. 활성 둘이 앞에 붙고 그 사이 저장 순서가 유지된다
+    expect(rowsOf(value).map((row) => row.tileId)).toEqual(['active-first', 'active-second', 'stored-first'])
+  })
+})
+
 //+_+// P6-D47. v1 section 15.1 의 전체 Pause 다. P5-D4 가 Phase 6 으로 넘긴 넷 중 하나다
 describe('P6-D47 - SET_PREVIEW_PAUSED is the manual whole-dashboard pause', () => {
   async function boundAndVisible(value: Fixture): Promise<void> {
