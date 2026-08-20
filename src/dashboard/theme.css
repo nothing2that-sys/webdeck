@@ -281,6 +281,10 @@ body {
   background: var(--surface-preview);
 }
 
+.grid--privacy .tile-preview-image {
+  visibility: hidden;
+}
+
 .tile-detached {
   display: flex;
   flex-wrap: wrap;

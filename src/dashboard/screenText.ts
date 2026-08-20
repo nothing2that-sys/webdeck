@@ -43,6 +43,12 @@ export function toggleClassName(on: boolean): string {
   return on ? 'toolbar-toggle toolbar-toggle--on' : 'toolbar-toggle'
 }
 
+//+_+// P7-D62. Privacy Mode. 켜진 동안만 그리드에 표식을 붙이고 가리기는 CSS 가 한다
+//+_+// 워커에 닿지 않는다. dataUrl 을 지우지 않으므로 끄면 그대로 돌아온다
+export function gridClassName(privacy: boolean): string {
+  return privacy ? 'grid grid--privacy' : 'grid'
+}
+
 //+_+// 타일을 고르기 전에는 설정 폼이 비어 있고 라벨이 안내문이다
 export function tileSettingsLabel(open: boolean): string {
   return open ? 'Tile' : '타일을 고르면 설정이 열린다'

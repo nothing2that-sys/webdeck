@@ -51,6 +51,7 @@ import {
   dropNotice,
   durationSpreadLabel,
   failureNotice,
+  gridClassName,
   openedTabsNotice,
   recordLogLabel,
   tileSettingsLabel,
@@ -106,6 +107,8 @@ export function App(): React.JSX.Element {
   //+_+// P6-D9. 열려 있는 동안만 읽는다. 닫혀 있으면 요청을 보내지 않는다
   const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null)
   const [showDiagnostics, setShowDiagnostics] = useState(false)
+  //+_+// P7-D62. v1 section 15.4. 화면에서만 산다. 저장하지 않으므로 다시 열면 꺼져 있다
+  const [privacy, setPrivacy] = useState(false)
   const [drag, setDrag] = useState<DragState | null>(null)
   const [notice, setNotice] = useState('')
   const gridRef = useRef<HTMLElement | null>(null)
@@ -552,6 +555,11 @@ export function App(): React.JSX.Element {
     setShowDiagnostics((current) => !current)
   }, [])
 
+  //+_+// P7-D62. 캡처를 멈추지 않는다. 워커에 알리지 않으므로 주기도 상태도 그대로다
+  const togglePrivacy = useCallback(() => {
+    setPrivacy((current) => !current)
+  }, [])
+
   const indicator = dropIndicator(drag)
 
   return (
@@ -608,6 +616,13 @@ export function App(): React.JSX.Element {
           onClick={toggleDiagnostics}
         >
           {toggleLabel('Diagnostics', showDiagnostics)}
+        </button>
+        <button
+          type="button"
+          className={toggleClassName(privacy)}
+          onClick={togglePrivacy}
+        >
+          {toggleLabel('Privacy', privacy)}
         </button>
         <select
           className="toolbar-select"
@@ -745,7 +760,7 @@ export function App(): React.JSX.Element {
       ) : null}
 
       <main
-        className="grid"
+        className={gridClassName(privacy)}
         ref={gridRef}
         style={{
           gridTemplateColumns: `repeat(${String(GRID_COLUMNS)}, 1fr)`,

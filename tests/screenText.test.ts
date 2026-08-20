@@ -7,6 +7,7 @@ import {
   dropNotice,
   durationSpreadLabel,
   failureNotice,
+  gridClassName,
   openedTabsNotice,
   recordLogLabel,
   tileSettingsLabel,
@@ -74,6 +75,16 @@ describe('P6-D2 - toolbar toggles share one rule', () => {
   it('adds the on modifier class only when the toggle is on', () => {
     expect(toggleClassName(false)).toBe('toolbar-toggle')
     expect(toggleClassName(true)).toBe('toolbar-toggle toolbar-toggle--on')
+  })
+})
+
+describe('P7-D62 - Privacy Mode marks the grid', () => {
+  it('leaves the grid class alone while privacy is off', () => {
+    expect(gridClassName(false)).toBe('grid')
+  })
+
+  it('adds the privacy modifier class while privacy is on', () => {
+    expect(gridClassName(true)).toBe('grid grid--privacy')
   })
 })
 
