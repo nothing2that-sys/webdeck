@@ -62,7 +62,8 @@ v1 미처분 조항 셋을 처분했다
 §15.8  Audio 와 Mute          V1_DEVIATIONS §14.  §16 목록에 없고 요청되지 않았다
 ```
 
-마지막 커밋 — **판정문 회차에서 채운다** (`P7-D91`).
+마지막 커밋 `79b05e3 docs(p7): close L46 and bring the release documents current`
+판정문 커밋은 그 뒤에 온다.
 
 ---
 
