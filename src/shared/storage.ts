@@ -10,6 +10,9 @@ export const STORAGE_KEY = 'webdeck.state'
 //+_+// 계측 키 두 개가 이미 같은 형태다. 상태 봉투를 건드리지 않으려고 그 형태를 따른다
 export const PAUSE_KEY = 'webdeck.previewPaused'
 
+//+_+// P7-D88. 거부된 저장값을 여기로 옮긴다. J84 가 막으려던 소실을 메운다
+export const REJECTED_KEY = 'webdeck.state.rejected'
+
 //+_+// P5-D19. 1키 전체 상태다. 활성 프로젝트도 같은 봉투에 싣고 별도 키를 만들지 않는다
 export interface PersistedState {
   schemaVersion: typeof SCHEMA_VERSION
@@ -239,6 +242,18 @@ export async function savePreviewPaused(
   await backend.set(PAUSE_KEY, paused)
 }
 
+//+_+// P7-D88. 거부된 원본을 백업 키로 옮긴다. 이미 값이 있으면 그대로 둔다
+//+_+// 첫 거부의 원본이 진짜 사용자 데이터이고 그 뒤의 값은 우리가 쓴 것일 수 있다
+//+_+// 백엔드 실패를 삼키지 않는다. 이 모듈의 기존 계약이 그렇고 loadState 와 saveState 가 같다
+async function backupRejected(backend: KeyValueBackend, stored: unknown): Promise<void> {
+  //+_+// 부재 판정은 loadState 와 같은 규칙이다. 두 곳에서 다르게 읽지 않는다
+  const existing = await backend.get(REJECTED_KEY)
+  if (existing !== undefined && existing !== null) {
+    return
+  }
+  await backend.set(REJECTED_KEY, stored)
+}
+
 //+_+// 키가 없는 것은 오류가 아니다. 저장된 적이 없는 상태를 빈 목록으로 본다
 //+_+// P5-D8. 부재와 빈 목록을 구별하는 수단을 만들지 않는다. 부르는 쪽이 기본 프로젝트를 세운다
 export async function loadState(backend: KeyValueBackend): Promise<LoadResult> {
@@ -246,5 +261,10 @@ export async function loadState(backend: KeyValueBackend): Promise<LoadResult> {
   if (stored === undefined || stored === null) {
     return { ok: true, activeProjectId: '', projects: [] }
   }
-  return deserializeState(stored)
+  const result = deserializeState(stored)
+  //+_+// P7-D88. 거부일 때만이다. 반환값과 씨앗 폴백은 그대로 둔다
+  if (!result.ok) {
+    await backupRejected(backend, stored)
+  }
+  return result
 }

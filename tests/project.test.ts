@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   PAUSE_KEY,
+  REJECTED_KEY,
   STORAGE_KEY,
   deserializeProject,
   deserializeState,
@@ -211,6 +212,67 @@ describe('storage backend round trip - TASK-P2-01 section 8, outside v1 25.1', (
     await expect(loadState(failing)).rejects.toThrow('backend get failed')
     await expect(saveState(failing, [], 'p1')).rejects.toThrow('backend set failed')
     expect(STORAGE_KEY.length).toBeGreaterThan(0)
+  })
+})
+
+//+_+// P7-D88. 거부된 저장값을 백업 키로 옮긴다. J84 가 막으려던 소실을 메운다
+describe('P7-D88 - a rejected envelope is moved to the backup key', () => {
+  const rejected = { schemaVersion: 1, activeProjectId: 'p1', projects: [] }
+
+  it('keeps the rejected original under the backup key', async () => {
+    const backend = inMemoryBackend({ [STORAGE_KEY]: rejected })
+
+    const result = await loadState(backend)
+
+    expect(result).toMatchObject({ ok: false, errorCode: 'SCHEMA_VERSION_MISMATCH' })
+    expect(await backend.get(REJECTED_KEY)).toEqual(rejected)
+  })
+
+  //+_+// 첫 거부의 원본이 진짜 사용자 데이터다. 그 뒤의 값은 우리가 쓴 것일 수 있다
+  it('does not let a second rejection overwrite the backup', async () => {
+    const backend = inMemoryBackend({ [STORAGE_KEY]: rejected })
+    await loadState(backend)
+
+    const second = { schemaVersion: 1, activeProjectId: 'p2', projects: [] }
+    await backend.set(STORAGE_KEY, second)
+    await loadState(backend)
+
+    expect(await backend.get(REJECTED_KEY)).toEqual(rejected)
+  })
+
+  it('writes nothing to the backup key when the envelope loads', async () => {
+    const backend = inMemoryBackend()
+    await saveState(backend, [project([tile('t1', 0, 0)])], 'p1')
+
+    expect(await loadState(backend)).toMatchObject({ ok: true })
+    expect(await backend.get(REJECTED_KEY)).toBeUndefined()
+  })
+
+  //+_+// 키 부재는 거부가 아니다. P5-D8 대로 빈 목록으로 서고 백업도 만들지 않는다
+  it('writes nothing to the backup key when the state key is absent', async () => {
+    const backend = inMemoryBackend()
+
+    expect(await loadState(backend)).toEqual({ ok: true, activeProjectId: '', projects: [] })
+    expect(await backend.get(REJECTED_KEY)).toBeUndefined()
+  })
+
+  //+_+// 거부 시 반환값과 씨앗 폴백은 종전과 같다. 백업이 그 축을 건드리지 않는다
+  it('leaves the rejection result and the stored state untouched', async () => {
+    const backend = inMemoryBackend({ [STORAGE_KEY]: rejected })
+
+    const result = await loadState(backend)
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'SCHEMA_VERSION_MISMATCH',
+      message: 'Expected schemaVersion 2, found 1',
+    })
+    expect(await backend.get(STORAGE_KEY)).toEqual(rejected)
+  })
+
+  it('names the backup key apart from the state key', () => {
+    expect(REJECTED_KEY).not.toBe(STORAGE_KEY)
+    expect(REJECTED_KEY.startsWith('webdeck.')).toBe(true)
   })
 })
 
