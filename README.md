@@ -22,6 +22,20 @@ Load unpacked 를 누른다
 dist 폴더를 고른다
 ```
 
+### 디버깅 배너 끄기 (선택)
+
+`debugger` 를 쓰는 동안 Chrome 이 주소창 아래에 배너를 띄운다. Chrome 실행 플래그로 끌 수
+있다. 바로가기 속성의 대상 끝에 붙인다.
+
+--silent-debugger-extension-api
+
+이 플래그는 브라우저 프로세스 전역이다. 웹덱만 골라 가릴 수 없고, 같은 Chrome 에 붙는 다른
+확장의 디버깅도 함께 가려진다. **디버거를 붙이는 다른 확장이 없다는 것을 확인하고 쓴다** —
+웹덱을 끈 상태에서 배너가 한 번도 뜨지 않으면 없는 것이다.
+
+`--user-data-dir` 로 프로필을 가르지 않는다. 프로필을 가르면 `chrome.storage.local` 이
+달라져 저장된 프로젝트·레이아웃·Pause 상태가 그 프로필에 없다.
+
 Dashboard 는 두 가지로 연다.
 
 ```
@@ -111,8 +125,9 @@ Telemetry 없음.  Analytics 없음.  화면 영구 저장 없음
 Chrome Web Store 배포는 범위 밖이다.  Load unpacked 로만 쓴다
 ```
 
-`debugger` 를 쓰는 동안 Chrome 이 **디버깅 배너를 띄운다.** 이것은 끌 수 없다. Preview 를
-Pause 해도 배너는 남는다 — Pause 는 캡처를 멈출 뿐 attach 를 풀지 않기 때문이다.
+`debugger` 를 쓰는 동안 Chrome 이 **디버깅 배너를 띄운다.** 확장 코드로는 끌 수 없다.
+Preview 를 Pause 해도 배너는 남는다 — Pause 는 캡처를 멈출 뿐 attach 를 풀지 않기 때문이다.
+Chrome 실행 플래그로는 끌 수 있다. 「설치와 실행」의 디버깅 배너 끄기를 본다.
 
 ### debugger 권한이 필요한 이유
 
@@ -193,7 +208,9 @@ chrome:// 탭이 RESTRICTED 로 나온다
 
 디버깅 배너가 안 사라진다
   Pause 는 캡처를 멈출 뿐 attach 를 풀지 않는다.  배너는 남는다
-  없애려면 확장을 끄거나 타일을 지운다
+  확장을 끄거나 타일을 지우면 사라진다
+  계속 안 뜨게 하려면 --silent-debugger-extension-api 로 Chrome 을 띄운다
+  「설치와 실행」의 디버깅 배너 끄기를 본다
 ```
 
 ## 문서
