@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>static-frame</title>
+<style>
+  body { font-family: monospace; margin: 0; padding: 16px; background: #111; color: #eee; }
+  #tag { position: absolute; top: 0; right: 0; padding: 8px 16px; font-size: 40px; font-weight: bold; color: #111; }
+  #big { font-size: 140px; line-height: 1; font-weight: bold; }
+  #note { font-size: 16px; margin-top: 8px; color: #9cf; }
+  #small { font-size: 11px; margin-top: 12px; color: #bbb; }
+  #grid { display: flex; gap: 4px; margin-top: 12px; }
+  .cell { width: 40px; height: 40px; background: #333; }
+</style>
+</head>
+<body>
+<div id="tag">#?</div>
+<div id="big">0</div>
+<div id="note">L21 measurement fixture. Nothing on this page moves after load.</div>
+<div id="grid"></div>
+<div id="small">작은 글씨 가독성 확인용 문자열. ABCDEFG 0123456789</div>
+<script>
+  //+_+// L21 · L42 의 정지 화면 조건이다. Phase 6 의 픽스처 둘은 전부 움직였다
+  //+_+// 요구는 로드 뒤 한 픽셀도 바뀌지 않는 것이다. 타이머 · 애니메이션 · transition 을 두지 않는다
+  //+_+// 시각도 찍지 않는다. 시각을 찍으면 그 자리만으로 프레임이 달라진다
+  //+_+// live-counter.html 의 setInterval 을 뺀 형태이고 색 배정 규칙은 같게 둔다
+  var TILE = Number(new URLSearchParams(location.search).get('tile') ?? '0');
+  //+_+// 황금각이다. live-counter 와 같은 규칙이라 두 픽스처의 타일 색이 같은 번호에서 같다
+  var hue = (TILE * 137) % 360;
+  var tag = document.getElementById('tag');
+  tag.textContent = '#' + String(TILE);
+  tag.style.background = 'hsl(' + String(hue) + ', 70%, 55%)';
+  document.body.style.background = 'hsl(' + String(hue) + ', 45%, 12%)';
+  document.title = 'static-frame #' + String(TILE);
+
+  //+_+// 값은 로드 시점에만 정한다. 타일마다 다른 그림이 되도록 번호에서 끌어온다
+  document.getElementById('big').textContent = String(TILE * 7);
+  var grid = document.getElementById('grid');
+  for (var i = 0; i < 10; i += 1) {
+    var c = document.createElement('div');
+    c.className = 'cell';
+    if (i === TILE % 10) {
+      c.style.background = 'hsl(' + String(hue) + ', 60%, 45%)';
+    }
+    grid.appendChild(c);
+  }
+</script>
+</body>
+</html>

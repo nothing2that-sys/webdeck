@@ -192,6 +192,22 @@ export async function readTiles(page) {
   )
 }
 
+//+_+// TASK-P7-21. 배지와 아래 줄 시각이 어떻게 움직였는지는 한 장의 사진으로 알 수 없다
+//+_+// 같은 간격으로 여러 번 집어 열로 낸다. 판정하지 않는다. 집은 값을 그대로 담는다
+//+_+// 조건 3 의 "돌아온 뒤 LOADING 을 거치는가" 는 이 열이 아니면 답할 수 없다
+export async function pollTiles(page, count, everyMs) {
+  const samples = []
+  for (let index = 0; index < count; index += 1) {
+    if (index > 0) {
+      await new Promise((done) => {
+        setTimeout(done, everyMs)
+      })
+    }
+    samples.push({ seq: index, at: Date.now(), tiles: await readTiles(page) })
+  }
+  return { count, everyMs, samples }
+}
+
 //+_+// 전경 / 배경 전환이다. 같은 창의 다른 탭을 활성으로 만든다
 export async function sendDashboardToBackground(page) {
   return page.evaluate(async () => {

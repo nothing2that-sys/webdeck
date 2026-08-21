@@ -122,6 +122,23 @@ export async function launchMeasured({ extensionPath, userDataDir, windowSize = 
         await cdp.detach().catch(() => undefined)
       }
     },
+    //+_+// TASK-P7-21 조건 4. 타일 탭의 페이지 타깃에 하네스가 먼저 CDP 로 붙는다
+    //+_+// decideTarget 은 손대지 않았다. targetFilter 는 Puppeteer 가 타깃을 관리할지만 정하고
+    //+_+// Target.attachToTarget 은 브라우저 수준 CDP 명령이라 그 필터를 지나지 않는다
+    //+_+// 워커 타깃 금지는 그대로다 (P6-D22). 여기서 붙는 것은 page 타깃 하나뿐이고 호출자가 지정한다
+    //+_+// 세션을 열어 둔 채 돌려준다. 붙어 있는 동안이 관측 구간이다
+    async holdBareTarget(targetId) {
+      const cdp = await browser.target().createCDPSession()
+      const attached = await cdp.send('Target.attachToTarget', { targetId, flatten: true })
+      return {
+        targetId,
+        sessionId: attached.sessionId,
+        async release() {
+          await cdp.send('Target.detachFromTarget', { sessionId: attached.sessionId }).catch(() => undefined)
+          await cdp.detach().catch(() => undefined)
+        },
+      }
+    },
     //+_+// 새 페이지는 about:blank 로 태어난다. 그 창 안에서만 blank 를 받아들인다
     async openBlankPage() {
       state.acceptBlank = true
