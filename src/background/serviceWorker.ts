@@ -156,6 +156,11 @@ export type CreateTab = (url: string) => Promise<BrowserTabInfo>
 //+_+// ListTabs 와 같은 자리다. chrome 지식을 어댑터에 두어 호스트가 시험 가능한 채로 남는다
 export type ProjectTabUrl = (projectId: string) => string
 
+//+_+// P8-D19. 앞으로 오는 탭을 여는 전용 경로다. CreateTab 과 시그니처를 나눈다
+//+_+// CreateTab 을 고치면 openMissingTabs · reopenTile · addTile 세 소비자가 함께 흔들린다
+//+_+// 돌려주는 것이 없다. OPEN_PROJECT_TAB 은 만든 탭을 바인딩하지 않는다
+export type CreateActiveTab = (url: string) => Promise<void>
+
 function failure(
   type: DashboardRequestType,
   errorCode: DashboardErrorCode,
@@ -172,6 +177,7 @@ export function createDashboardHost(
   listTabs: ListTabs,
   focusTab: FocusTab,
   createTab: CreateTab,
+  createActiveTab: CreateActiveTab,
   projectTabUrl: ProjectTabUrl,
   storage: KeyValueBackend,
   clock: Clock = systemClock,
@@ -854,11 +860,13 @@ export function createDashboardHost(
 
   //+_+// P8-D16. 허브가 프로젝트 탭을 연다. 기존 탭을 찾아 재사용하지 않는다 (§8-2.2)
   //+_+// URL 은 어댑터가 만든다. 여기서 chrome.runtime.getURL 을 부르지 않는다
+  //+_+// P8-D19. 이 탭만 앞으로 온다. 사용자가 그 탭으로 가려고 누른 버튼이기 때문이다
+  //+_+// createTab 을 쓰지 않는다. 그쪽은 타일 탭 경로이고 뒤에서 열어야 한다
   async function openProjectTab(projectId: string): Promise<DashboardResponse> {
     if (projectById(projectId) === null) {
       return failure('OPEN_PROJECT_TAB', 'PROJECT_NOT_FOUND', `Unknown projectId ${projectId}`)
     }
-    await createTab(projectTabUrl(projectId))
+    await createActiveTab(projectTabUrl(projectId))
     return { ok: true, type: 'OPEN_PROJECT_TAB' }
   }
 
@@ -1119,6 +1127,13 @@ function chromeListTabs(): ListTabs {
   }
 }
 
+//+_+// P8-D19. 앞으로 오는 탭이다. 탭 id 를 쓰지 않으므로 toTabInfo 를 지나지 않는다
+function chromeCreateActiveTab(): CreateActiveTab {
+  return async (url) => {
+    await chrome.tabs.create({ url, active: true })
+  }
+}
+
 //+_+// P8-D16 · P8-D18. 파라미터를 붙이는 자리다. 화면은 chrome.runtime.getURL 을 부르지 않는다
 //+_+// 값은 DASHBOARD_PAGE 그대로다. 허브를 여는 것은 openHub 이고 이쪽은 프로젝트 화면이다
 function chromeProjectTabUrl(): ProjectTabUrl {
@@ -1127,6 +1142,8 @@ function chromeProjectTabUrl(): ProjectTabUrl {
 }
 
 //+_+// P5-D27. active 로 열지 않는다. Dashboard 를 보는 중에 새 탭이 화면을 가로채면 안 된다
+//+_+// P8-D19. 예외가 하나 생겼다. 허브의 Open 이 여는 탭은 chromeCreateActiveTab 으로 간다
+//+_+// 그쪽은 사용자가 그 탭으로 가려고 누른 것이라 이 근거가 걸리지 않는다. 이 경로는 그대로다
 //+_+// id 가 없는 탭은 바인딩할 수 없다. 조용히 통과시키지 않고 던진다
 function chromeCreateTab(): CreateTab {
   return async (url) => {
@@ -1164,6 +1181,7 @@ if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
     chromeListTabs(),
     chromeFocusTab(),
     chromeCreateTab(),
+    chromeCreateActiveTab(),
     chromeProjectTabUrl(),
     storageBackend,
     systemClock,

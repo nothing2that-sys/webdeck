@@ -18,6 +18,7 @@ import {
   excludeOwnPages,
 } from '../src/background/serviceWorker'
 import type {
+  CreateActiveTab,
   CreateTab,
   DashboardHost,
   FocusTab,
@@ -148,6 +149,8 @@ interface Fixture {
   //+_+// P6-D18. 계측 쓰기를 상태 저장 쓰기와 갈라 센다. null 이면 링버퍼가 꺼진 배선이다
   diagnostics: StubStorage | null
   createdUrls: string[]
+  //+_+// P8-D19. 앞으로 오는 탭만 여기 쌓인다. createdUrls 와 갈라 두어 어느 경로인지 가른다
+  frontUrls: string[]
   //+_+// P5-D37. 일부 실패가 성공한 것들을 되돌리지 않는 것을 시험하려면 실패를 만들 수 있어야 한다
   failCreateUrls: Set<string>
   //+_+// P5-D39. 재연결이 던지는 상황을 만든다
@@ -164,6 +167,7 @@ function fixture(
   const tabsBackend = new StubTabs()
   const clock = new StubClock()
   const createdUrls: string[] = []
+  const frontUrls: string[] = []
   const activated: { tabId: number; windowId: number }[] = []
 
   for (const tabId of tabIds) {
@@ -193,6 +197,12 @@ function fixture(
     return Promise.resolve(created)
   }
 
+  //+_+// P8-D19. 제품 어댑터가 active: true 로 여는 경로다. 여기서는 url 만 기록한다
+  const createActiveTab: CreateActiveTab = (url) => {
+    frontUrls.push(url)
+    return Promise.resolve()
+  }
+
   //+_+// P8-D16. 제품에서는 chrome.runtime.getURL 이 만든다. 시험은 상대 경로로 둔다
   const projectTabUrl: ProjectTabUrl = (projectId) =>
     `dashboard.html?${PROJECT_PARAM}=${encodeURIComponent(projectId)}`
@@ -204,6 +214,7 @@ function fixture(
       listTabs,
       focusTab,
       createTab,
+      createActiveTab,
       projectTabUrl,
       storage,
       clock,
@@ -215,6 +226,7 @@ function fixture(
     storage,
     diagnostics,
     createdUrls,
+    frontUrls,
     failCreateUrls,
     failListTabs: false,
     activated,
@@ -1126,7 +1138,7 @@ describe('P8-D16 - OPEN_PROJECT_TAB opens a tab for a project', () => {
     })
 
     expect(response).toMatchObject({ ok: true, type: 'OPEN_PROJECT_TAB' })
-    expect(value.createdUrls).toEqual([
+    expect(value.frontUrls).toEqual([
       `dashboard.html?${PROJECT_PARAM}=${encodeURIComponent(created.project.id)}`,
     ])
   })
@@ -1137,7 +1149,7 @@ describe('P8-D16 - OPEN_PROJECT_TAB opens a tab for a project', () => {
     await value.host.handle({ type: 'OPEN_PROJECT_TAB', projectId: DEFAULT_PROJECT_ID })
     await value.host.handle({ type: 'OPEN_PROJECT_TAB', projectId: DEFAULT_PROJECT_ID })
 
-    expect(value.createdUrls).toHaveLength(2)
+    expect(value.frontUrls).toHaveLength(2)
   })
 
   it('refuses a projectId no project holds', async () => {
@@ -1146,6 +1158,7 @@ describe('P8-D16 - OPEN_PROJECT_TAB opens a tab for a project', () => {
     const response = await value.host.handle({ type: 'OPEN_PROJECT_TAB', projectId: 'no-such' })
 
     expect(response).toMatchObject({ ok: false, errorCode: 'PROJECT_NOT_FOUND' })
+    expect(value.frontUrls).toEqual([])
     expect(value.createdUrls).toEqual([])
   })
 
@@ -1160,6 +1173,46 @@ describe('P8-D16 - OPEN_PROJECT_TAB opens a tab for a project', () => {
     await host.portDisconnected('client-1', 1000)
 
     expect(host.engine.captures.statusOf('t1')).toBeNull()
+  })
+})
+
+//+_+// P8-D19. Open 이 연 탭은 앞으로 온다. 타일 탭은 그대로 뒤에서 열린다
+describe('P8-D19 - only the project tab comes to the front', () => {
+  it('sends the project tab through the front path, not the tile path', async () => {
+    const value = fixture()
+
+    await value.host.handle({ type: 'OPEN_PROJECT_TAB', projectId: DEFAULT_PROJECT_ID })
+
+    expect(value.frontUrls).toHaveLength(1)
+    expect(value.createdUrls).toEqual([])
+  })
+
+  //+_+// P5-D27 을 뒤집지 않는다. url 로 타일을 만드는 경로는 뒤에서 여는 쪽 그대로다
+  it('leaves ADD_TILE on the background path', async () => {
+    const value = fixture()
+
+    await value.host.handle({
+      type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
+      source: { kind: 'url', url: 'https://example.com/added' },
+    })
+
+    expect(value.createdUrls).toEqual(['https://example.com/added'])
+    expect(value.frontUrls).toEqual([])
+  })
+
+  it('leaves OPEN_MISSING_TABS on the background path', async () => {
+    const value = fixture()
+    await value.host.handle({
+      type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
+      source: { kind: 'url', url: 'https://example.com/missing' },
+    })
+    value.createdUrls.length = 0
+
+    await value.host.handle({ type: 'OPEN_MISSING_TABS', projectId: DEFAULT_PROJECT_ID })
+
+    expect(value.frontUrls).toEqual([])
   })
 })
 
