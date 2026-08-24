@@ -5,6 +5,7 @@ import {
   EMPTY_CAPTURE_SUMMARY,
   applyCaptureRecord,
   buildRuntimeState,
+  buildTileOwners,
   createProject,
   newTile,
   planReconnect,
@@ -459,5 +460,48 @@ describe('P6-D56 - the candidate count is read back from the verdict', () => {
 
   it('reports the real count for ambiguous', () => {
     expect(reconnectCandidateCount({ tileId: 't', kind: 'ambiguous', tabIds: [11, 12, 13] })).toBe(3)
+  })
+})
+
+//+_+// WEBDECK_PLAN 8-2.3 1번. 타일 요청이 소유 프로젝트를 찾는 자리다
+//+_+// 결정성이 조건이다. L51 이 전역 유일성을 강제하는 자리가 없다고 적었다
+describe('8-2.3 1 - the owner lookup finds the project a tile belongs to', () => {
+  function project(id: string, tiles: WebTile[]): Project {
+    return { id, name: id, gridColumns: 4, gridRows: 4, keepManagedTabsAlive: false, tiles }
+  }
+
+  it('finds a tile that is not in the first project', () => {
+    const later = project('b', [tile('t2', 0, 0)])
+    const owners = buildTileOwners([project('a', [tile('t1', 0, 0)]), later])
+
+    expect(owners.get('t2')?.project).toBe(later)
+    expect(owners.get('t2')?.tile.id).toBe('t2')
+  })
+
+  it('returns undefined for a tileId no project holds', () => {
+    const owners = buildTileOwners([project('a', [tile('t1', 0, 0)])])
+
+    expect(owners.get('t9')).toBeUndefined()
+  })
+
+  it('gives the first tile in storage order when an id repeats', () => {
+    const first = project('a', [tile('dup', 0, 0)])
+    const second = project('b', [tile('dup', 1, 1)])
+    const owners = buildTileOwners([first, second])
+
+    expect(owners.get('dup')?.project).toBe(first)
+    expect(owners.get('dup')?.tile.x).toBe(0)
+  })
+
+  it('gives the first tile in storage order when an id repeats inside one project', () => {
+    const only = project('a', [tile('dup', 0, 0), tile('dup', 2, 2)])
+    const owners = buildTileOwners([only])
+
+    expect(owners.get('dup')?.tile.x).toBe(0)
+    expect(owners.size).toBe(1)
+  })
+
+  it('holds nothing when no project has a tile', () => {
+    expect(buildTileOwners([project('a', [])]).size).toBe(0)
   })
 })

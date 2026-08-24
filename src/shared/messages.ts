@@ -9,7 +9,8 @@ import type {
 
 //+_+// P5-D22. 기본 프로젝트의 id 다. 목록이 비었을 때 워커가 세우는 프로젝트가 이 id 를 쓴다
 //+_+// 새로 만드는 프로젝트의 id 는 crypto.randomUUID 다. 이 상수는 기본 프로젝트 전용이다
-//+_+// Dashboard 는 이 값을 요청에 실어 보내지 않는다. 활성 프로젝트 id 를 워커에서 받아 쓴다
+//+_+// P8-D9 · §8-2.3 1번. 타일 요청은 tileId 로 소유 프로젝트를 찾는다
+//+_+// tileId 가 없거나 타일을 만드는 셋만 projectId 를 싣는다. ADD_TILE · OPEN_MISSING_TABS · BIND_TILE
 export const DEFAULT_PROJECT_ID = 'webdeck.default'
 
 //+_+// 기본 프로젝트의 이름이다. 사용자가 이름을 바꾸면 저장값이 이긴다
@@ -38,7 +39,7 @@ export type DashboardRequest =
   //+_+// P4-D11. dashboardVisible 을 폴링마다 싣는다. 표시 상태 전용 요청을 만들지 않는다. J15
   | { type: 'GET_PROJECT_STATE'; projectId: string; dashboardVisible: boolean }
   | { type: 'LIST_BROWSER_TABS' }
-  | { type: 'BIND_TILE'; tileId: string; tabId: number }
+  | { type: 'BIND_TILE'; projectId: string; tileId: string; tabId: number }
   | { type: 'CAPTURE_TILE'; tileId: string }
   | { type: 'FOCUS_TILE'; tileId: string }
   | { type: 'RELOAD_TILE'; tileId: string }
@@ -48,13 +49,13 @@ export type DashboardRequest =
   //+_+// P5-D31. 같은 원칙이다. 화면이 검증했더라도 워커가 override 하한을 다시 본다
   | { type: 'SET_TILE_SETTINGS'; tileId: string; settings: TileSettings }
   //+_+// P5-D27. BIND_TILE 을 확장하지 않는다. 그쪽은 저수준 재바인딩 수단으로 남는다. J9
-  | { type: 'ADD_TILE'; source: AddTileSource }
+  | { type: 'ADD_TILE'; projectId: string; source: AddTileSource }
   //+_+// P5-D32. ADD_TILE 은 새 타일을 만들고 이것은 기존 타일의 자리와 설정을 지킨다. 둘을 묶지 않는다
   | { type: 'REOPEN_TILE'; tileId: string }
   //+_+// P5-D33. 타일만 지운다. 사용자의 탭은 닫지 않는다. CLAUDE.md section 5.2
   | { type: 'REMOVE_TILE'; tileId: string }
   //+_+// P5-D37. v1 section 10 의 6단계다. REOPEN_TILE 의 일괄판이며 메시지를 합치지 않는다
-  | { type: 'OPEN_MISSING_TABS' }
+  | { type: 'OPEN_MISSING_TABS'; projectId: string }
   | { type: 'LIST_PROJECTS' }
   | { type: 'CREATE_PROJECT'; name: string }
   | { type: 'RENAME_PROJECT'; projectId: string; name: string }

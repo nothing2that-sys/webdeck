@@ -93,13 +93,20 @@ export async function listBrowserTabs(): Promise<DashboardResponse> {
 }
 
 //+_+// P5-D27. 타일 id 는 워커가 만들어 응답에 싣는다. 화면이 미리 만들지 않는다
-export async function addTile(source: AddTileSource): Promise<DashboardResponse> {
-  return send({ type: 'ADD_TILE', source })
+export async function addTile(
+  projectId: string,
+  source: AddTileSource,
+): Promise<DashboardResponse> {
+  return send({ type: 'ADD_TILE', projectId, source })
 }
 
 //+_+// S5 의 Bind Existing Tab 이 쓴다. 이미 있는 타일을 다른 탭에 다시 거는 저수준 수단이다
-export async function bindTile(tileId: string, tabId: number): Promise<DashboardResponse> {
-  return send({ type: 'BIND_TILE', tileId, tabId })
+export async function bindTile(
+  projectId: string,
+  tileId: string,
+  tabId: number,
+): Promise<DashboardResponse> {
+  return send({ type: 'BIND_TILE', projectId, tileId, tabId })
 }
 
 export async function focusTile(tileId: string): Promise<DashboardResponse> {
@@ -119,8 +126,8 @@ export async function removeTile(tileId: string): Promise<DashboardResponse> {
 }
 
 //+_+// v1 section 10 의 6단계다. 버튼으로만 돈다. 브라우저 시작과 동시에 돌지 않는다
-export async function openMissingTabs(): Promise<DashboardResponse> {
-  return send({ type: 'OPEN_MISSING_TABS' })
+export async function openMissingTabs(projectId: string): Promise<DashboardResponse> {
+  return send({ type: 'OPEN_MISSING_TABS', projectId })
 }
 
 //+_+// v1 section 14 의 Refresh Preview 다. 페이지를 reload 하지 않는다

@@ -300,14 +300,19 @@ export function App(): React.JSX.Element {
       setNotice(NOTICE_TAB_REQUIRED)
       return
     }
-    const response = await addTile({ kind: 'tab', tabId: selectedTabId })
+    //+_+// WEBDECK_PLAN 8-2.3 1번. 대상 프로젝트를 요청에 싣는다
+    //+_+// 첫 LIST_PROJECTS 응답 전에는 실을 값이 없다. poll 과 같은 규칙으로 아무것도 하지 않는다
+    if (activeProjectId === null) {
+      return
+    }
+    const response = await addTile(activeProjectId, { kind: 'tab', tabId: selectedTabId })
     if (!response.ok) {
       await reportFailure(response)
       return
     }
     setNotice(NOTICE_NONE)
     await poll()
-  }, [poll, reportFailure, selectedTabId])
+  }, [activeProjectId, poll, reportFailure, selectedTabId])
 
   //+_+// v1 section 9.4 의 세 버튼이다. Reopen 과 Bind 가 fault 를 지우는 명시 경로다
   const reopen = useCallback(
@@ -331,7 +336,12 @@ export function App(): React.JSX.Element {
         setNotice(NOTICE_BIND_TAB_REQUIRED)
         return
       }
-      const response = await bindTile(tileId, selectedTabId)
+      //+_+// WEBDECK_PLAN 8-2.3 1번. BIND_TILE 은 모르는 tileId 면 타일을 만든다
+      //+_+// 그래서 어느 프로젝트에 만들지를 함께 보낸다 (P4-D2)
+      if (activeProjectId === null) {
+        return
+      }
+      const response = await bindTile(activeProjectId, tileId, selectedTabId)
       if (!response.ok) {
         await reportFailure(response)
         return
@@ -339,7 +349,7 @@ export function App(): React.JSX.Element {
       setNotice(NOTICE_NONE)
       await poll()
     },
-    [poll, reportFailure, selectedTabId],
+    [activeProjectId, poll, reportFailure, selectedTabId],
   )
 
   //+_+// P5-D6. v1 section 14 의 Refresh Preview 다. 응답의 프레임을 직접 그리지 않고 폴링에 맡긴다
@@ -359,7 +369,12 @@ export function App(): React.JSX.Element {
 
   //+_+// v1 section 10 의 6단계다. 열린 탭 수만큼 알리고 0건이면 그것도 알린다
   const openMissing = useCallback(async () => {
-    const response = await openMissingTabs()
+    //+_+// WEBDECK_PLAN 8-2.3 1번. 대상 프로젝트를 요청에 싣는다
+    //+_+// 첫 LIST_PROJECTS 응답 전에는 실을 값이 없다. poll 과 같은 규칙으로 아무것도 하지 않는다
+    if (activeProjectId === null) {
+      return
+    }
+    const response = await openMissingTabs(activeProjectId)
     if (!response.ok) {
       await reportFailure(response)
       return
@@ -370,7 +385,7 @@ export function App(): React.JSX.Element {
     setNotice(openedTabsNotice(response.openedTileIds.length))
     await poll()
     await loadTabs()
-  }, [loadTabs, poll, reportFailure])
+  }, [activeProjectId, loadTabs, poll, reportFailure])
 
   const remove = useCallback(
     async (tileId: string) => {
@@ -396,7 +411,12 @@ export function App(): React.JSX.Element {
       setNotice(NOTICE_URL_REQUIRED)
       return
     }
-    const response = await addTile({ kind: 'url', url })
+    //+_+// WEBDECK_PLAN 8-2.3 1번. 대상 프로젝트를 요청에 싣는다
+    //+_+// 첫 LIST_PROJECTS 응답 전에는 실을 값이 없다. poll 과 같은 규칙으로 아무것도 하지 않는다
+    if (activeProjectId === null) {
+      return
+    }
+    const response = await addTile(activeProjectId, { kind: 'url', url })
     if (!response.ok) {
       setNotice(failureNotice(response))
       return
@@ -405,7 +425,7 @@ export function App(): React.JSX.Element {
     setNotice(NOTICE_NONE)
     await poll()
     await loadTabs()
-  }, [loadTabs, poll, tileUrl])
+  }, [activeProjectId, loadTabs, poll, tileUrl])
 
   //+_+// 선택할 때 한 번만 현재값을 읽는다. 폴링에 맞춰 다시 읽으면 입력 중인 값이 2초마다 덮인다
   const selectTile = useCallback(

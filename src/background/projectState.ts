@@ -68,6 +68,29 @@ export function newTile(
   }
 }
 
+//+_+// WEBDECK_PLAN 8-2.3 1번. 타일 요청이 소유 프로젝트를 찾는 유일한 자리다
+//+_+// reconnect 도 이것을 쓴다. 같은 조회를 만드는 자리를 둘로 두지 않는다
+//+_+// L51. 타일 id 의 전역 유일성을 강제하는 자리가 없다. BIND_TILE 과 deserializeTile 이 안 막는다
+//+_+// 같은 id 가 둘 이상이면 저장 순서에서 먼저 나온 것이 이긴다. has 로 막고 덮어쓰지 않는다
+//+_+// set 으로 덮으면 뒤의 것이 이겨 같은 입력에 다른 답이 나온다. 결정성이 조회의 조건이다
+export interface TileOwner {
+  tile: WebTile
+  project: Project
+}
+
+export function buildTileOwners(projects: readonly Project[]): Map<string, TileOwner> {
+  const owners = new Map<string, TileOwner>()
+  for (const project of projects) {
+    for (const tile of project.tiles) {
+      if (owners.has(tile.id)) {
+        continue
+      }
+      owners.set(tile.id, { tile, project })
+    }
+  }
+  return owners
+}
+
 //+_+// v1 section 10 의 재연결 대상이다. boundTabId 가 있으면 살아 있는 바인딩이고 판정하지 않는다
 export interface ReconnectTarget {
   tile: WebTile

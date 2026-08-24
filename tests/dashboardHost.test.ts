@@ -251,7 +251,7 @@ describe('P4-D7 - GET_PROJECT_STATE carries the state and the frames together', 
 
   it('reports the bound tab identity on the runtime state', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
 
     const state = await projectState(host)
     expect(state.runtimeStates).toHaveLength(1)
@@ -268,7 +268,7 @@ describe('P4-D7 - GET_PROJECT_STATE carries the state and the frames together', 
 
   it('carries the frame of a tile whose capture succeeded', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
     driveTick(host)
     await Promise.resolve()
     await Promise.resolve()
@@ -288,7 +288,7 @@ describe('P4-D7 - GET_PROJECT_STATE carries the state and the frames together', 
   it('counts a failed round without inventing a frame', async () => {
     const { host, debuggerBackend } = fixture()
     debuggerBackend.data = null
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
     driveTick(host)
     await Promise.resolve()
     await Promise.resolve()
@@ -301,7 +301,7 @@ describe('P4-D7 - GET_PROJECT_STATE carries the state and the frames together', 
 
   it('reports DETACHED once the bound tab is gone', async () => {
     const { host, tabsBackend } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
     await host.engine.captures.unregister('t1')
     tabsBackend.tabs.delete(11)
 
@@ -313,8 +313,8 @@ describe('P4-D7 - GET_PROJECT_STATE carries the state and the frames together', 
 describe('P4-D2 - BIND_TILE creates the tile the dev button asks for', () => {
   it('places the first two tiles side by side', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
-    await host.handle({ type: 'BIND_TILE', tileId: 't2', tabId: 12 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't2', tabId: 12 })
 
     const state = await projectState(host)
     expect(state.project.tiles.map((tile) => [tile.x, tile.y])).toEqual([
@@ -325,7 +325,7 @@ describe('P4-D2 - BIND_TILE creates the tile the dev button asks for', () => {
 
   it('takes the launch url and the interval from the bound tab and the 1x1 default', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
 
     const state = await projectState(host)
     expect(state.project.tiles[0]).toMatchObject({
@@ -339,7 +339,7 @@ describe('P4-D2 - BIND_TILE creates the tile the dev button asks for', () => {
 
   it('attaches the debugger to the bound tab on the next tick', async () => {
     const { host, debuggerBackend } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
     expect(debuggerBackend.attached).toEqual([])
 
     driveTick(host)
@@ -349,7 +349,7 @@ describe('P4-D2 - BIND_TILE creates the tile the dev button asks for', () => {
 
   it('refuses a tabId that does not exist', async () => {
     const { host } = fixture()
-    const response = await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 999999 })
+    const response = await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 999999 })
     expect(response).toMatchObject({ ok: false, type: 'BIND_TILE', errorCode: 'TAB_NOT_FOUND' })
     expect((await projectState(host)).project.tiles).toEqual([])
   })
@@ -364,7 +364,7 @@ describe('P4-D2 - BIND_TILE creates the tile the dev button asks for', () => {
     const responses = []
     for (let index = 0; index < 17; index += 1) {
       responses.push(
-        await host.handle({ type: 'BIND_TILE', tileId: `t${String(index)}`, tabId: 100 + index }),
+        await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: `t${String(index)}`, tabId: 100 + index }),
       )
     }
 
@@ -375,8 +375,8 @@ describe('P4-D2 - BIND_TILE creates the tile the dev button asks for', () => {
 
   it('rebinds an existing tile without creating a second one', async () => {
     const { host, debuggerBackend } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 12 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 12 })
 
     const state = await projectState(host)
     expect(state.project.tiles).toHaveLength(1)
@@ -458,7 +458,7 @@ describe('F4 - every settled round leaves one console line', () => {
 
     try {
       const { host } = fixture()
-      await host.handle({ type: 'BIND_TILE', tileId: 'abcdef1234', tabId: 11 })
+      await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 'abcdef1234', tabId: 11 })
       driveTick(host)
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 0)
@@ -487,7 +487,7 @@ describe('P6-D18 - a settled round also reaches the storage ring buffer', () => 
     })
 
     try {
-      await value.host.handle({ type: 'BIND_TILE', tileId: 'abcdef1234', tabId: 11 })
+      await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 'abcdef1234', tabId: 11 })
       driveTick(value.host)
       for (let turn = 0; turn < 2; turn += 1) {
         await new Promise<void>((resolve) => {
@@ -557,7 +557,7 @@ describe('F2 - a tile whose tab was closed stays DETACHED', () => {
 
   async function boundTileWithFrame(): Promise<Fixture> {
     const value = fixture()
-    await value.host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
     driveTick(value.host)
     await flush()
     return value
@@ -621,7 +621,7 @@ describe('P4-D11 - GET_PROJECT_STATE carries the dashboard visibility', () => {
 
   //+_+// P6-D49. 워커는 보이지 않는 것으로 시작한다. 폴링 1회가 있어야 억제가 풀린다
   async function bindAndCapture(fixtureValue: Fixture): Promise<number> {
-    await fixtureValue.host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await fixtureValue.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
     await projectState(fixtureValue.host, true)
     return settleRound(fixtureValue.host)
   }
@@ -713,7 +713,7 @@ describe('P4-D11 - GET_PROJECT_STATE carries the dashboard visibility', () => {
 describe('P4-D12 - SET_TILE_RECT is judged again by the worker', () => {
   it('moves a tile to an empty rect', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
 
     const response = await host.handle({
       type: 'SET_TILE_RECT',
@@ -726,7 +726,7 @@ describe('P4-D12 - SET_TILE_RECT is judged again by the worker', () => {
 
   it('resizes a tile and follows v1 6 for the new span interval', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
 
     await host.handle({ type: 'SET_TILE_RECT', tileId: 't1', rect: { x: 0, y: 0, w: 2, h: 2 } })
     expect((await projectState(host)).project.tiles[0]).toMatchObject({
@@ -738,7 +738,7 @@ describe('P4-D12 - SET_TILE_RECT is judged again by the worker', () => {
 
   it('keeps the interval when only the position changed', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
 
     await host.handle({ type: 'SET_TILE_RECT', tileId: 't1', rect: { x: 1, y: 1, w: 1, h: 1 } })
     expect((await projectState(host)).project.tiles[0]).toMatchObject({
@@ -748,8 +748,8 @@ describe('P4-D12 - SET_TILE_RECT is judged again by the worker', () => {
 
   it('refuses a rect that overlaps another tile and leaves the layout alone', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
-    await host.handle({ type: 'BIND_TILE', tileId: 't2', tabId: 12 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't2', tabId: 12 })
 
     const response = await host.handle({
       type: 'SET_TILE_RECT',
@@ -766,7 +766,7 @@ describe('P4-D12 - SET_TILE_RECT is judged again by the worker', () => {
 
   it('refuses a rect that leaves the 4x4 grid', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
 
     const response = await host.handle({
       type: 'SET_TILE_RECT',
@@ -779,7 +779,7 @@ describe('P4-D12 - SET_TILE_RECT is judged again by the worker', () => {
 
   it('lets a tile grow over the cells it already owns', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
 
     const response = await host.handle({
       type: 'SET_TILE_RECT',
@@ -802,7 +802,7 @@ describe('P4-D12 - SET_TILE_RECT is judged again by the worker', () => {
 describe('S3 - FOCUS_TILE activates the bound tab and its window', () => {
   it('activates the tab the tile is bound to', async () => {
     const { host, activated } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
 
     const response = await host.handle({ type: 'FOCUS_TILE', tileId: 't1' })
     expect(response).toMatchObject({ ok: true, type: 'FOCUS_TILE' })
@@ -811,8 +811,8 @@ describe('S3 - FOCUS_TILE activates the bound tab and its window', () => {
 
   it('follows the rebind rather than the first tab', async () => {
     const { host, activated } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 12 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 12 })
     await host.handle({ type: 'FOCUS_TILE', tileId: 't1' })
     expect(activated).toEqual([{ tabId: 12, windowId: 1 }])
   })
@@ -830,7 +830,7 @@ describe('S3 - FOCUS_TILE activates the bound tab and its window', () => {
 
   it('refuses once the bound tab is gone', async () => {
     const { host, tabsBackend, activated } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
     tabsBackend.tabs.delete(11)
 
     const response = await host.handle({ type: 'FOCUS_TILE', tileId: 't1' })
@@ -1030,7 +1030,7 @@ describe('S1 - switching a project stops capturing the one that left', () => {
 
   it('unregisters the tiles of the outgoing project', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
     expect(host.engine.captures.statusOf('t1')).not.toBeNull()
 
     await switchTo(host, 'Monitoring')
@@ -1039,7 +1039,7 @@ describe('S1 - switching a project stops capturing the one that left', () => {
 
   it('registers the tiles of the incoming project again', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
 
     await switchTo(host, 'Monitoring')
     await host.handle({ type: 'SET_ACTIVE_PROJECT', projectId: DEFAULT_PROJECT_ID })
@@ -1049,7 +1049,7 @@ describe('S1 - switching a project stops capturing the one that left', () => {
 
   it('unregisters the tiles of a project that was deleted', async () => {
     const { host } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
 
     await host.handle({ type: 'DELETE_PROJECT', projectId: DEFAULT_PROJECT_ID })
     expect(host.engine.captures.statusOf('t1')).toBeNull()
@@ -1061,8 +1061,9 @@ describe('P5-D27 - ADD_TILE covers the two v1 9.1 paths', () => {
   async function addTile(
     host: DashboardHost,
     source: { kind: 'tab'; tabId: number } | { kind: 'url'; url: string },
+    projectId: string = DEFAULT_PROJECT_ID,
   ): Promise<string> {
-    const response = await host.handle({ type: 'ADD_TILE', source })
+    const response = await host.handle({ type: 'ADD_TILE', projectId, source })
     if (!response.ok || response.type !== 'ADD_TILE') {
       throw new Error(`unexpected response ${JSON.stringify(response)}`)
     }
@@ -1141,7 +1142,7 @@ describe('P5-D27 - ADD_TILE covers the two v1 9.1 paths', () => {
       await addTile(host, { kind: 'tab', tabId })
     }
 
-    const response = await host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 200 } })
+    const response = await host.handle({ type: 'ADD_TILE', projectId: DEFAULT_PROJECT_ID, source: { kind: 'tab', tabId: 200 } })
     expect(response).toMatchObject({ ok: false, type: 'ADD_TILE', errorCode: 'GRID_FULL' })
   })
 
@@ -1149,6 +1150,7 @@ describe('P5-D27 - ADD_TILE covers the two v1 9.1 paths', () => {
     const { host } = fixture()
     const response = await host.handle({
       type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
       source: { kind: 'tab', tabId: 999999 },
     })
     expect(response).toMatchObject({ ok: false, type: 'ADD_TILE', errorCode: 'TAB_NOT_FOUND' })
@@ -1166,6 +1168,7 @@ describe('P5-D27 - ADD_TILE covers the two v1 9.1 paths', () => {
 
     const response = await host.handle({
       type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
       source: { kind: 'url', url: 'https://example.org/dash' },
     })
     expect(response).toMatchObject({ ok: false, errorCode: 'GRID_FULL' })
@@ -1196,7 +1199,7 @@ describe('P5-D27 - ADD_TILE covers the two v1 9.1 paths', () => {
       throw new Error('create failed')
     }
     await host.handle({ type: 'SET_ACTIVE_PROJECT', projectId: created.project.id })
-    await addTile(host, { kind: 'tab', tabId: 11 })
+    await addTile(host, { kind: 'tab', tabId: 11 }, created.project.id)
 
     const listed = await host.handle({ type: 'LIST_PROJECTS' })
     if (!listed.ok || listed.type !== 'LIST_PROJECTS') {
@@ -1219,6 +1222,7 @@ describe('P5-D31 - SET_TILE_SETTINGS replaces all four fields', () => {
   async function boundTile(value = fixture()): Promise<{ value: Fixture; tileId: string }> {
     const response = await value.host.handle({
       type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
       source: { kind: 'tab', tabId: 11 },
     })
     if (!response.ok || response.type !== 'ADD_TILE') {
@@ -1377,6 +1381,7 @@ describe('S3 - only an interval change re-registers the tile', () => {
     const value = fixture()
     const response = await value.host.handle({
       type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
       source: { kind: 'tab', tabId: 11 },
     })
     if (!response.ok || response.type !== 'ADD_TILE') {
@@ -1461,6 +1466,7 @@ describe('P5-D14 - a successful drop is persisted at once', () => {
     const value = fixture()
     const response = await value.host.handle({
       type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
       source: { kind: 'tab', tabId: 11 },
     })
     if (!response.ok || response.type !== 'ADD_TILE') {
@@ -1503,7 +1509,7 @@ describe('P5-D14 - a successful drop is persisted at once', () => {
   //+_+// J35 가 무효 Drop 을 화면에서 이미 걸러낸다. 이것은 워커가 재판정에서 거부하는 경로다
   it('writes nothing when the worker refuses the rect', async () => {
     const { value, tileId } = await tiledFixture()
-    await value.host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 12 } })
+    await value.host.handle({ type: 'ADD_TILE', projectId: DEFAULT_PROJECT_ID, source: { kind: 'tab', tabId: 12 } })
     const before = value.storage.writes
 
     const response = await value.host.handle({
@@ -1612,17 +1618,17 @@ describe('P5-D29 - BIND_TILE persists too', () => {
     const { host, storage } = fixture()
     const before = storage.writes
 
-    const response = await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    const response = await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
     expect(response).toMatchObject({ ok: true })
     expect(storage.writes).toBe(before + 1)
   })
 
   it('writes when an existing tile is rebound', async () => {
     const { host, storage } = fixture()
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
     const before = storage.writes
 
-    await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 12 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 12 })
     expect(storage.writes).toBe(before + 1)
   })
 
@@ -1630,7 +1636,7 @@ describe('P5-D29 - BIND_TILE persists too', () => {
     const { host, storage } = fixture()
     const before = storage.writes
 
-    const response = await host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 999999 })
+    const response = await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 999999 })
     expect(response).toMatchObject({ ok: false, errorCode: 'TAB_NOT_FOUND' })
     expect(storage.writes).toBe(before)
   })
@@ -1640,12 +1646,12 @@ describe('P5-D29 - BIND_TILE persists too', () => {
     for (let index = 0; index < 16; index += 1) {
       const tabId = 100 + index
       tabsBackend.tabs.set(tabId, tabInfo(tabId, `https://example.com/${String(tabId)}`))
-      await host.handle({ type: 'BIND_TILE', tileId: `t${String(index)}`, tabId })
+      await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: `t${String(index)}`, tabId })
     }
     tabsBackend.tabs.set(200, tabInfo(200, 'https://example.com/200'))
     const before = storage.writes
 
-    const response = await host.handle({ type: 'BIND_TILE', tileId: 'overflow', tabId: 200 })
+    const response = await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 'overflow', tabId: 200 })
     expect(response).toMatchObject({ ok: false, errorCode: 'GRID_FULL' })
     expect(storage.writes).toBe(before)
   })
@@ -1657,6 +1663,7 @@ describe('P5-D32 - REOPEN_TILE puts the tile back on a fresh tab', () => {
     const value = fixture()
     const added = await value.host.handle({
       type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
       source: { kind: 'tab', tabId: 11 },
     })
     if (!added.ok || added.type !== 'ADD_TILE') {
@@ -1790,7 +1797,7 @@ describe('P5-D32 - REOPEN_TILE puts the tile back on a fresh tab', () => {
   it('refuses a tile whose launch url is empty and creates no tab', async () => {
     const value = fixture([])
     value.tabsBackend.tabs.set(30, { ...tabInfo(30, ''), currentUrl: '' })
-    await value.host.handle({ type: 'BIND_TILE', tileId: 'blank', tabId: 30 })
+    await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 'blank', tabId: 30 })
     const before = value.storage.writes
 
     const response = await value.host.handle({ type: 'REOPEN_TILE', tileId: 'blank' })
@@ -1806,6 +1813,7 @@ describe('S5 - binding a detached tile to another tab clears the fault', () => {
     const value = fixture()
     const added = await value.host.handle({
       type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
       source: { kind: 'tab', tabId: 11 },
     })
     if (!added.ok || added.type !== 'ADD_TILE') {
@@ -1816,7 +1824,7 @@ describe('S5 - binding a detached tile to another tab clears the fault', () => {
       setTimeout(resolve, 0)
     })
 
-    await value.host.handle({ type: 'BIND_TILE', tileId: added.tileId, tabId: 12 })
+    await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: added.tileId, tabId: 12 })
     const state = (await projectState(value.host)).runtimeStates[0]
     expect(state.status).not.toBe('DETACHED')
     expect(state.tabId).toBe(12)
@@ -1829,6 +1837,7 @@ describe('P5-D33 - REMOVE_TILE drops the tile and leaves the tab open', () => {
     const value = fixture()
     const added = await value.host.handle({
       type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
       source: { kind: 'tab', tabId: 11 },
     })
     if (!added.ok || added.type !== 'ADD_TILE') {
@@ -1872,6 +1881,7 @@ describe('P5-D33 - REMOVE_TILE drops the tile and leaves the tab open', () => {
 
     const added = await value.host.handle({
       type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
       source: { kind: 'tab', tabId: 12 },
     })
     expect(added).toMatchObject({ ok: true })
@@ -2037,6 +2047,7 @@ describe('P5-D37 - OPEN_MISSING_TABS opens the tabs a tile is waiting for', () =
     const value = fixture()
     const added = await value.host.handle({
       type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
       source: { kind: 'tab', tabId: 11 },
     })
     if (!added.ok || added.type !== 'ADD_TILE') {
@@ -2050,7 +2061,7 @@ describe('P5-D37 - OPEN_MISSING_TABS opens the tabs a tile is waiting for', () =
   }
 
   async function openMissing(value: Fixture): Promise<string[]> {
-    const response = await value.host.handle({ type: 'OPEN_MISSING_TABS' })
+    const response = await value.host.handle({ type: 'OPEN_MISSING_TABS', projectId: DEFAULT_PROJECT_ID })
     if (!response.ok || response.type !== 'OPEN_MISSING_TABS') {
       throw new Error(`unexpected response ${JSON.stringify(response)}`)
     }
@@ -2074,7 +2085,7 @@ describe('P5-D37 - OPEN_MISSING_TABS opens the tabs a tile is waiting for', () =
 
   it('leaves a tile whose tab is alive alone', async () => {
     const value = fixture()
-    await value.host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 11 } })
+    await value.host.handle({ type: 'ADD_TILE', projectId: DEFAULT_PROJECT_ID, source: { kind: 'tab', tabId: 11 } })
 
     expect(await openMissing(value)).toEqual([])
     expect(value.createdUrls).toEqual([])
@@ -2082,7 +2093,7 @@ describe('P5-D37 - OPEN_MISSING_TABS opens the tabs a tile is waiting for', () =
 
   it('reports nothing and writes nothing when there is no missing tile', async () => {
     const value = fixture()
-    await value.host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 11 } })
+    await value.host.handle({ type: 'ADD_TILE', projectId: DEFAULT_PROJECT_ID, source: { kind: 'tab', tabId: 11 } })
     const before = value.storage.writes
 
     expect(await openMissing(value)).toEqual([])
@@ -2100,7 +2111,7 @@ describe('P5-D37 - OPEN_MISSING_TABS opens the tabs a tile is waiting for', () =
   it('skips a tile with no launch url', async () => {
     const value = fixture([])
     value.tabsBackend.tabs.set(30, { ...tabInfo(30, ''), currentUrl: '' })
-    await value.host.handle({ type: 'BIND_TILE', tileId: 'blank', tabId: 30 })
+    await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 'blank', tabId: 30 })
     value.tabsBackend.closeTab(30)
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 0)
@@ -2115,8 +2126,8 @@ describe('P5-D37 - OPEN_MISSING_TABS opens the tabs a tile is waiting for', () =
     const value = fixture([])
     value.tabsBackend.tabs.set(21, tabInfo(21, 'https://example.com/ok'))
     value.tabsBackend.tabs.set(22, tabInfo(22, 'https://example.com/broken'))
-    const first = await value.host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 21 } })
-    const second = await value.host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 22 } })
+    const first = await value.host.handle({ type: 'ADD_TILE', projectId: DEFAULT_PROJECT_ID, source: { kind: 'tab', tabId: 21 } })
+    const second = await value.host.handle({ type: 'ADD_TILE', projectId: DEFAULT_PROJECT_ID, source: { kind: 'tab', tabId: 22 } })
     if (!first.ok || first.type !== 'ADD_TILE' || !second.ok || second.type !== 'ADD_TILE') {
       throw new Error('add failed')
     }
@@ -2166,6 +2177,7 @@ describe('P5-D6 - CAPTURE_TILE refreshes one preview on demand', () => {
     const value = fixture()
     const added = await value.host.handle({
       type: 'ADD_TILE',
+      projectId: DEFAULT_PROJECT_ID,
       source: { kind: 'tab', tabId: 11 },
     })
     if (!added.ok || added.type !== 'ADD_TILE') {
@@ -2260,7 +2272,7 @@ describe('P5-D6 - CAPTURE_TILE refreshes one preview on demand', () => {
   //+_+// 그 타일의 위상은 자기 만기 기준으로 남는다. 정기 주기가 흔들리지 않는다
   it('leaves the cadence of another tile where it was', async () => {
     const { value, tileId } = await tiled()
-    const other = await value.host.handle({ type: 'ADD_TILE', source: { kind: 'tab', tabId: 12 } })
+    const other = await value.host.handle({ type: 'ADD_TILE', projectId: DEFAULT_PROJECT_ID, source: { kind: 'tab', tabId: 12 } })
     if (!other.ok || other.type !== 'ADD_TILE') {
       throw new Error('add failed')
     }
@@ -2576,7 +2588,7 @@ describe('P7-D41 - reconnect gives the shared tab to the active project first', 
 //+_+// P6-D47. v1 section 15.1 의 전체 Pause 다. P5-D4 가 Phase 6 으로 넘긴 넷 중 하나다
 describe('P6-D47 - SET_PREVIEW_PAUSED is the manual whole-dashboard pause', () => {
   async function boundAndVisible(value: Fixture): Promise<void> {
-    await value.host.handle({ type: 'BIND_TILE', tileId: 't1', tabId: 11 })
+    await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
     await projectState(value.host, true)
   }
 
@@ -2790,7 +2802,7 @@ describe('P6-D3 - a restricted url tile', () => {
   async function boundToChromePage() {
     const value = fixture([11])
     value.tabsBackend.tabs.set(11, tabInfo(11, 'chrome://extensions'))
-    const bound = await value.host.handle({ type: 'BIND_TILE', tileId: 'restricted', tabId: 11 })
+    const bound = await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 'restricted', tabId: 11 })
     expect(bound.ok).toBe(true)
     return value
   }
@@ -2816,7 +2828,7 @@ describe('P6-D3 - a restricted url tile', () => {
   //+_+// 재시도를 멈춰도 재연결 대상이 되지는 않는다. 그러면 Open Missing Tabs 가 탭을 또 연다
   it('is not treated as a tile that lost its tab', async () => {
     const { host } = await boundToChromePage()
-    const opened = await host.handle({ type: 'OPEN_MISSING_TABS' })
+    const opened = await host.handle({ type: 'OPEN_MISSING_TABS', projectId: DEFAULT_PROJECT_ID })
     if (!opened.ok || opened.type !== 'OPEN_MISSING_TABS') {
       throw new Error('unexpected response')
     }
@@ -2835,7 +2847,7 @@ describe('P6-D3 - a restricted url tile', () => {
   it('leaves an ordinary tile capturing', async () => {
     const value = await boundToChromePage()
     value.tabsBackend.tabs.set(12, tabInfo(12, 'https://example.com/12'))
-    await value.host.handle({ type: 'BIND_TILE', tileId: 'ordinary', tabId: 12 })
+    await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 'ordinary', tabId: 12 })
     await projectState(value.host)
 
     value.clock.current += 4000
@@ -2848,7 +2860,7 @@ describe('P6-D3 - a restricted url tile', () => {
   //+_+// 사용자가 타일 탭을 chrome:// 로 옮기면 다음 폴링이 그것을 집는다
   it('picks up a tab that navigates into a restricted url', async () => {
     const value = fixture([11])
-    await value.host.handle({ type: 'BIND_TILE', tileId: 'drifting', tabId: 11 })
+    await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 'drifting', tabId: 11 })
     expect((await projectState(value.host)).runtimeStates[0]?.status).not.toBe('RESTRICTED')
 
     value.tabsBackend.tabs.set(11, tabInfo(11, 'chrome://version'))
@@ -2891,8 +2903,8 @@ describe('P6-D9 - GET_DIAGNOSTICS', () => {
 
   it('counts the registered tiles and the attached tabs', async () => {
     const value = fixture([11, 12])
-    await value.host.handle({ type: 'BIND_TILE', tileId: 'a', tabId: 11 })
-    await value.host.handle({ type: 'BIND_TILE', tileId: 'b', tabId: 12 })
+    await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 'a', tabId: 11 })
+    await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 'b', tabId: 12 })
     driveTick(value.host)
     await flush()
 
@@ -2903,7 +2915,7 @@ describe('P6-D9 - GET_DIAGNOSTICS', () => {
 
   it('spreads the round durations of the rounds that ran', async () => {
     const value = fixture([11])
-    await value.host.handle({ type: 'BIND_TILE', tileId: 'a', tabId: 11 })
+    await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 'a', tabId: 11 })
     driveTick(value.host)
     await flush()
 
@@ -2945,7 +2957,7 @@ describe('P6-D9 - GET_DIAGNOSTICS', () => {
   it('carries no diagnostics storage key and no round log', async () => {
     const diagnostics = new StubStorage()
     const value = fixture([11], new StubStorage(), diagnostics)
-    await value.host.handle({ type: 'BIND_TILE', tileId: 'a', tabId: 11 })
+    await value.host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 'a', tabId: 11 })
     driveTick(value.host)
     await flush()
 
@@ -2962,5 +2974,99 @@ describe('P6-D9 - GET_DIAGNOSTICS', () => {
     for (const forbidden of ['average', 'mean', 'p50', 'p95', 'p99']) {
       expect(text).not.toContain(forbidden)
     }
+  })
+})
+
+//+_+// WEBDECK_PLAN 8-2.3 1번. tileId 가 없거나 타일을 만드는 셋은 projectId 를 싣는다
+//+_+// 워커가 그 값을 다시 판정한다. 화면이 이미 판정했더라도다 (P4-D12 선례)
+describe('8-2.3 1 - the three project-scoped requests reject an unknown projectId', () => {
+  it('refuses ADD_TILE', async () => {
+    const { host } = fixture()
+    const response = await host.handle({
+      type: 'ADD_TILE',
+      projectId: 'no-such-project',
+      source: { kind: 'tab', tabId: 11 },
+    })
+
+    expect(response).toMatchObject({
+      ok: false,
+      type: 'ADD_TILE',
+      errorCode: 'PROJECT_NOT_FOUND',
+    })
+  })
+
+  it('refuses OPEN_MISSING_TABS', async () => {
+    const { host } = fixture()
+    const response = await host.handle({
+      type: 'OPEN_MISSING_TABS',
+      projectId: 'no-such-project',
+    })
+
+    expect(response).toMatchObject({
+      ok: false,
+      type: 'OPEN_MISSING_TABS',
+      errorCode: 'PROJECT_NOT_FOUND',
+    })
+  })
+
+  it('refuses BIND_TILE', async () => {
+    const { host } = fixture()
+    const response = await host.handle({
+      type: 'BIND_TILE',
+      projectId: 'no-such-project',
+      tileId: 't1',
+      tabId: 11,
+    })
+
+    expect(response).toMatchObject({
+      ok: false,
+      type: 'BIND_TILE',
+      errorCode: 'PROJECT_NOT_FOUND',
+    })
+  })
+
+  //+_+// ADD_TILE 은 url 경로에서 탭을 먼저 만든다. 거절이 그보다 앞서야 탭이 남지 않는다
+  it('refuses ADD_TILE before it creates a tab', async () => {
+    const value = fixture()
+    await value.host.handle({
+      type: 'ADD_TILE',
+      projectId: 'no-such-project',
+      source: { kind: 'url', url: 'https://example.org/dash' },
+    })
+
+    expect(value.createdUrls).toEqual([])
+  })
+})
+
+//+_+// J158. 아홉 자리가 실제로 조회로 바뀌었는지는 순수 함수 시험이 증명하지 못한다
+//+_+// 비활성 프로젝트의 타일에 tileId 로 닿는 것이 그 배선의 증거다
+describe('8-2.3 1 - a tileId request reaches a tile outside the active project', () => {
+  it('removes a tile that belongs to an inactive project', async () => {
+    const { host } = fixture()
+    const created = await host.handle({ type: 'CREATE_PROJECT', name: 'Monitoring' })
+    if (!created.ok || created.type !== 'CREATE_PROJECT') {
+      throw new Error('create failed')
+    }
+    const other = created.project.id
+
+    const added = await host.handle({
+      type: 'ADD_TILE',
+      projectId: other,
+      source: { kind: 'tab', tabId: 11 },
+    })
+    if (!added.ok || added.type !== 'ADD_TILE') {
+      throw new Error('add failed')
+    }
+
+    //+_+// 활성은 여전히 기본 프로젝트다. 전환하지 않는다
+    const removed = await host.handle({ type: 'REMOVE_TILE', tileId: added.tileId })
+
+    expect(removed).toMatchObject({ ok: true, type: 'REMOVE_TILE' })
+    const listed = await host.handle({ type: 'LIST_PROJECTS' })
+    if (!listed.ok || listed.type !== 'LIST_PROJECTS') {
+      throw new Error('list failed')
+    }
+    expect(listed.activeProjectId).toBe(DEFAULT_PROJECT_ID)
+    expect(listed.projects.find((item) => item.id === other)?.tiles).toEqual([])
   })
 })

@@ -40,6 +40,7 @@ import {
   EMPTY_CAPTURE_SUMMARY,
   applyCaptureRecord,
   buildRuntimeState,
+  buildTileOwners,
   createProject,
   formatReconnectVerdict,
   newTile,
@@ -48,7 +49,7 @@ import {
   resolveProjects,
   resolveRuntimeStatus,
 } from './projectState'
-import type { TileCaptureSummary } from './projectState'
+import type { TileCaptureSummary, TileOwner } from './projectState'
 import { frameFingerprint, logCaptureRound } from './roundLog'
 import type { CaptureRoundLog } from './roundLog'
 import { TabManager } from './tabManager'
@@ -155,13 +156,15 @@ export function createDashboardHost(
   const bindings = new Map<string, number>()
   const summaries = new Map<string, TileCaptureSummary>()
 
-  //+_+// resolveProjects 가 활성 없음 상태를 만들지 않는다. 도달하면 배선이 깨진 것이다
-  function activeProject(): Project {
-    const found = projects.find((item) => item.id === activeProjectId)
-    if (found === undefined) {
-      throw new Error(`active project ${activeProjectId} is missing`)
-    }
-    return found
+  //+_+// WEBDECK_PLAN 8-2.3 1번. 타일 요청은 활성 프로젝트가 아니라 소유 프로젝트를 본다
+  //+_+// 매 호출에 다시 만든다. projects 는 제자리에서 바뀌므로 한 번 만든 맵은 곧 낡는다. J157
+  function ownerOf(tileId: string): TileOwner | null {
+    return buildTileOwners(projects).get(tileId) ?? null
+  }
+
+  //+_+// 요청이 실어 온 projectId 를 여기서 푼다. 모르는 값은 부르는 쪽이 거절한다
+  function projectById(projectId: string): Project | null {
+    return projects.find((item) => item.id === projectId) ?? null
   }
 
   //+_+// P6-D49. 폴링이 알려 주기 전에는 보이지 않는 것으로 둔다. 그 구간이 곧 Pause 다
@@ -184,7 +187,7 @@ export function createDashboardHost(
       //+_+// settle 이 nextDueAt 도 이미 정한 뒤다. 그래서 해시 비용이 측정값과 다음 만기에 섞이지 않는다
       //+_+// 로그가 던져도 정산이 달라지지 않아야 한다. 그래서 여기서 삼킨다
       try {
-        const tile = activeProject().tiles.find((item) => item.id === record.tileId) ?? null
+        const tile = ownerOf(record.tileId)?.tile ?? null
         const entry: CaptureRoundLog = {
           at: record.startedAt + record.roundDurationMs,
           tileId: record.tileId,
@@ -281,8 +284,11 @@ export function createDashboardHost(
     }
   }
 
-  async function projectState(): Promise<DashboardResponse> {
-    const project = activeProject()
+  async function projectState(projectId: string): Promise<DashboardResponse> {
+    const project = projectById(projectId)
+    if (project === null) {
+      return failure('GET_PROJECT_STATE', 'PROJECT_NOT_FOUND', `Unknown projectId ${projectId}`)
+    }
     const runtimeStates: TileRuntimeState[] = []
     const frames: TileFrame[] = []
 
@@ -331,11 +337,11 @@ export function createDashboardHost(
   //+_+// P5-D14. Drop 성공 1회에 저장한다. Edit Layout 종료를 기다리지 않는다
   //+_+// 거부된 요청은 아무것도 쓰지 않으므로 저장에도 도달하지 않는다
   async function setTileRect(tileId: string, rect: GridRect): Promise<DashboardResponse> {
-    const project = activeProject()
-    const tile = project.tiles.find((item) => item.id === tileId)
-    if (tile === undefined) {
+    const owner = ownerOf(tileId)
+    if (owner === null) {
       return failure('SET_TILE_RECT', 'TILE_NOT_FOUND', `Unknown tileId ${tileId}`)
     }
+    const { tile, project } = owner
     if (!isPlacementValid(rect, project.tiles, tileId)) {
       return failure(
         'SET_TILE_RECT',
@@ -370,8 +376,8 @@ export function createDashboardHost(
     tileId: string,
     settings: TileSettings,
   ): Promise<DashboardResponse> {
-    const tile = activeProject().tiles.find((item) => item.id === tileId)
-    if (tile === undefined) {
+    const tile = ownerOf(tileId)?.tile ?? null
+    if (tile === null) {
       return failure('SET_TILE_SETTINGS', 'TILE_NOT_FOUND', `Unknown tileId ${tileId}`)
     }
     //+_+// P4-D12 선례다. 화면이 이미 판정했더라도 워커가 다시 판정한다
@@ -422,8 +428,15 @@ export function createDashboardHost(
 
   //+_+// P4-D2. 모르는 tileId 면 첫 빈 자리에 1x1 타일을 만든다. 아는 tileId 면 탭만 다시 건다
   //+_+// 새 메시지 이름을 만들지 않기 위해 v1 section 19 의 BIND_TILE 하나로 둘을 처리한다
-  async function bindTile(tileId: string, tabId: number): Promise<DashboardResponse> {
-    const project = activeProject()
+  async function bindTile(
+    projectId: string,
+    tileId: string,
+    tabId: number,
+  ): Promise<DashboardResponse> {
+    const project = projectById(projectId)
+    if (project === null) {
+      return failure('BIND_TILE', 'PROJECT_NOT_FOUND', `Unknown projectId ${projectId}`)
+    }
     const tab = await engine.tabs.info(tabId)
     if (tab === null) {
       return failure('BIND_TILE', 'TAB_NOT_FOUND', `No tab with id ${String(tabId)}`)
@@ -457,8 +470,11 @@ export function createDashboardHost(
   //+_+// P5-D27. v1 section 9.1 의 두 경로다. 자리를 먼저 확인하고 그 뒤에 탭을 만든다
   //+_+// 순서를 뒤집으면 GRID_FULL 로 실패한 뒤에도 사용자 탭이 남는다
   //+_+// 기존 탭은 reload 하지 않고 창도 옮기지 않는다. Link Only 다. v1 section 9.1, 9.2
-  async function addTile(source: AddTileSource): Promise<DashboardResponse> {
-    const project = activeProject()
+  async function addTile(projectId: string, source: AddTileSource): Promise<DashboardResponse> {
+    const project = projectById(projectId)
+    if (project === null) {
+      return failure('ADD_TILE', 'PROJECT_NOT_FOUND', `Unknown projectId ${projectId}`)
+    }
     if (findFirstAvailablePosition(DEV_TILE_SPAN, DEV_TILE_SPAN, project.tiles) === null) {
       return failure('ADD_TILE', 'GRID_FULL', 'The 4x4 grid has no empty slot left')
     }
@@ -525,19 +541,14 @@ export function createDashboardHost(
   //+_+// 그 타일은 bindings 가 비어 있어 전환해도 reregister 가 첫 줄에서 되돌아간다
   //+_+// P5-D36 의 한 탭 한 타일은 프로젝트 경계를 넘어 성립해야 하므로 targets 를 통째로 넘긴다
   async function reconnect(): Promise<void> {
-    const owners = new Map<string, { tile: WebTile; projectId: string }>()
-    for (const project of projects) {
-      for (const tile of project.tiles) {
-        owners.set(tile.id, { tile, projectId: project.id })
-      }
-    }
+    const owners = buildTileOwners(projects)
     //+_+// P7-D41. 활성 프로젝트 타일을 앞에 둔다. taken 이 배열 순서로 탭을 주므로 순서가 승자를 정한다
     //+_+// 앞에 두지 않으면 비활성 타일이 탭을 가져가고 bindOnly 라 활성 프로젝트가 통째로 굶는다 (L49)
     //+_+// 정렬이 아니라 분할이다. 두 그룹 안의 저장 순서가 그대로 남아야 결정성이 유지된다 (P5-D36)
     const owned = [...owners.values()]
     const targets = [
-      ...owned.filter((entry) => entry.projectId === activeProjectId),
-      ...owned.filter((entry) => entry.projectId !== activeProjectId),
+      ...owned.filter((entry) => entry.project.id === activeProjectId),
+      ...owned.filter((entry) => entry.project.id !== activeProjectId),
     ].map(({ tile }) => ({
       tile,
       boundTabId: liveBoundTabId(tile.id),
@@ -555,20 +566,20 @@ export function createDashboardHost(
         continue
       }
       //+_+// C-e2. 붙였든 못 붙였든 한 줄씩 남긴다. 무음이던 것이 결함 추적을 14분 막았다
-      console.log(formatReconnectVerdict(verdict, owner.projectId, activeProjectId))
+      console.log(formatReconnectVerdict(verdict, owner.project.id, activeProjectId))
       rows.push({
         at,
         tileId: verdict.tileId,
-        projectId: owner.projectId,
+        projectId: owner.project.id,
         kind: verdict.kind,
         candidates: reconnectCandidateCount(verdict),
-        active: owner.projectId === activeProjectId,
+        active: owner.project.id === activeProjectId,
       })
       if (verdict.kind !== 'bind') {
         continue
       }
       //+_+// 비활성 프로젝트는 바인딩만 되돌린다. 전환이 오면 reregister 가 그것을 집어 등록한다
-      if (owner.projectId === activeProjectId) {
+      if (owner.project.id === activeProjectId) {
         attachTile(owner.tile, verdict.tabId)
       } else {
         bindOnly(verdict.tileId, verdict.tabId)
@@ -585,9 +596,13 @@ export function createDashboardHost(
 
   //+_+// P5-D37. v1 section 10 의 6단계다. 버튼으로만 돈다. 브라우저 시작과 동시에 돌지 않는다
   //+_+// 한 건이 실패해도 앞의 성공을 되돌리지 않는다. 성공한 것만 응답에 싣는다
-  async function openMissingTabs(): Promise<DashboardResponse> {
+  async function openMissingTabs(projectId: string): Promise<DashboardResponse> {
+    const project = projectById(projectId)
+    if (project === null) {
+      return failure('OPEN_MISSING_TABS', 'PROJECT_NOT_FOUND', `Unknown projectId ${projectId}`)
+    }
     const openedTileIds: string[] = []
-    for (const tile of activeProject().tiles) {
+    for (const tile of project.tiles) {
       if (liveBoundTabId(tile.id) !== null || tile.launchUrl.length === 0) {
         continue
       }
@@ -609,8 +624,8 @@ export function createDashboardHost(
   //+_+// P5-D32. v1 section 9.4 의 Reopen 이다. 자리와 설정과 tileId 를 그대로 두고 탭만 새로 만든다
   //+_+// 새 탭에 걸므로 엔진이 새 TileState 를 만든다. 그것이 fault 를 지우는 명시 경로다
   async function reopenTile(tileId: string): Promise<DashboardResponse> {
-    const tile = activeProject().tiles.find((item) => item.id === tileId)
-    if (tile === undefined) {
+    const tile = ownerOf(tileId)?.tile ?? null
+    if (tile === null) {
       return failure('REOPEN_TILE', 'TILE_NOT_FOUND', `Unknown tileId ${tileId}`)
     }
     //+_+// S2 이전에 만들어진 저장값은 launchUrl 이 비어 있을 수 있다. 탭을 만들기 전에 막는다
@@ -650,13 +665,14 @@ export function createDashboardHost(
 
   //+_+// P5-D33. v1 section 9.4 의 Remove Tile 이다. 사용자의 탭은 닫지 않는다
   async function removeTile(tileId: string): Promise<DashboardResponse> {
-    const project = activeProject()
-    const index = project.tiles.findIndex((item) => item.id === tileId)
-    if (index < 0) {
+    const owner = ownerOf(tileId)
+    if (owner === null) {
       return failure('REMOVE_TILE', 'TILE_NOT_FOUND', `Unknown tileId ${tileId}`)
     }
 
-    project.tiles.splice(index, 1)
+    //+_+// 조회가 준 것과 같은 객체다. id 로 배열을 다시 훑지 않는다
+    const { tile, project } = owner
+    project.tiles.splice(project.tiles.indexOf(tile), 1)
     await engine.captures.unregister(tileId)
     bindings.delete(tileId)
     summaries.delete(tileId)
@@ -797,19 +813,19 @@ export function createDashboardHost(
             )
           }
           applyDashboardVisible(request.dashboardVisible)
-          return projectState()
+          return projectState(request.projectId)
         case 'LIST_BROWSER_TABS':
           return { ok: true, type: 'LIST_BROWSER_TABS', tabs: await listTabs() }
         case 'ADD_TILE':
-          return addTile(request.source)
+          return addTile(request.projectId, request.source)
         case 'REOPEN_TILE':
           return reopenTile(request.tileId)
         case 'REMOVE_TILE':
           return removeTile(request.tileId)
         case 'OPEN_MISSING_TABS':
-          return openMissingTabs()
+          return openMissingTabs(request.projectId)
         case 'BIND_TILE':
-          return bindTile(request.tileId, request.tabId)
+          return bindTile(request.projectId, request.tileId, request.tabId)
         case 'CAPTURE_TILE':
           return captureTile(request.tileId)
         case 'FOCUS_TILE':
