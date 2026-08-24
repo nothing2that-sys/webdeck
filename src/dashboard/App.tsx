@@ -53,6 +53,7 @@ import {
   failureNotice,
   gridClassName,
   openedTabsNotice,
+  portEventLabel,
   recordLogLabel,
   tileSettingsLabel,
   toggleClassName,
@@ -776,6 +777,16 @@ export function App(): React.JSX.Element {
           {diagnostics.recordLogs.map((log) => (
             <span key={log.name}>{recordLogLabel(log)}</span>
           ))}
+          <span>포트 이벤트</span>
+          {diagnostics.portEvents.length === 0 ? (
+            <span>없음</span>
+          ) : (
+            diagnostics.portEvents.map((row) => (
+              <span key={`${String(row.at)}-${row.event}-${row.clientId}`}>
+                {portEventLabel(row)}
+              </span>
+            ))
+          )}
         </section>
       ) : null}
 

@@ -1,6 +1,6 @@
 import { findFirstAvailablePosition, isPlacementValid } from '../shared/grid'
 import type { GridRect } from '../shared/grid'
-import { assertNever } from '../shared/messages'
+import { assertNever, clientIdOfPortName } from '../shared/messages'
 import type {
   AddTileSource,
   DashboardErrorCode,
@@ -8,6 +8,7 @@ import type {
   DashboardRequest,
   DashboardRequestType,
   DashboardResponse,
+  PortEventRow,
   TileFrame,
   TileSettings,
 } from '../shared/messages'
@@ -25,10 +26,14 @@ import type { BrowserTabInfo, Project, TileRuntimeState, WebTile } from '../shar
 import { DebuggerSessionManager, errorMessage } from './debuggerSessionManager'
 import type { DebuggerBackend } from './debuggerSessionManager'
 import {
+  PORT_EVENT_KEY,
+  PORT_EVENT_VIEW,
   WORKER_STARTS_KEY,
   buildDiagnostics,
   createRoundLogStore,
+  readPortEvents,
   readWorkerStarts,
+  recordPortEvent,
   recordReconnectVerdicts,
   recordWorkerStart,
 } from './diagnostics'
@@ -115,6 +120,10 @@ export interface DashboardHost {
   handle(request: DashboardRequest): Promise<DashboardResponse>
   //+_+// S1. 워커 기동 시 1회다. 실패해도 던지지 않고 결과를 그대로 돌려준다
   load(): Promise<LoadResult>
+  //+_+// TASK-P8-05 §1.4. 포트 리스너가 부르는 두 자리다. 장부는 여기 안쪽에 있다
+  //+_+// 리스너에 상태를 두면 시험이 못 덮는다. 시험은 host 를 직접 부르고 chrome 스텁이 없다
+  portConnected(clientId: string, at: number): Promise<void>
+  portDisconnected(clientId: string, at: number): Promise<void>
 }
 
 //+_+// P5-D12. 창 인자를 받지 않는다. v1 section 9.1 은 "현재 Chrome 에 열린 탭 목록" 이다
@@ -174,6 +183,19 @@ export function createDashboardHost(
   let manualPaused = false
 
   const rounds = diagnostics === null ? null : createRoundLogStore(diagnostics)
+
+  //+_+// TASK-P8-05 §1.5. 쓰기를 직렬화한다. 탭 둘이 동시에 끊기면 읽고 쓰는 사이에 서로를 덮는다
+  //+_+// 회차 로그가 같은 이유로 체인을 쓴다 (createRoundLogStore). 여기는 버퍼 없이 체인만 둔다. J165
+  let portEventChain: Promise<void> = Promise.resolve()
+
+  function notePortEvent(event: PortEventRow['event'], clientId: string, at: number): Promise<void> {
+    if (diagnostics === null) {
+      return Promise.resolve()
+    }
+    const backend = diagnostics
+    portEventChain = portEventChain.then(() => recordPortEvent(backend, { at, event, clientId }))
+    return portEventChain
+  }
 
   const engine = createPreviewEngine(debuggerBackend, tabsBackend, clock, {
     onCaptureSettled: (record, frame) => {
@@ -727,15 +749,22 @@ export function createDashboardHost(
 
   //+_+// P6-D9 · D113. v1 section 15.5 다. 값은 전부 엔진이 이미 들고 있는 것이다
   //+_+// 워커 기동 수만 계측 배선에서 읽는다. 배선이 없으면 null 이다. 0 과 구별한다
-  //+_+// 계측 키 이름도 회차 로그도 재연결 판정도 응답에 싣지 않는다. 그것은 실측 도구다
+  //+_+// 회차 로그도 재연결 판정도 응답에 싣지 않는다. 그것은 실측 도구다
+  //+_+// TASK-P8-05 §1.6 의 portEvents 만 예외다. P6-D113 과 부딪히며 보고에 적었다
   async function diagnosticsSnapshot(): Promise<DashboardResponse> {
     let workerStarts: number | null = null
+    let portEvents: PortEventRow[] = []
     if (diagnostics !== null) {
       try {
         workerStarts = readWorkerStarts(await diagnostics.get(WORKER_STARTS_KEY)).starts
+        //+_+// 저장 상한은 200 이고 화면에 나르는 것은 그 꼬리뿐이다 (PORT_EVENT_VIEW)
+        portEvents = readPortEvents(await diagnostics.get(PORT_EVENT_KEY)).recent.slice(
+          -PORT_EVENT_VIEW,
+        )
       } catch {
-        //+_+// 계측 읽기 실패가 Diagnostics 조회를 깨지 않는다. 모르는 것은 null 로 둔다
+        //+_+// 계측 읽기 실패가 Diagnostics 조회를 깨지 않는다. 모르는 것은 null 과 빈 목록으로 둔다
         workerStarts = null
+        portEvents = []
       }
     }
     return {
@@ -746,6 +775,7 @@ export function createDashboardHost(
         registeredTiles: engine.captures.registeredTileCount,
         attachedTabs: engine.sessions.attachedCount,
         workerStarts,
+        portEvents,
         //+_+// P6-D7 의 다섯 배열이다. 이름은 화면에 그대로 나온다
         recordLogs: [
           {
@@ -802,6 +832,8 @@ export function createDashboardHost(
   return {
     engine,
     load,
+    portConnected: (clientId, at) => notePortEvent('connect', clientId, at),
+    portDisconnected: (clientId, at) => notePortEvent('disconnect', clientId, at),
     handle: async (request) => {
       switch (request.type) {
         case 'GET_PROJECT_STATE':
@@ -1025,6 +1057,25 @@ if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
     })
     //+_+// 비동기 응답이다. true 를 돌려주지 않으면 채널이 먼저 닫힌다
     return true
+  })
+
+  //+_+// TASK-P8-05 §1.4. 이름을 풀어 host 를 부르는 것뿐이다. 여기에 상태를 두지 않는다
+  //+_+// 포트로 아무것도 보내지 않는다. postMessage 도 onMessage 도 걸지 않는다 (§1.1)
+  //+_+// 접두사가 다른 포트는 무시한다. measure/transport 가 port.name 을 거르는 것과 같다
+  chrome.runtime.onConnect.addListener((port) => {
+    const clientId = clientIdOfPortName(port.name)
+    if (clientId === null) {
+      return
+    }
+    void host.portConnected(clientId, Date.now()).catch((error: unknown) => {
+      console.error('[webdeck] port connect record failed', errorMessage(error))
+    })
+    port.onDisconnect.addListener(() => {
+      //+_+// 이 시점에 페이지가 이미 없다. await 하지 않는다
+      void host.portDisconnected(clientId, Date.now()).catch((error: unknown) => {
+        console.error('[webdeck] port disconnect record failed', errorMessage(error))
+      })
+    })
   })
 
   //+_+// v1 section 13 line 855. Action 버튼으로도 Dashboard 를 열거나 활성화한다

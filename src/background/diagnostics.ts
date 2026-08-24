@@ -1,4 +1,9 @@
-import type { DiagnosticsSnapshot, DurationSpread, RecordLogSize } from '../shared/messages'
+import type {
+  DiagnosticsSnapshot,
+  DurationSpread,
+  PortEventRow,
+  RecordLogSize,
+} from '../shared/messages'
 import { RECORD_LOG_LIMIT } from '../shared/recordLimit'
 import type { KeyValueBackend } from '../shared/storage'
 import { errorMessage } from './debuggerSessionManager'
@@ -23,6 +28,23 @@ export const RECONNECT_LOG_KEY = 'webdeck.diagnostics.reconnect'
 
 //+_+// 워커 기동당 타일 수만큼이다. 회차 로그와 달리 주기적으로 늘지 않는다
 export const RECONNECT_LOG_LIMIT = 200
+
+//+_+// TASK-P8-05 §1.5. 포트 수명 신호를 사후에 읽는 키다. P6-D16 과 같은 방식이다
+//+_+// 콘솔에 남기지 않는다. TASK-P8-04 가 콘솔을 못 읽어 막혔고 P6-D22 가 워커 부착을 금지한다
+export const PORT_EVENT_KEY = 'webdeck.diagnostics.portEvents'
+
+//+_+// 재연결 판정과 같은 상한이다. 탭 하나가 열고 닫을 때 두 줄이므로 주기적으로 늘지 않는다
+export const PORT_EVENT_LIMIT = 200
+
+//+_+// Diagnostics 응답에 싣는 줄 수다. 상한 200 을 2초마다 나르지 않는다. J163
+export const PORT_EVENT_VIEW = 12
+
+//+_+// 누적 둘은 절단되지 않는다. 최근 목록이 잘려도 총계는 남는다. workerStarts 와 같은 규칙이다
+export interface PortEventRecord {
+  connects: number
+  disconnects: number
+  recent: PortEventRow[]
+}
 
 export interface WorkerStartRecord {
   starts: number
@@ -69,6 +91,59 @@ export function nextWorkerStarts(
 ): WorkerStartRecord {
   const previous = readWorkerStarts(stored)
   return { starts: previous.starts + 1, recentAt: [...previous.recentAt, at].slice(-limit) }
+}
+
+//+_+// 계측이 자기가 쓴 값을 읽어도 형태를 다시 검증한다. readWorkerStarts 와 같은 규칙이다
+function isPortEventRow(value: unknown): value is PortEventRow {
+  return (
+    isRecord(value) &&
+    typeof value.at === 'number' &&
+    typeof value.clientId === 'string' &&
+    (value.event === 'connect' || value.event === 'disconnect')
+  )
+}
+
+export function readPortEvents(stored: unknown): PortEventRecord {
+  if (
+    !isRecord(stored) ||
+    typeof stored.connects !== 'number' ||
+    typeof stored.disconnects !== 'number' ||
+    !Array.isArray(stored.recent)
+  ) {
+    return { connects: 0, disconnects: 0, recent: [] }
+  }
+  return {
+    connects: stored.connects,
+    disconnects: stored.disconnects,
+    recent: stored.recent.filter(isPortEventRow),
+  }
+}
+
+export function nextPortEvents(
+  stored: unknown,
+  row: PortEventRow,
+  limit = PORT_EVENT_LIMIT,
+): PortEventRecord {
+  const previous = readPortEvents(stored)
+  return {
+    connects: previous.connects + (row.event === 'connect' ? 1 : 0),
+    disconnects: previous.disconnects + (row.event === 'disconnect' ? 1 : 0),
+    recent: [...previous.recent, row].slice(-limit),
+  }
+}
+
+//+_+// 실패해도 아무것도 막지 않는다. 삼키되 콘솔에 1줄 남긴다. recordWorkerStart 와 같은 규칙이다
+//+_+// 읽고 쓰는 사이의 경합은 부르는 쪽이 직렬화한다. 이 함수는 그것을 하지 않는다
+export async function recordPortEvent(
+  backend: KeyValueBackend,
+  row: PortEventRow,
+): Promise<void> {
+  try {
+    const stored = await backend.get(PORT_EVENT_KEY)
+    await backend.set(PORT_EVENT_KEY, nextPortEvents(stored, row))
+  } catch (error: unknown) {
+    console.error('[webdeck] port event record failed', errorMessage(error))
+  }
 }
 
 export function readRoundRows(stored: unknown): RoundLogRow[] {
@@ -204,6 +279,7 @@ export function buildDiagnostics(input: {
   attachedTabs: number
   workerStarts: number | null
   recordLogs: readonly RecordLogSize[]
+  portEvents: readonly PortEventRow[]
 }): DiagnosticsSnapshot {
   return {
     sampleLimit: RECORD_LOG_LIMIT,
@@ -213,5 +289,6 @@ export function buildDiagnostics(input: {
     attachedTabs: input.attachedTabs,
     workerStarts: input.workerStarts,
     recordLogs: [...input.recordLogs],
+    portEvents: [...input.portEvents],
   }
 }

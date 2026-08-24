@@ -1,4 +1,5 @@
 import type { GridRect } from '../shared/grid'
+import { portName } from '../shared/messages'
 import type {
   AddTileSource,
   DashboardRequest,
@@ -8,6 +9,27 @@ import type {
 
 //+_+// P4-D7 이 정한 폴링 주기다. 워커의 캡처 주기와 별개이며 서로를 참조하지 않는다
 export const POLL_INTERVAL_MS = 2000
+
+//+_+// P8-D8. 화면이 만드는 탭 식별자다. 모듈 최상위라 문서 수명과 같다
+//+_+// GET_PROJECT_STATE 에는 아직 싣지 않는다. 그것은 WEBDECK_PLAN 8-2.3 2번 몫이다
+const clientId = crypto.randomUUID()
+
+export function dashboardClientId(): string {
+  return clientId
+}
+
+//+_+// TASK-P8-05 §1.1. 수명 신호 전용이다. 포트로 아무것도 보내지 않는다
+//+_+// 참조를 모듈에 붙든다. 놓았을 때 수거되어 워커가 끊김으로 읽는지는 확인되지 않았다
+//+_+// harness/p3/main.ts 와 measure/transport/measure.js 도 참조를 든다. 그 형태를 따른다
+let lifetimePort: chrome.runtime.Port | null = null
+
+//+_+// 두 번 불러도 포트를 둘 만들지 않는다. main.tsx 가 한 번만 부르지만 규칙을 여기 둔다
+export function connectLifetimePort(): void {
+  if (lifetimePort !== null) {
+    return
+  }
+  lifetimePort = chrome.runtime.connect({ name: portName(clientId) })
+}
 
 //+_+// v1 section 20. UI 컴포넌트는 chrome.* 를 부르지 않는다. 이 파일이 유일한 호출 지점이다
 //+_+// 워커가 없거나 응답 전에 죽으면 sendMessage 가 reject 한다. 실패도 union 으로 돌려준다

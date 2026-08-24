@@ -13,6 +13,7 @@ import {
   tileSettingsLabel,
   toggleClassName,
   toggleLabel,
+  portEventLabel,
   workerStartsLabel,
 } from '../src/dashboard/screenText'
 import type { DashboardErrorCode, DashboardFailure } from '../src/shared/messages'
@@ -138,5 +139,24 @@ describe('P6-D113 - the diagnostics labels', () => {
     expect(recordLogLabel({ name: 'captureRecords', length: 200, limit: 200 })).toBe(
       'captureRecords 200 / 200',
     )
+  })
+})
+
+//+_+// TASK-P8-05 §1.6. 관측용 한 줄이다. 시각은 로컬이라 기대값도 같은 Date 로 만든다
+describe('8-2 port lifetime - one observation line', () => {
+  it('prints the local clock, the event and the head of the clientId', () => {
+    const at = new Date(2026, 7, 24, 9, 5, 3).getTime()
+    const time = new Date(at)
+    const pad = (value: number): string => String(value).padStart(2, '0')
+    const hms = [time.getHours(), time.getMinutes(), time.getSeconds()].map(pad).join(':')
+
+    expect(portEventLabel({ at, event: 'connect', clientId: 'abcdef01-2345-6789' })).toBe(
+      `${hms} connect abcdef01`,
+    )
+  })
+
+  it('prints a short clientId whole', () => {
+    const at = new Date(2026, 7, 24, 0, 0, 0).getTime()
+    expect(portEventLabel({ at, event: 'disconnect', clientId: 'ab' })).toBe('00:00:00 disconnect ab')
   })
 })

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  PORT_EVENT_KEY,
+  PORT_EVENT_LIMIT,
   RECONNECT_LOG_KEY,
   RECONNECT_LOG_LIMIT,
   ROUND_LOG_KEY,
@@ -7,10 +9,13 @@ import {
   appendReconnectRows,
   appendRoundRow,
   createRoundLogStore,
+  nextPortEvents,
   nextWorkerStarts,
+  readPortEvents,
   readReconnectRows,
   readRoundRows,
   readWorkerStarts,
+  recordPortEvent,
   recordReconnectVerdicts,
   recordWorkerStart,
 } from '../src/background/diagnostics'
@@ -354,5 +359,73 @@ describe('P6-D56 - the reconnect verdicts reach storage', () => {
     expect(readReconnectRows([{ at: 1, tileId: 't', projectId: 'p', kind: 'wat', candidates: 0, active: true }])).toEqual([])
     expect(readReconnectRows([{ at: 1, tileId: 't', projectId: 'p', kind: 'bind', candidates: 0 }])).toEqual([])
     expect(readReconnectRows([row(), 'junk'])).toHaveLength(1)
+  })
+})
+
+//+_+// TASK-P8-05 §1.5. 포트 수명 기록이다. workerStarts 와 같은 형태 -- 총계는 안 잘리고 최근만 잘린다
+describe('8-2 port lifetime - the record keeps totals whole and the tail bounded', () => {
+  function row(at: number, event: 'connect' | 'disconnect', clientId = 'c1') {
+    return { at, event, clientId } as const
+  }
+
+  it('starts from zero when nothing is stored', () => {
+    expect(readPortEvents(undefined)).toEqual({ connects: 0, disconnects: 0, recent: [] })
+  })
+
+  it('counts connects and disconnects apart', () => {
+    let stored: unknown = undefined
+    stored = nextPortEvents(stored, row(1, 'connect'))
+    stored = nextPortEvents(stored, row(2, 'connect', 'c2'))
+    stored = nextPortEvents(stored, row(3, 'disconnect'))
+
+    expect(readPortEvents(stored).connects).toBe(2)
+    expect(readPortEvents(stored).disconnects).toBe(1)
+    expect(readPortEvents(stored).recent).toHaveLength(3)
+  })
+
+  //+_+// 링버퍼가 잘려도 총계는 남는다. workerStarts 가 같은 규칙이다
+  it('drops the oldest row once the limit is reached but keeps the totals', () => {
+    let stored: unknown = undefined
+    for (let index = 0; index < PORT_EVENT_LIMIT + 5; index += 1) {
+      stored = nextPortEvents(stored, row(index, 'connect'))
+    }
+    const record = readPortEvents(stored)
+
+    expect(record.recent).toHaveLength(PORT_EVENT_LIMIT)
+    expect(record.recent[0]?.at).toBe(5)
+    expect(record.connects).toBe(PORT_EVENT_LIMIT + 5)
+  })
+
+  //+_+// 손상된 값에 이어 쓰지 않는다. 자기가 쓴 값도 형태를 다시 검증한다
+  it('rejects rows and records that do not have the shape', () => {
+    expect(readPortEvents('nope').recent).toEqual([])
+    expect(readPortEvents({ connects: 1, disconnects: 0 }).recent).toEqual([])
+    expect(
+      readPortEvents({ connects: 1, disconnects: 0, recent: [{ at: 1, event: 'wat', clientId: 'c' }] })
+        .recent,
+    ).toEqual([])
+    expect(
+      readPortEvents({ connects: 1, disconnects: 0, recent: [row(1, 'connect'), 'junk'] }).recent,
+    ).toHaveLength(1)
+  })
+
+  it('writes to its own key and not to the state envelope', async () => {
+    const backend = new CountingStorage()
+    await recordPortEvent(backend, row(11, 'connect'))
+
+    expect([...backend.store.keys()]).toEqual([PORT_EVENT_KEY])
+    expect(readPortEvents(backend.store.get(PORT_EVENT_KEY)).recent).toEqual([row(11, 'connect')])
+  })
+
+  //+_+// 실패해도 아무것도 막지 않는다. 삼키되 콘솔에 1줄 남긴다
+  it('swallows a backend failure and leaves one console line', async () => {
+    const backend = new CountingStorage()
+    backend.failSet = true
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await recordPortEvent(backend, row(11, 'connect'))
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    spy.mockRestore()
   })
 })

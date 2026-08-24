@@ -16,6 +16,24 @@ export const DEFAULT_PROJECT_ID = 'webdeck.default'
 //+_+// 기본 프로젝트의 이름이다. 사용자가 이름을 바꾸면 저장값이 이긴다
 export const DEFAULT_PROJECT_NAME = 'WebDeck'
 
+//+_+// TASK-P8-05 §1.2. 수명 신호 포트의 이름이다. P8-D8 의 clientId 를 여기 싣는다
+//+_+// 포트와 탭을 잇는 유일한 끈이다. 포트로 아무것도 보내지 않으므로 이름이 유일한 자료다
+//+_+// 접두사를 보는 것은 measure/transport 가 port.name 으로 남의 포트를 거르는 것과 같다. J162
+export const PORT_NAME_PREFIX = 'webdeck.dashboard:'
+
+export function portName(clientId: string): string {
+  return `${PORT_NAME_PREFIX}${clientId}`
+}
+
+//+_+// 접두사가 다르면 null 이다. 접두사만 있고 뒤가 비어도 null 이다. 워커는 null 을 무시한다
+export function clientIdOfPortName(name: string): string | null {
+  if (!name.startsWith(PORT_NAME_PREFIX)) {
+    return null
+  }
+  const clientId = name.slice(PORT_NAME_PREFIX.length)
+  return clientId.length === 0 ? null : clientId
+}
+
 //+_+// v1 section 9.1 의 두 경로다. tab 은 기존 탭을 걸고 url 은 워커가 새 탭을 만든다
 export type AddTileSource = { kind: 'tab'; tabId: number } | { kind: 'url'; url: string }
 
@@ -115,6 +133,13 @@ export interface DurationSpread {
   max: number | null
 }
 
+//+_+// TASK-P8-05 §1.5. 포트 수명 관측 한 줄이다. at 은 epoch ms 다. 다른 계측 키와 같은 규칙이다
+export interface PortEventRow {
+  at: number
+  event: 'connect' | 'disconnect'
+  clientId: string
+}
+
 //+_+// P6-D112. 기록 배열 하나의 현재 길이와 상한이다. 이름이 화면에 그대로 나온다
 export interface RecordLogSize {
   name: string
@@ -124,6 +149,8 @@ export interface RecordLogSize {
 
 //+_+// P6-D113. Diagnostics 가 나르는 전부다. 계측 키(webdeck.diagnostics.*)를 여기에 싣지 않는다
 //+_+// 그것은 실측 도구이고 사용자 화면의 것이 아니다
+//+_+// TASK-P8-05 §1.6 이 portEvents 로 그 규칙을 깬다. P6-D113 과 부딪히며 보고에 적었다
+//+_+// 포트 수명 관측을 사용자가 읽을 창이 Diagnostics 뿐이기 때문이다. 관측이 갈리면 뺄지 정한다
 export interface DiagnosticsSnapshot {
   //+_+// P6-D112. 소요와 타임아웃 수가 최근 몇 개를 기준으로 한 값인지다. 전체 누적이 아니다
   sampleLimit: number
@@ -134,6 +161,8 @@ export interface DiagnosticsSnapshot {
   //+_+// 누적이다. 상한과 무관하게 는다. 계측 배선이 없으면 null 이다. 0 과 구별한다
   workerStarts: number | null
   recordLogs: RecordLogSize[]
+  //+_+// TASK-P8-05 §1.6. 최근 몇 줄뿐이다. 저장된 전부가 아니며 워커가 잘라 싣는다
+  portEvents: PortEventRow[]
 }
 
 //+_+// P4-D7. 프레임은 GET_PROJECT_STATE 응답에 얹는다. union 구성원 수를 늘리지 않는다
