@@ -11,7 +11,7 @@ import type {
 export const POLL_INTERVAL_MS = 2000
 
 //+_+// P8-D8. 화면이 만드는 탭 식별자다. 모듈 최상위라 문서 수명과 같다
-//+_+// GET_PROJECT_STATE 에는 아직 싣지 않는다. 그것은 WEBDECK_PLAN 8-2.3 2번 몫이다
+//+_+// fetchProjectState 가 이 값을 GET_PROJECT_STATE 에 싣는다 (WEBDECK_PLAN 8-2.3 2번)
 const clientId = crypto.randomUUID()
 
 export function dashboardClientId(): string {
@@ -101,12 +101,20 @@ export async function listProjects(): Promise<DashboardResponse> {
   return send({ type: 'LIST_PROJECTS' })
 }
 
-export async function createProject(name: string): Promise<DashboardResponse> {
-  return send({ type: 'CREATE_PROJECT', name })
+//+_+// J171. 허브가 이름과 설명을 함께 보낸다. 설명을 안 넘기면 워커가 건드리지 않는다
+export async function createProject(
+  name: string,
+  description?: string,
+): Promise<DashboardResponse> {
+  return send({ type: 'CREATE_PROJECT', name, description })
 }
 
-export async function renameProject(projectId: string, name: string): Promise<DashboardResponse> {
-  return send({ type: 'RENAME_PROJECT', projectId, name })
+export async function renameProject(
+  projectId: string,
+  name: string,
+  description?: string,
+): Promise<DashboardResponse> {
+  return send({ type: 'RENAME_PROJECT', projectId, name, description })
 }
 
 export async function deleteProject(projectId: string): Promise<DashboardResponse> {
@@ -115,6 +123,11 @@ export async function deleteProject(projectId: string): Promise<DashboardRespons
 
 export async function setActiveProject(projectId: string): Promise<DashboardResponse> {
   return send({ type: 'SET_ACTIVE_PROJECT', projectId })
+}
+
+//+_+// P8-D16. 허브만 쓴다. 탭 생성은 워커가 한다. 화면은 chrome.tabs.* 를 부르지 않는다
+export async function openProjectTab(projectId: string): Promise<DashboardResponse> {
+  return send({ type: 'OPEN_PROJECT_TAB', projectId })
 }
 
 export async function listBrowserTabs(): Promise<DashboardResponse> {

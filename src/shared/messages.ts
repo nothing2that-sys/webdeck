@@ -21,6 +21,9 @@ export const DEFAULT_PROJECT_NAME = 'WebDeck'
 //+_+// 접두사를 보는 것은 measure/transport 가 port.name 으로 남의 포트를 거르는 것과 같다. J162
 export const PORT_NAME_PREFIX = 'webdeck.dashboard:'
 
+//+_+// P8-D18. 프로젝트 화면이 URL 로 프로젝트를 정한다. 워커가 붙이고 main.tsx 가 읽는다
+export const PROJECT_PARAM = 'project'
+
 export function portName(clientId: string): string {
   return `${PORT_NAME_PREFIX}${clientId}`
 }
@@ -76,10 +79,13 @@ export type DashboardRequest =
   //+_+// P5-D37. v1 section 10 의 6단계다. REOPEN_TILE 의 일괄판이며 메시지를 합치지 않는다
   | { type: 'OPEN_MISSING_TABS'; projectId: string }
   | { type: 'LIST_PROJECTS' }
-  | { type: 'CREATE_PROJECT'; name: string }
-  | { type: 'RENAME_PROJECT'; projectId: string; name: string }
+  //+_+// J171. 설명은 허브의 New 와 Rename 이 이름과 함께 보낸다. optional 이다
+  | { type: 'CREATE_PROJECT'; name: string; description?: string }
+  | { type: 'RENAME_PROJECT'; projectId: string; name: string; description?: string }
   | { type: 'DELETE_PROJECT'; projectId: string }
   | { type: 'SET_ACTIVE_PROJECT'; projectId: string }
+  //+_+// P8-D16. 허브가 프로젝트 탭을 연다. 화면은 chrome.tabs.* 를 부르지 않는다
+  | { type: 'OPEN_PROJECT_TAB'; projectId: string }
   //+_+// P6-D47. v1 section 15.1 의 전체 Pause 다. P5-D4 가 Phase 6 으로 넘긴 넷 중 하나다
   //+_+// P6-D48. 타일별 Pause 는 만들지 않는다. 이것은 대시보드 전체를 멈춘다
   | { type: 'SET_PREVIEW_PAUSED'; paused: boolean }
@@ -204,6 +210,7 @@ export type DashboardResponse =
   | { ok: true; type: 'RENAME_PROJECT' }
   | { ok: true; type: 'DELETE_PROJECT' }
   | { ok: true; type: 'SET_ACTIVE_PROJECT' }
+  | { ok: true; type: 'OPEN_PROJECT_TAB' }
   | { ok: true; type: 'SET_PREVIEW_PAUSED'; paused: boolean }
   | { ok: true; type: 'GET_DIAGNOSTICS'; diagnostics: DiagnosticsSnapshot }
   | DashboardFailure

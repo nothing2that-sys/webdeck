@@ -1,6 +1,6 @@
 import { findFirstAvailablePosition, isPlacementValid } from '../shared/grid'
 import type { GridRect } from '../shared/grid'
-import { assertNever, clientIdOfPortName } from '../shared/messages'
+import { PROJECT_PARAM, assertNever, clientIdOfPortName } from '../shared/messages'
 import type {
   AddTileSource,
   DashboardErrorCode,
@@ -49,6 +49,7 @@ import {
   createProject,
   formatReconnectVerdict,
   newTile,
+  normalizeDescription,
   planReconnect,
   reconnectCandidateCount,
   resolveProjects,
@@ -151,6 +152,10 @@ export type FocusTab = (tabId: number, windowId: number) => Promise<void>
 //+_+// P5-D27 의 url 경로다. v1 section 20 이 UI 의 chrome 직접 호출을 금지하므로 워커가 만든다
 export type CreateTab = (url: string) => Promise<BrowserTabInfo>
 
+//+_+// P8-D16 · P8-D18. 프로젝트 탭의 URL 을 만든다. 호스트는 chrome 도 페이지 이름도 모른다
+//+_+// ListTabs 와 같은 자리다. chrome 지식을 어댑터에 두어 호스트가 시험 가능한 채로 남는다
+export type ProjectTabUrl = (projectId: string) => string
+
 function failure(
   type: DashboardRequestType,
   errorCode: DashboardErrorCode,
@@ -167,6 +172,7 @@ export function createDashboardHost(
   listTabs: ListTabs,
   focusTab: FocusTab,
   createTab: CreateTab,
+  projectTabUrl: ProjectTabUrl,
   storage: KeyValueBackend,
   clock: Clock = systemClock,
   //+_+// P6-D18. 계측 전용 자리다. null 이면 링버퍼를 쓰지 않는다
@@ -788,19 +794,33 @@ export function createDashboardHost(
   }
 
   //+_+// P5-D23. 생성은 생성만 한다. 전환은 SET_ACTIVE_PROJECT 가 따로 맡는다. J82
-  async function createNewProject(name: string): Promise<DashboardResponse> {
-    const created = createProject(crypto.randomUUID(), name)
+  async function createNewProject(name: string, description?: string): Promise<DashboardResponse> {
+    const created = createProject(crypto.randomUUID(), name, description)
     await applyProjects([...projects, created], activeProjectId)
     await persist()
     return { ok: true, type: 'CREATE_PROJECT', project: created }
   }
 
-  async function renameProject(projectId: string, name: string): Promise<DashboardResponse> {
+  //+_+// J173. description 이 없는 요청은 설명을 건드리지 않는다. 허브는 둘을 함께 보낸다
+  //+_+// 빈 문자열은 지우라는 뜻이다. normalizeDescription 이 그것을 필드 부재로 만든다 (P8-D13)
+  async function renameProject(
+    projectId: string,
+    name: string,
+    description?: string,
+  ): Promise<DashboardResponse> {
     const target = projects.find((item) => item.id === projectId)
     if (target === undefined) {
       return failure('RENAME_PROJECT', 'PROJECT_NOT_FOUND', `Unknown projectId ${projectId}`)
     }
     target.name = name
+    if (description !== undefined) {
+      const normalized = normalizeDescription(description)
+      if (normalized === undefined) {
+        delete target.description
+      } else {
+        target.description = normalized
+      }
+    }
     await persist()
     return { ok: true, type: 'RENAME_PROJECT' }
   }
@@ -830,6 +850,16 @@ export function createDashboardHost(
     await applyProjects(projects, projectId)
     await persist()
     return { ok: true, type: 'SET_ACTIVE_PROJECT' }
+  }
+
+  //+_+// P8-D16. 허브가 프로젝트 탭을 연다. 기존 탭을 찾아 재사용하지 않는다 (§8-2.2)
+  //+_+// URL 은 어댑터가 만든다. 여기서 chrome.runtime.getURL 을 부르지 않는다
+  async function openProjectTab(projectId: string): Promise<DashboardResponse> {
+    if (projectById(projectId) === null) {
+      return failure('OPEN_PROJECT_TAB', 'PROJECT_NOT_FOUND', `Unknown projectId ${projectId}`)
+    }
+    await createTab(projectTabUrl(projectId))
+    return { ok: true, type: 'OPEN_PROJECT_TAB' }
   }
 
   //+_+// P6-D9 · D113. v1 section 15.5 다. 값은 전부 엔진이 이미 들고 있는 것이다
@@ -961,13 +991,15 @@ export function createDashboardHost(
         case 'LIST_PROJECTS':
           return { ok: true, type: 'LIST_PROJECTS', projects, activeProjectId }
         case 'CREATE_PROJECT':
-          return createNewProject(request.name)
+          return createNewProject(request.name, request.description)
         case 'RENAME_PROJECT':
-          return renameProject(request.projectId, request.name)
+          return renameProject(request.projectId, request.name, request.description)
         case 'DELETE_PROJECT':
           return deleteProject(request.projectId)
         case 'SET_ACTIVE_PROJECT':
           return setActiveProject(request.projectId)
+        case 'OPEN_PROJECT_TAB':
+          return openProjectTab(request.projectId)
         case 'SET_PREVIEW_PAUSED':
           return setPreviewPaused(request.paused)
         case 'GET_DIAGNOSTICS':
@@ -1085,6 +1117,13 @@ function chromeListTabs(): ListTabs {
   }
 }
 
+//+_+// P8-D16 · P8-D18. 파라미터를 붙이는 자리다. 화면은 chrome.runtime.getURL 을 부르지 않는다
+//+_+// 값은 DASHBOARD_PAGE 그대로다. 허브를 여는 것은 openHub 이고 이쪽은 프로젝트 화면이다
+function chromeProjectTabUrl(): ProjectTabUrl {
+  return (projectId) =>
+    chrome.runtime.getURL(`${DASHBOARD_PAGE}?${PROJECT_PARAM}=${encodeURIComponent(projectId)}`)
+}
+
 //+_+// P5-D27. active 로 열지 않는다. Dashboard 를 보는 중에 새 탭이 화면을 가로채면 안 된다
 //+_+// id 가 없는 탭은 바인딩할 수 없다. 조용히 통과시키지 않고 던진다
 function chromeCreateTab(): CreateTab {
@@ -1122,6 +1161,7 @@ if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
     chromeListTabs(),
     chromeFocusTab(),
     chromeCreateTab(),
+    chromeProjectTabUrl(),
     storageBackend,
     systemClock,
     storageBackend,

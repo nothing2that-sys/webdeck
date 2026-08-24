@@ -17,11 +17,18 @@ import {
   createDashboardHost,
   excludeOwnPages,
 } from '../src/background/serviceWorker'
-import type { CreateTab, DashboardHost, FocusTab, ListTabs } from '../src/background/serviceWorker'
+import type {
+  CreateTab,
+  DashboardHost,
+  FocusTab,
+  ListTabs,
+  ProjectTabUrl,
+} from '../src/background/serviceWorker'
 import type { TabsBackend } from '../src/background/tabManager'
 import {
   DEFAULT_PROJECT_ID,
   PORT_NAME_PREFIX,
+  PROJECT_PARAM,
   clientIdOfPortName,
   portName,
 } from '../src/shared/messages'
@@ -186,6 +193,10 @@ function fixture(
     return Promise.resolve(created)
   }
 
+  //+_+// P8-D16. 제품에서는 chrome.runtime.getURL 이 만든다. 시험은 상대 경로로 둔다
+  const projectTabUrl: ProjectTabUrl = (projectId) =>
+    `dashboard.html?${PROJECT_PARAM}=${encodeURIComponent(projectId)}`
+
   const value: Fixture = {
     host: createDashboardHost(
       debuggerBackend,
@@ -193,6 +204,7 @@ function fixture(
       listTabs,
       focusTab,
       createTab,
+      projectTabUrl,
       storage,
       clock,
       diagnostics,
@@ -1096,6 +1108,148 @@ describe('S1 - switching a project stops capturing the one that left', () => {
 
     await host.handle({ type: 'DELETE_PROJECT', projectId: DEFAULT_PROJECT_ID })
     expect(host.engine.captures.statusOf('t1')).toBeNull()
+  })
+})
+
+//+_+// P8-D16. 허브가 프로젝트 탭을 여는 요청이다. 화면이 chrome.tabs.* 를 부르지 않는다
+describe('P8-D16 - OPEN_PROJECT_TAB opens a tab for a project', () => {
+  it('asks for a tab whose url carries the projectId', async () => {
+    const value = fixture()
+    const created = await value.host.handle({ type: 'CREATE_PROJECT', name: 'Monitoring' })
+    if (!created.ok || created.type !== 'CREATE_PROJECT') {
+      throw new Error('create failed')
+    }
+
+    const response = await value.host.handle({
+      type: 'OPEN_PROJECT_TAB',
+      projectId: created.project.id,
+    })
+
+    expect(response).toMatchObject({ ok: true, type: 'OPEN_PROJECT_TAB' })
+    expect(value.createdUrls).toEqual([
+      `dashboard.html?${PROJECT_PARAM}=${encodeURIComponent(created.project.id)}`,
+    ])
+  })
+
+  //+_+// 기존 탭을 찾아 재사용하지 않는다. 두 번 고르면 둘 열린다 (P8-D16 · §8-2.2)
+  it('opens a second tab for the same project', async () => {
+    const value = fixture()
+    await value.host.handle({ type: 'OPEN_PROJECT_TAB', projectId: DEFAULT_PROJECT_ID })
+    await value.host.handle({ type: 'OPEN_PROJECT_TAB', projectId: DEFAULT_PROJECT_ID })
+
+    expect(value.createdUrls).toHaveLength(2)
+  })
+
+  it('refuses a projectId no project holds', async () => {
+    const value = fixture()
+
+    const response = await value.host.handle({ type: 'OPEN_PROJECT_TAB', projectId: 'no-such' })
+
+    expect(response).toMatchObject({ ok: false, errorCode: 'PROJECT_NOT_FOUND' })
+    expect(value.createdUrls).toEqual([])
+  })
+
+  //+_+// 요청 하나가 임차를 만들지 않는다. 허브는 등록을 만들지 않는 화면이다 (P8-D17)
+  //+_+// 임차를 만들었다면 유일한 폴링 탭이 끊긴 뒤에도 집합에 남아 등록이 살아 있을 것이다
+  it('does not open a lease of its own', async () => {
+    const { host } = fixture()
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+    await projectStateOf(host, DEFAULT_PROJECT_ID, true, 'client-1')
+
+    await host.handle({ type: 'OPEN_PROJECT_TAB', projectId: DEFAULT_PROJECT_ID })
+    await host.portDisconnected('client-1', 1000)
+
+    expect(host.engine.captures.statusOf('t1')).toBeNull()
+  })
+})
+
+//+_+// J171. 허브의 New 와 Rename 이 설명을 함께 보낸다. 워커가 그것을 프로젝트에 싣는다
+describe('J171 - the project description travels with CREATE and RENAME', () => {
+  async function listed(host: DashboardHost, projectId: string) {
+    const response = await host.handle({ type: 'LIST_PROJECTS' })
+    if (!response.ok || response.type !== 'LIST_PROJECTS') {
+      throw new Error('list failed')
+    }
+    return response.projects.find((project) => project.id === projectId)
+  }
+
+  it('carries a description given at creation', async () => {
+    const { host } = fixture()
+    const created = await host.handle({
+      type: 'CREATE_PROJECT',
+      name: 'Monitoring',
+      description: 'the wall of graphs',
+    })
+    if (!created.ok || created.type !== 'CREATE_PROJECT') {
+      throw new Error('create failed')
+    }
+
+    expect(created.project.description).toBe('the wall of graphs')
+    expect((await listed(host, created.project.id))?.description).toBe('the wall of graphs')
+  })
+
+  //+_+// J172. 공백만인 설명은 없는 것으로 다룬다. P8-D13 이 저장 층에서 같은 판정을 한다
+  it('drops a description that is whitespace only', async () => {
+    const { host } = fixture()
+    const created = await host.handle({ type: 'CREATE_PROJECT', name: 'Monitoring', description: '  ' })
+    if (!created.ok || created.type !== 'CREATE_PROJECT') {
+      throw new Error('create failed')
+    }
+
+    expect(created.project.description).toBeUndefined()
+  })
+
+  it('replaces the description on rename', async () => {
+    const { host } = fixture()
+    await host.handle({
+      type: 'RENAME_PROJECT',
+      projectId: DEFAULT_PROJECT_ID,
+      name: 'Renamed',
+      description: 'first',
+    })
+    await host.handle({
+      type: 'RENAME_PROJECT',
+      projectId: DEFAULT_PROJECT_ID,
+      name: 'Renamed',
+      description: 'second',
+    })
+
+    expect((await listed(host, DEFAULT_PROJECT_ID))?.description).toBe('second')
+  })
+
+  //+_+// J173. 설명을 안 실은 요청은 설명을 건드리지 않는다
+  it('leaves the description alone when the request omits it', async () => {
+    const { host } = fixture()
+    await host.handle({
+      type: 'RENAME_PROJECT',
+      projectId: DEFAULT_PROJECT_ID,
+      name: 'Renamed',
+      description: 'kept',
+    })
+
+    await host.handle({ type: 'RENAME_PROJECT', projectId: DEFAULT_PROJECT_ID, name: 'Again' })
+
+    expect((await listed(host, DEFAULT_PROJECT_ID))?.description).toBe('kept')
+  })
+
+  //+_+// 빈 문자열은 지우라는 뜻이다. 안 실은 것과 가른다
+  it('clears the description when the request carries an empty one', async () => {
+    const { host } = fixture()
+    await host.handle({
+      type: 'RENAME_PROJECT',
+      projectId: DEFAULT_PROJECT_ID,
+      name: 'Renamed',
+      description: 'kept',
+    })
+
+    await host.handle({
+      type: 'RENAME_PROJECT',
+      projectId: DEFAULT_PROJECT_ID,
+      name: 'Renamed',
+      description: '',
+    })
+
+    expect((await listed(host, DEFAULT_PROJECT_ID))?.description).toBeUndefined()
   })
 })
 

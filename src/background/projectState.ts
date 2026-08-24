@@ -5,10 +5,16 @@ import { urlMatches } from '../shared/urlMatcher'
 import type { BrowserTabInfo, Project, TileRuntimeState, TileStatus, WebTile } from '../shared/types'
 import type { CaptureRecord } from './previewCaptureManager'
 
+//+_+// J172. P8-D13 과 같은 규칙을 메모리 층에도 둔다. 공백만인 설명은 없는 것으로 다룬다
+//+_+// 저장 층이 이미 그렇게 판정하므로, 여기서 다르게 두면 워커 재기동 전후로 값이 달라진다
+export function normalizeDescription(description: string | undefined): string | undefined {
+  return description === undefined || description.trim() === '' ? undefined : description
+}
+
 //+_+// 빈 4x4 프로젝트 1개다. v1 section 8 의 Workspace 모델이며 이름만 Project 다. P5-D1
 //+_+// P5-D3. keepManagedTabsAlive 는 기존 필드이므로 기본값으로만 둔다. 동작을 만들지 않는다
-export function createProject(id: string, name: string): Project {
-  return {
+export function createProject(id: string, name: string, description?: string): Project {
+  const project: Project = {
     id,
     name,
     gridColumns: 4,
@@ -16,6 +22,11 @@ export function createProject(id: string, name: string): Project {
     keepManagedTabsAlive: false,
     tiles: [],
   }
+  const normalized = normalizeDescription(description)
+  if (normalized !== undefined) {
+    project.description = normalized
+  }
+  return project
 }
 
 //+_+// P5-D8. 목록이 비면 기본 프로젝트 1개를 만든다. 저장 키 부재와 빈 목록을 구별하지 않는다
