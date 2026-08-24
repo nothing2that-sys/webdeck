@@ -1,29 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { GRID_COLUMNS, GRID_ROWS } from '../shared/grid'
 import type { GridPosition } from '../shared/grid'
+import { HUB_PAGE } from '../shared/messages'
 import type { DashboardResponse, DiagnosticsSnapshot } from '../shared/messages'
-import type { BrowserTabInfo, Project, WebTile } from '../shared/types'
+import type { BrowserTabInfo, WebTile } from '../shared/types'
 import { TileCard } from './TileCard'
 import {
   POLL_INTERVAL_MS,
   addTile,
   bindTile,
   captureTile,
-  createProject,
   createVisibilityGate,
-  deleteProject,
   fetchDiagnostics,
   fetchProjectState,
   focusTile,
   isDashboardVisible,
   isStaleTabFailure,
   listBrowserTabs,
-  listProjects,
   openMissingTabs,
   removeTile,
-  renameProject,
   reopenTile,
-  setActiveProject,
   setPreviewPaused,
   setTileRect,
   setTileSettings,
@@ -41,8 +37,6 @@ import {
   NOTICE_BIND_TAB_REQUIRED,
   NOTICE_INTERVAL_INVALID,
   NOTICE_NONE,
-  NOTICE_PROJECT_NAME_REQUIRED,
-  NOTICE_RENAME_REQUIRED,
   NOTICE_STALE_TABS,
   NOTICE_TAB_REQUIRED,
   NOTICE_URL_REQUIRED,
@@ -91,12 +85,14 @@ function gridMetrics(element: HTMLElement): GridMetrics {
   }
 }
 
-export function App(): React.JSX.Element {
+export interface AppProps {
+  //+_+// P8-D18. URL 이 정한 프로젝트다. main.tsx 가 읽어 넘긴다. 화면이 전환하지 않는다
+  projectId: string
+}
+
+export function App({ projectId }: AppProps): React.JSX.Element {
   const [views, setViews] = useState<TileViewModel[]>([])
   const [tiles, setTiles] = useState<WebTile[]>([])
-  const [projects, setProjects] = useState<Project[]>([])
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
-  const [projectName, setProjectName] = useState('')
   const [tabs, setTabs] = useState<BrowserTabInfo[]>([])
   const [selectedTabId, setSelectedTabId] = useState<number | null>(null)
   const [tileUrl, setTileUrl] = useState('')
@@ -114,35 +110,15 @@ export function App(): React.JSX.Element {
   const [notice, setNotice] = useState('')
   const gridRef = useRef<HTMLElement | null>(null)
 
-  //+_+// P5-D22. 활성 프로젝트 id 는 워커가 정본이다. 화면은 목록을 읽어 따라간다
-  const loadProjects = useCallback(async () => {
-    const response = await listProjects()
-    if (!response.ok) {
-      setNotice(failureNotice(response))
-      return
-    }
-    if (response.type !== 'LIST_PROJECTS') {
-      return
-    }
-    setProjects(response.projects)
-    setActiveProjectId(response.activeProjectId)
-  }, [])
-
-  useEffect(() => {
-    void loadProjects()
-  }, [loadProjects])
-
   //+_+// P4-D7. 폴링 1개가 프로젝트 상태와 프레임을 함께 가져온다
   //+_+// P4-D11. 표시 상태를 같은 요청에 싣는다
   const poll = useCallback(async () => {
-    if (activeProjectId === null) {
-      return
-    }
-    const response = await fetchProjectState(activeProjectId, isDashboardVisible())
+    const response = await fetchProjectState(projectId, isDashboardVisible())
     if (!response.ok) {
-      //+_+// 워커의 활성 프로젝트가 화면이 아는 것과 다르다. 목록을 다시 읽어 따라간다
+      //+_+// 8-2.3 4번. 이 탭은 URL 로 프로젝트에 묶여 있어 따라갈 곳이 없다. 허브로 보낸다
+      //+_+// 허브에서 지운 프로젝트를 보고 있던 탭이 그 경우다
       if (response.errorCode === 'PROJECT_NOT_FOUND') {
-        await loadProjects()
+        window.location.replace(`./${HUB_PAGE}`)
         return
       }
       setNotice(failureNotice(response))
@@ -154,7 +130,7 @@ export function App(): React.JSX.Element {
     setTiles(response.project.tiles)
     setPaused(response.previewPaused)
     setViews(buildTileViews(response.project, response.runtimeStates, response.frames))
-  }, [activeProjectId, loadProjects])
+  }, [projectId])
 
   useEffect(() => {
     void poll()
@@ -181,74 +157,6 @@ export function App(): React.JSX.Element {
       document.removeEventListener('visibilitychange', notify)
     }
   }, [poll])
-
-  //+_+// 전환 직후의 한 폴링 동안 이전 프로젝트의 타일이 남지 않게 비운다
-  const switchProject = useCallback(
-    async (projectId: string) => {
-      const response = await setActiveProject(projectId)
-      if (!response.ok) {
-        setNotice(failureNotice(response))
-        return
-      }
-      //+_+// 성공한 동작은 이전 안내를 지운다. loadProjects 보다 먼저다. 그쪽 오류를 덮지 않기 위해서다
-      setNotice(NOTICE_NONE)
-      setTiles([])
-      setViews([])
-      await loadProjects()
-    },
-    [loadProjects],
-  )
-
-  //+_+// J82. 생성은 생성만 한다. 만든 프로젝트로 옮기는 것은 화면이 이어서 요청한다
-  const addProject = useCallback(async () => {
-    const name = projectName.trim()
-    if (name.length === 0) {
-      setNotice(NOTICE_PROJECT_NAME_REQUIRED)
-      return
-    }
-    const response = await createProject(name)
-    if (!response.ok) {
-      setNotice(failureNotice(response))
-      return
-    }
-    if (response.type !== 'CREATE_PROJECT') {
-      return
-    }
-    setProjectName('')
-    await switchProject(response.project.id)
-  }, [projectName, switchProject])
-
-  const renameActiveProject = useCallback(async () => {
-    const name = projectName.trim()
-    if (activeProjectId === null || name.length === 0) {
-      setNotice(NOTICE_RENAME_REQUIRED)
-      return
-    }
-    const response = await renameProject(activeProjectId, name)
-    if (!response.ok) {
-      setNotice(failureNotice(response))
-      return
-    }
-    setProjectName('')
-    setNotice(NOTICE_NONE)
-    await loadProjects()
-  }, [activeProjectId, loadProjects, projectName])
-
-  //+_+// P5-D23. 마지막 하나여도 워커가 거부하지 않는다. 기본 프로젝트가 다시 선다
-  const removeActiveProject = useCallback(async () => {
-    if (activeProjectId === null) {
-      return
-    }
-    const response = await deleteProject(activeProjectId)
-    if (!response.ok) {
-      setNotice(failureNotice(response))
-      return
-    }
-    setNotice(NOTICE_NONE)
-    setTiles([])
-    setViews([])
-    await loadProjects()
-  }, [activeProjectId, loadProjects])
 
   //+_+// P5-D12. 워커가 모든 창의 탭을 돌려준다. 목록은 시간이 지나면 낡으므로 다시 읽을 수 있게 둔다
   //+_+// 성공 여부를 돌려준다. 안내를 지울지는 부르는 쪽이 정한다
@@ -303,17 +211,14 @@ export function App(): React.JSX.Element {
     }
     //+_+// WEBDECK_PLAN 8-2.3 1번. 대상 프로젝트를 요청에 싣는다
     //+_+// 첫 LIST_PROJECTS 응답 전에는 실을 값이 없다. poll 과 같은 규칙으로 아무것도 하지 않는다
-    if (activeProjectId === null) {
-      return
-    }
-    const response = await addTile(activeProjectId, { kind: 'tab', tabId: selectedTabId })
+    const response = await addTile(projectId, { kind: 'tab', tabId: selectedTabId })
     if (!response.ok) {
       await reportFailure(response)
       return
     }
     setNotice(NOTICE_NONE)
     await poll()
-  }, [activeProjectId, poll, reportFailure, selectedTabId])
+  }, [poll, projectId, reportFailure, selectedTabId])
 
   //+_+// v1 section 9.4 의 세 버튼이다. Reopen 과 Bind 가 fault 를 지우는 명시 경로다
   const reopen = useCallback(
@@ -339,10 +244,7 @@ export function App(): React.JSX.Element {
       }
       //+_+// WEBDECK_PLAN 8-2.3 1번. BIND_TILE 은 모르는 tileId 면 타일을 만든다
       //+_+// 그래서 어느 프로젝트에 만들지를 함께 보낸다 (P4-D2)
-      if (activeProjectId === null) {
-        return
-      }
-      const response = await bindTile(activeProjectId, tileId, selectedTabId)
+      const response = await bindTile(projectId, tileId, selectedTabId)
       if (!response.ok) {
         await reportFailure(response)
         return
@@ -350,7 +252,7 @@ export function App(): React.JSX.Element {
       setNotice(NOTICE_NONE)
       await poll()
     },
-    [activeProjectId, poll, reportFailure, selectedTabId],
+    [poll, projectId, reportFailure, selectedTabId],
   )
 
   //+_+// P5-D6. v1 section 14 의 Refresh Preview 다. 응답의 프레임을 직접 그리지 않고 폴링에 맡긴다
@@ -372,10 +274,7 @@ export function App(): React.JSX.Element {
   const openMissing = useCallback(async () => {
     //+_+// WEBDECK_PLAN 8-2.3 1번. 대상 프로젝트를 요청에 싣는다
     //+_+// 첫 LIST_PROJECTS 응답 전에는 실을 값이 없다. poll 과 같은 규칙으로 아무것도 하지 않는다
-    if (activeProjectId === null) {
-      return
-    }
-    const response = await openMissingTabs(activeProjectId)
+    const response = await openMissingTabs(projectId)
     if (!response.ok) {
       await reportFailure(response)
       return
@@ -386,7 +285,7 @@ export function App(): React.JSX.Element {
     setNotice(openedTabsNotice(response.openedTileIds.length))
     await poll()
     await loadTabs()
-  }, [activeProjectId, loadTabs, poll, reportFailure])
+  }, [loadTabs, poll, projectId, reportFailure])
 
   const remove = useCallback(
     async (tileId: string) => {
@@ -414,10 +313,7 @@ export function App(): React.JSX.Element {
     }
     //+_+// WEBDECK_PLAN 8-2.3 1번. 대상 프로젝트를 요청에 싣는다
     //+_+// 첫 LIST_PROJECTS 응답 전에는 실을 값이 없다. poll 과 같은 규칙으로 아무것도 하지 않는다
-    if (activeProjectId === null) {
-      return
-    }
-    const response = await addTile(activeProjectId, { kind: 'url', url })
+    const response = await addTile(projectId, { kind: 'url', url })
     if (!response.ok) {
       setNotice(failureNotice(response))
       return
@@ -426,7 +322,7 @@ export function App(): React.JSX.Element {
     setNotice(NOTICE_NONE)
     await poll()
     await loadTabs()
-  }, [activeProjectId, loadTabs, poll, tileUrl])
+  }, [loadTabs, poll, projectId, tileUrl])
 
   //+_+// 선택할 때 한 번만 현재값을 읽는다. 폴링에 맞춰 다시 읽으면 입력 중인 값이 2초마다 덮인다
   const selectTile = useCallback(
@@ -587,34 +483,6 @@ export function App(): React.JSX.Element {
     <div className="app">
       <header className="toolbar">
         <span className="toolbar-title">WebDeck</span>
-        <select
-          className="toolbar-select"
-          value={activeProjectId ?? ''}
-          onChange={(event) => void switchProject(event.target.value)}
-        >
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
-        <input
-          className="toolbar-input"
-          value={projectName}
-          placeholder="프로젝트 이름"
-          onChange={(event) => {
-            setProjectName(event.target.value)
-          }}
-        />
-        <button type="button" onClick={() => void addProject()}>
-          New
-        </button>
-        <button type="button" onClick={() => void renameActiveProject()}>
-          Rename
-        </button>
-        <button type="button" onClick={() => void removeActiveProject()}>
-          Delete
-        </button>
         <span className="toolbar-count">tiles {views.length}</span>
         <span className="toolbar-spacer" />
         <button
