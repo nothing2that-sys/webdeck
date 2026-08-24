@@ -24,6 +24,10 @@ export const PORT_NAME_PREFIX = 'webdeck.dashboard:'
 //+_+// P8-D18. 프로젝트 화면이 URL 로 프로젝트를 정한다. 워커가 붙이고 main.tsx 가 읽는다
 export const PROJECT_PARAM = 'project'
 
+//+_+// J174. 허브 페이지의 파일 이름이다. 워커가 열고 프로젝트 화면이 돌아간다
+//+_+// 두 층이 같은 값을 쓰므로 여기 하나만 둔다. DEFAULT_PROJECT_ID 와 같은 자리다
+export const HUB_PAGE = 'hub.html'
+
 export function portName(clientId: string): string {
   return `${PORT_NAME_PREFIX}${clientId}`
 }

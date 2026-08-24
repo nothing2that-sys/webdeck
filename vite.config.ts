@@ -71,9 +71,11 @@ export default defineConfig(({ mode }): ViteUserConfig => {
       outDir: resolve(projectRoot, 'dist'),
       emptyOutDir: true,
       rollupOptions: {
-        //+_+// 엔트리 2개다. 서비스 워커가 제품 그래프에 들어가야 L10 이 닫힌다
+        //+_+// 엔트리 3개다. 서비스 워커가 제품 그래프에 들어가야 L10 이 닫힌다
+        //+_+// 8-2.3 3번. 허브와 프로젝트 화면을 다른 파일로 가른다. path 성분에서 이미 갈린다
         input: {
           dashboard: resolve(projectRoot, 'src/dashboard/dashboard.html'),
+          hub: resolve(projectRoot, 'src/dashboard/hub.html'),
           serviceWorker: resolve(projectRoot, 'src/background/serviceWorker.ts'),
         },
         //+_+// manifest 의 background.service_worker 가 고정 경로를 가리켜야 하므로 해시를 붙이지 않는다

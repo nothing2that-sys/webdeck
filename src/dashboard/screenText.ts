@@ -18,6 +18,8 @@ export const NOTICE_STALE_TABS = '탭 목록이 낡았다. 다시 읽었다'
 
 export const NOTICE_PROJECT_NAME_REQUIRED = '프로젝트 이름을 입력한다'
 export const NOTICE_RENAME_REQUIRED = '바꿀 이름을 입력한다'
+//+_+// 8-2.3 6번. 허브의 Rename 과 Delete 는 고른 행을 대상으로 한다. 활성 프로젝트가 아니다
+export const NOTICE_PROJECT_REQUIRED = '목록에서 프로젝트를 고른다'
 export const NOTICE_TAB_REQUIRED = '탭 목록에서 탭을 고른다'
 export const NOTICE_BIND_TAB_REQUIRED = '먼저 탭 목록에서 붙일 탭을 고른다'
 export const NOTICE_URL_REQUIRED = 'URL 을 입력한다'
@@ -37,6 +39,14 @@ export function openedTabsNotice(openedCount: number): string {
 //+_+// v1 section 7.2. 무효한 Drop 은 되돌린다는 것을 알리고 유효한 Drop 은 앞선 안내를 지운다
 export function dropNotice(valid: boolean): string {
   return valid ? NOTICE_NONE : NOTICE_DROP_REJECTED
+}
+
+//+_+// 8-2.3 6번. 타일이 없는 프로젝트는 목록 자리를 비우지 않고 그 사실을 적는다
+export const HUB_NO_TILES = '타일이 없다'
+
+//+_+// 허브에서 고른 행이다. toggleClassName 과 같은 규칙이며 색은 CSS 가 정한다
+export function hubRowClassName(selected: boolean): string {
+  return selected ? 'hub-row hub-row--on' : 'hub-row'
 }
 
 //+_+// 툴바 토글 두 개가 같은 규칙을 쓴다. Edit Layout 과 Pause Preview 다

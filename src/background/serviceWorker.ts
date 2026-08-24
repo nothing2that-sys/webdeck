@@ -1,6 +1,6 @@
 import { findFirstAvailablePosition, isPlacementValid } from '../shared/grid'
 import type { GridRect } from '../shared/grid'
-import { PROJECT_PARAM, assertNever, clientIdOfPortName } from '../shared/messages'
+import { HUB_PAGE, PROJECT_PARAM, assertNever, clientIdOfPortName } from '../shared/messages'
 import type {
   AddTileSource,
   DashboardErrorCode,
@@ -1094,6 +1094,8 @@ function chromeFocusTab(): FocusTab {
   }
 }
 
+//+_+// 8-2.3 3번. 값은 그대로다. OPEN_PROJECT_TAB 이 여기에 ?project= 를 붙여 쓴다
+//+_+// 툴바 아이콘과 단축키가 여는 것은 HUB_PAGE 다. 그쪽은 화면도 쓰므로 shared 에 있다
 export const DASHBOARD_PAGE = 'dashboard.html'
 
 //+_+// manifest.json 의 commands 키와 같은 이름이어야 한다. 다르면 조용히 아무 일도 일어나지 않는다
@@ -1138,8 +1140,9 @@ function chromeCreateTab(): CreateTab {
 
 //+_+// P4-D3. 찾아서 활성화하고 없으면 만든다. 중복 생성 방지 강화는 Phase 5 다
 //+_+// v1 section 13 line 849 가 탭과 창을 함께 활성화하라고 요구한다
-export async function openDashboard(): Promise<void> {
-  const url = chrome.runtime.getURL(DASHBOARD_PAGE)
+//+_+// 8-2.3 3번. 여는 것이 허브로 바뀌었으므로 이름도 바꾼다. 프로젝트 탭은 openProjectTab 이다
+export async function openHub(): Promise<void> {
+  const url = chrome.runtime.getURL(HUB_PAGE)
   const existing = await chrome.tabs.query({ url })
   const first = existing[0]
   if (first?.id !== undefined) {
@@ -1215,21 +1218,22 @@ if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
     })
   })
 
-  //+_+// v1 section 13 line 855. Action 버튼으로도 Dashboard 를 열거나 활성화한다
+  //+_+// v1 section 13 line 855. Action 버튼으로도 허브를 열거나 활성화한다
   chrome.action.onClicked.addListener(() => {
-    void openDashboard().catch((error: unknown) => {
-      console.error('[webdeck] openDashboard failed', errorMessage(error))
+    void openHub().catch((error: unknown) => {
+      console.error('[webdeck] openHub failed', errorMessage(error))
     })
   })
 
-  //+_+// L20. Alt+Shift+D 다. Action 클릭과 같은 openDashboard 를 쓴다
+  //+_+// L20. Alt+Shift+D 다. Action 클릭과 같은 openHub 를 쓴다
   //+_+// 중복 생성 방지 강화는 P4-D3 이 Phase 5 에 두었다. 여기서 만들지 않는다
+  //+_+// FOCUS_DASHBOARD_COMMAND 와 manifest 의 commands 키는 그대로다 (§8-2.2)
   chrome.commands.onCommand.addListener((command) => {
     if (command !== FOCUS_DASHBOARD_COMMAND) {
       return
     }
-    void openDashboard().catch((error: unknown) => {
-      console.error('[webdeck] openDashboard failed', errorMessage(error))
+    void openHub().catch((error: unknown) => {
+      console.error('[webdeck] openHub failed', errorMessage(error))
     })
   })
 }

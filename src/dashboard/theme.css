@@ -320,6 +320,48 @@ body {
   font-size: 11px;
 }
 
+.hub-list {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 12px;
+  list-style: none;
+}
+
+.hub-row {
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+
+.hub-row--on {
+  border-color: var(--select-ring);
+}
+
+.hub-row-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.hub-pick {
+  font-weight: 600;
+}
+
+.hub-description,
+.hub-empty {
+  color: var(--text-muted);
+}
+
+.hub-urls {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .statusbar {
   padding: 6px 12px;
   min-height: 16px;
