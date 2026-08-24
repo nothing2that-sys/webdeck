@@ -396,3 +396,95 @@ describe('D6c - the pause flag lives in a key of its own', () => {
     expect(Object.hasOwn(stored as object, 'previewPaused')).toBe(false)
   })
 })
+
+//+_+// P8-D13 · P8-D14. 설명 필드다. schemaVersion 을 올리지 않으므로 옛 봉투가 그대로 읽힌다
+describe('P8-D13 - an empty description is the same as an absent field', () => {
+  it('round trips a project that carries a description', () => {
+    const original: Project = { ...project([tile('t1', 0, 0)]), description: 'Work in progress' }
+
+    expect(deserializeProject(serializeProject(original))).toEqual(original)
+  })
+
+  //+_+// trim 은 저장 여부 판정에만 쓴다. 사용자가 의도한 앞뒤 여백을 저장 층이 지우지 않는다
+  it('keeps the surrounding whitespace of a description that has other characters', () => {
+    const original: Project = { ...project([]), description: '  indented note  ' }
+    const restored = deserializeProject(serializeProject(original))
+
+    expect(restored?.description).toBe('  indented note  ')
+    expect(restored).toEqual(original)
+  })
+
+  it('leaves the field absent when the project has no description', () => {
+    const restored = deserializeProject(serializeProject(project([tile('t1', 0, 0)])))
+
+    expect(Object.hasOwn(restored as object, 'description')).toBe(false)
+    expect(restored?.description).toBeUndefined()
+  })
+
+  it('drops a description that is empty or whitespace only', () => {
+    for (const value of ['', ' ', '  \n\t  ']) {
+      const serialized = serializeProject({ ...project([]), description: value })
+
+      expect(Object.hasOwn(serialized as object, 'description')).toBe(false)
+      expect(deserializeProject(serialized)?.description).toBeUndefined()
+    }
+  })
+
+  //+_+// section 8-2.5 12번의 판정 지점이다. 기존 저장 데이터를 흉내낸 고정 입력으로 건다
+  it('reads a schemaVersion 2 envelope that has no description field anywhere', () => {
+    const stored = {
+      schemaVersion: 2,
+      activeProjectId: 'p1',
+      projects: [
+        {
+          id: 'p1',
+          name: 'Development',
+          gridColumns: 4,
+          gridRows: 4,
+          keepManagedTabsAlive: true,
+          tiles: [
+            {
+              id: 't1',
+              launchUrl: 'https://example.com/',
+              matchMode: 'origin',
+              x: 0,
+              y: 0,
+              w: 1,
+              h: 1,
+              refreshIntervalMs: 2000,
+              fitMode: 'contain',
+              keepAlive: false,
+            },
+          ],
+        },
+      ],
+    }
+    const result = deserializeState(stored)
+
+    expect(result.ok).toBe(true)
+    expect(result).toMatchObject({ ok: true, activeProjectId: 'p1' })
+    if (result.ok) {
+      expect(result.projects[0]?.description).toBeUndefined()
+      expect(Object.hasOwn(result.projects[0] as object, 'description')).toBe(false)
+    }
+  })
+})
+
+//+_+// P8-D14. customTitle 과 같은 쪽에 선다. 새 검증 방식을 만들지 않는다
+describe('P8-D14 - a description of the wrong type is rejected like customTitle', () => {
+  it('rejects a project whose description is not a string', () => {
+    for (const value of [42, true, null, {}, ['note']]) {
+      expect(deserializeProject({ ...project([]), description: value })).toBeNull()
+    }
+  })
+
+  it('rejects the whole envelope, not just the field', () => {
+    const stored = {
+      schemaVersion: 2,
+      activeProjectId: 'p1',
+      projects: [{ ...project([]), description: 42 }],
+    }
+
+    expect(deserializeState(stored)).toMatchObject({ ok: false, errorCode: 'INVALID_PROJECT' })
+  })
+})

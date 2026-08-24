@@ -38,6 +38,8 @@ export interface WebTile {
 export interface Project {
   id: string
   name: string
+  //+_+// P8-D13. 허브가 표시하는 설명이다. 빈 설명은 저장 층에서 필드 부재와 같게 다룬다
+  description?: string
   gridColumns: 4
   gridRows: 4
   keepManagedTabsAlive: boolean

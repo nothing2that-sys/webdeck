@@ -63,7 +63,7 @@ function pickTile(tile: WebTile): WebTile {
 }
 
 export function serializeProject(project: Project): Project {
-  return {
+  const picked: Project = {
     id: project.id,
     name: project.name,
     gridColumns: project.gridColumns,
@@ -71,6 +71,11 @@ export function serializeProject(project: Project): Project {
     keepManagedTabsAlive: project.keepManagedTabsAlive,
     tiles: project.tiles.map(pickTile),
   }
+  //+_+// P8-D13. trim 은 저장 여부 판정에만 쓴다. 싣는 값은 원문이며 앞뒤 여백을 지우지 않는다
+  if (project.description !== undefined && project.description.trim() !== '') {
+    picked.description = project.description
+  }
+  return picked
 }
 
 function deserializeTile(value: unknown): WebTile | null {
@@ -147,9 +152,13 @@ export function deserializeProject(value: unknown): Project | null {
   if (!isRecord(value)) {
     return null
   }
-  const { id, name, gridColumns, gridRows, keepManagedTabsAlive, tiles } = value
+  const { id, name, description, gridColumns, gridRows, keepManagedTabsAlive, tiles } = value
 
   if (typeof id !== 'string' || typeof name !== 'string') {
+    return null
+  }
+  //+_+// P8-D14. customTitle 과 같은 쪽에 선다. 타입이 틀리면 봉투를 거부한다
+  if (description !== undefined && typeof description !== 'string') {
     return null
   }
   if (gridColumns !== 4 || gridRows !== 4) {
@@ -171,7 +180,11 @@ export function deserializeProject(value: unknown): Project | null {
     picked.push(tile)
   }
 
-  return { id, name, gridColumns, gridRows, keepManagedTabsAlive, tiles: picked }
+  const project: Project = { id, name, gridColumns, gridRows, keepManagedTabsAlive, tiles: picked }
+  if (description !== undefined) {
+    project.description = description
+  }
+  return project
 }
 
 export function serializeState(projects: Project[], activeProjectId: string): PersistedState {
