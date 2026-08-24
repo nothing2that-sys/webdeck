@@ -70,6 +70,12 @@ export const DEBUGGER_PROTOCOL_VERSION = '1.3'
 //+_+// 워커 부하 영향은 L34 가 미상이므로 여기서 판단하지 않는다. Chrome 실측 항목이다
 export const DRIVER_TICK_MS = 250
 
+//+_+// TASK-P8-07 §1.4. 임차 만료다. 안전망일 뿐이고 정상 경로는 onDisconnect 가 받는다 (P8-D11)
+//+_+// 화면 폴링(dashboardService 의 POLL_INTERVAL_MS = 2000)의 60배다
+//+_+// 숨은 확장 페이지가 분당 1회까지 스로틀돼도 살아남는 값이다. 그 주기는 미측정이다 (§8-2.4)
+//+_+// 넉넉히 잡는 대신 onDisconnect 가 안 난 임차가 최대 이만큼 남는다. J167
+export const LEASE_EXPIRY_MS = 120_000
+
 export interface PreviewEngine {
   sessions: DebuggerSessionManager
   captures: PreviewCaptureManager
@@ -106,8 +112,15 @@ export function createPreviewEngine(
 }
 
 //+_+// 구동자다. 스케줄 결정 로직과 분리해 둔다. WEBDECK_PLAN section 3.6 이 보류로 둔 선택지 때문이다
-export function startPreviewDriver(engine: PreviewEngine, intervalMs = DRIVER_TICK_MS): () => void {
+//+_+// TASK-P8-07 §1.4. onTick 은 임차 청소다. 새 setInterval 을 만들지 않으려고 여기 얹는다
+//+_+// 새 타이머를 만들면 그것이 워커를 깨우는 새 이유가 된다. 이 타이머는 이미 돌고 있다. J168
+export function startPreviewDriver(
+  engine: PreviewEngine,
+  intervalMs = DRIVER_TICK_MS,
+  onTick?: () => void,
+): () => void {
   const handle: ReturnType<typeof setInterval> = setInterval(() => {
+    onTick?.()
     engine.captures.tick()
   }, intervalMs)
   return () => {
@@ -124,6 +137,8 @@ export interface DashboardHost {
   //+_+// 리스너에 상태를 두면 시험이 못 덮는다. 시험은 host 를 직접 부르고 chrome 스텁이 없다
   portConnected(clientId: string, at: number): Promise<void>
   portDisconnected(clientId: string, at: number): Promise<void>
+  //+_+// TASK-P8-07 §1.4. 만료된 임차를 걷는다. 구동자가 부른다. 그 밖에 타이머를 만들지 않는다
+  sweepLeases(): Promise<void>
 }
 
 //+_+// P5-D12. 창 인자를 받지 않는다. v1 section 9.1 은 "현재 Chrome 에 열린 탭 목록" 이다
@@ -164,6 +179,14 @@ export function createDashboardHost(
   let activeProjectId = seeded.activeProjectId
   const bindings = new Map<string, number>()
   const summaries = new Map<string, TileCaptureSummary>()
+
+  //+_+// TASK-P8-07 §1.1. 임차 장부다. 폴링이 만들고 갱신하며 포트 끊김이 지운다
+  //+_+// 저장하지 않는다 (§8-2.2). 워커가 죽으면 통째로 사라지고 다음 폴링이 다시 쌓는다
+  //+_+// at 은 clock.now 다. Date.now 가 아니다 -- 만료 판정이 주입된 시계를 따라야 시험이 된다
+  const leases = new Map<string, { projectId: string; visible: boolean; at: number }>()
+
+  //+_+// 지금 등록돼 있다고 아는 프로젝트다. 집합이 실제로 바뀐 회차에만 등록을 갈아 끼운다
+  let registeredProjects = new Set<string>()
 
   //+_+// WEBDECK_PLAN 8-2.3 1번. 타일 요청은 활성 프로젝트가 아니라 소유 프로젝트를 본다
   //+_+// 매 호출에 다시 만든다. projects 는 제자리에서 바뀌므로 한 번 만든 맵은 곧 낡는다. J157
@@ -260,14 +283,82 @@ export function createDashboardHost(
     engine.captures.setPaused(manualPaused || !dashboardVisible)
   }
 
+  //+_+// TASK-P8-07 §1.2. 살아 있는 임차의 projectId 집합이다. 등록을 가르는 것은 이것이다
+  //+_+// activeProjectId 가 아니다. 그쪽은 "마지막으로 연 것" 의 기록으로 남는다 (P8-D9)
+  function activeSet(): Set<string> {
+    return new Set([...leases.values()].map((lease) => lease.projectId))
+  }
+
+  //+_+// 집합에 든 프로젝트만 등록한다. P5-D25 의 전환 배선을 대신한다
+  //+_+// reregister 는 bindings 가 있어야 돈다. 그것은 기동 시 reconnect 이 채운다 (§1.2)
+  //+_+// 해제는 registeredProjects 가 아니라 알려진 프로젝트 전체를 훑는다
+  //+_+// BIND_TILE 과 ADD_TILE 이 집합을 안 보고 바로 등록하므로 그 자국이 여기 남는다
+  //+_+// 이미 해제된 타일에 부르는 것은 무해하다. unregister 가 첫 줄에서 되돌아간다. J169
+  async function syncRegistrations(): Promise<void> {
+    const next = activeSet()
+    for (const project of projects) {
+      if (next.has(project.id)) {
+        continue
+      }
+      for (const tile of project.tiles) {
+        await engine.captures.unregister(tile.id)
+      }
+    }
+    for (const projectId of next) {
+      if (registeredProjects.has(projectId)) {
+        continue
+      }
+      for (const tile of projectById(projectId)?.tiles ?? []) {
+        await reregister(tile)
+      }
+    }
+    registeredProjects = next
+  }
+
   //+_+// P6-D52. 전환은 재등록하지 않는다. 재등록할 이유였던 hidden 주기가 사라졌다
-  //+_+// 전에는 전환 1회가 활성 전 타일의 만기를 now 로 되돌려 타일 수만큼 회차를 즉시 만들었다
-  function applyDashboardVisible(next: boolean): void {
+  //+_+// P8-D7. 전역 하나를 임차들의 visible 로 OR 한다. 받은 값으로 덮지 않는다
+  //+_+// 덮으면 탭 둘이 폴링마다 setPaused 를 토글하고 해제 시프트가 만기를 민다 (P6-D59)
+  //+_+// 임차가 없으면 false 다. 그 순간 등록도 0 이라 돌 타일이 없다 (§1.3)
+  function applyDashboardVisible(): void {
+    const next = [...leases.values()].some((lease) => lease.visible)
     if (next === dashboardVisible) {
       return
     }
     dashboardVisible = next
     applyPause()
+  }
+
+  //+_+// TASK-P8-07 §1.1. 폴링이 임차를 만들고 갱신한다. 포트 연결은 만들지 않는다
+  //+_+// 그 시점에 어느 프로젝트인지 모르기 때문이다. clientId 가 둘을 잇는다 (P8-D8)
+  async function noteLease(clientId: string, projectId: string, visible: boolean): Promise<void> {
+    leases.set(clientId, { projectId, visible, at: clock.now() })
+    await syncRegistrations()
+    applyDashboardVisible()
+  }
+
+  //+_+// 끊김과 만료가 같은 자리로 온다. 없는 clientId 면 아무 일도 하지 않는다
+  async function dropLease(clientId: string): Promise<void> {
+    if (!leases.delete(clientId)) {
+      return
+    }
+    await syncRegistrations()
+    applyDashboardVisible()
+  }
+
+  //+_+// TASK-P8-07 §1.4. 안전망이다. onDisconnect 가 안 난 임차만 여기로 온다
+  async function sweepLeases(): Promise<void> {
+    const deadline = clock.now() - LEASE_EXPIRY_MS
+    const stale = [...leases.entries()]
+      .filter(([, lease]) => lease.at <= deadline)
+      .map(([clientId]) => clientId)
+    if (stale.length === 0) {
+      return
+    }
+    for (const clientId of stale) {
+      leases.delete(clientId)
+    }
+    await syncRegistrations()
+    applyDashboardVisible()
   }
 
   //+_+// P6-D47. v1 section 15.1 의 전체 Pause 다. D6c 로 별도 키에 남겨 워커 재기동을 넘긴다
@@ -282,28 +373,14 @@ export function createDashboardHost(
     await saveState(storage, projects, activeProjectId)
   }
 
-  //+_+// 활성이 아닌 프로젝트의 타일은 캡처하지 않는다. 활성이 실제로 바뀐 회차에만 등록을 갈아 끼운다
-  //+_+// 이름 변경과 다른 프로젝트 삭제는 활성 객체를 그대로 두므로 만기가 흔들리지 않는다
+  //+_+// TASK-P8-07 §1.2. 등록을 가르는 것은 활성 집합이다. 여기서 activeProjectId 로 가르지 않는다
+  //+_+// P5-D25 의 전환 unregister 가 syncRegistrations 로 옮겨 갔다
+  //+_+// 목록이 바뀌면 집합 소속 프로젝트의 타일 구성도 바뀔 수 있으므로 한 번 맞춘다
   async function applyProjects(nextProjects: Project[], nextActiveId: string): Promise<void> {
     const resolved = resolveProjects(nextProjects, nextActiveId)
-    const previous = projects.find((item) => item.id === activeProjectId) ?? null
-    const next = resolved.projects.find((item) => item.id === resolved.activeProjectId) ?? null
-
     projects = resolved.projects
     activeProjectId = resolved.activeProjectId
-    if (previous === next) {
-      return
-    }
-    if (previous !== null) {
-      for (const tile of previous.tiles) {
-        await engine.captures.unregister(tile.id)
-      }
-    }
-    if (next !== null) {
-      for (const tile of next.tiles) {
-        await reregister(tile)
-      }
-    }
+    await syncRegistrations()
   }
 
   async function projectState(projectId: string): Promise<DashboardResponse> {
@@ -577,6 +654,11 @@ export function createDashboardHost(
     }))
     const verdicts = planReconnect(targets, await listTabs())
 
+    //+_+// TASK-P8-07 §1.2. 등록 여부는 활성 집합이 가른다. 기동 직후에는 비어 있어 전부 bindOnly 다
+    //+_+// 위 P7-D41 분할은 activeProjectId 를 그대로 쓴다. 기동 시점에 집합은 아직 비어 있고
+    //+_+// 저장된 "마지막으로 연 것" 이 그때 쓸 수 있는 유일한 순서 근거다. L49 를 그대로 지킨다
+    const active = activeSet()
+
     //+_+// P6-D56. 콘솔과 같은 판정을 storage 에도 남긴다. 콘솔은 워커가 죽으면 함께 사라진다
     const rows: ReconnectLogRow[] = []
     const at = Date.now()
@@ -595,13 +677,16 @@ export function createDashboardHost(
         projectId: owner.project.id,
         kind: verdict.kind,
         candidates: reconnectCandidateCount(verdict),
+        //+_+// P6-D56 이 정한 뜻 그대로 "마지막으로 연 프로젝트인가" 다. 집합 소속이 아니다
+        //+_+// 기동 시점에 집합은 비어 있어 전부 false 가 되고 그러면 이 행이 아무것도 안 가른다
+        //+_+// 아래 attach 분기와 갈리므로 여기 적어 둔다. J170
         active: owner.project.id === activeProjectId,
       })
       if (verdict.kind !== 'bind') {
         continue
       }
-      //+_+// 비활성 프로젝트는 바인딩만 되돌린다. 전환이 오면 reregister 가 그것을 집어 등록한다
-      if (owner.project.id === activeProjectId) {
+      //+_+// 집합 밖 프로젝트는 바인딩만 되돌린다. 폴링이 집합에 넣으면 syncRegistrations 가 등록한다
+      if (active.has(owner.project.id)) {
         attachTile(owner.tile, verdict.tabId)
       } else {
         bindOnly(verdict.tileId, verdict.tabId)
@@ -833,18 +918,25 @@ export function createDashboardHost(
     engine,
     load,
     portConnected: (clientId, at) => notePortEvent('connect', clientId, at),
-    portDisconnected: (clientId, at) => notePortEvent('disconnect', clientId, at),
+    //+_+// TASK-P8-07 §1.6. 기록에 더해 임차까지 지운다. 이것이 닫힘의 정상 경로다 (P8-D11)
+    portDisconnected: async (clientId, at) => {
+      await notePortEvent('disconnect', clientId, at)
+      await dropLease(clientId)
+    },
+    sweepLeases,
     handle: async (request) => {
       switch (request.type) {
         case 'GET_PROJECT_STATE':
-          if (request.projectId !== activeProjectId) {
+          //+_+// TASK-P8-07 §1.5. 활성값과 대조하지 않는다. 아는 프로젝트면 임차를 만든다
+          //+_+// 모르는 값은 거절하고 임차를 만들지 않는다
+          if (projectById(request.projectId) === null) {
             return failure(
               request.type,
               'PROJECT_NOT_FOUND',
               `Unknown projectId ${request.projectId}`,
             )
           }
-          applyDashboardVisible(request.dashboardVisible)
+          await noteLease(request.clientId, request.projectId, request.dashboardVisible)
           return projectState(request.projectId)
         case 'LIST_BROWSER_TABS':
           return { ok: true, type: 'LIST_BROWSER_TABS', tabs: await listTabs() }
@@ -1034,7 +1126,12 @@ if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
     systemClock,
     storageBackend,
   )
-  startPreviewDriver(host.engine)
+  //+_+// TASK-P8-07 §1.4. 임차 청소를 이미 도는 구동자에 얹는다. 새 타이머를 만들지 않는다
+  startPreviewDriver(host.engine, DRIVER_TICK_MS, () => {
+    void host.sweepLeases().catch((error: unknown) => {
+      console.error('[webdeck] lease sweep failed', errorMessage(error))
+    })
+  })
 
   //+_+// S1. 기동 1회당 1회다. await 하지 않는다. 아래 리스너 등록이 늦어지면 요청을 놓친다
   void recordWorkerStart(storageBackend, Date.now())

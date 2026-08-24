@@ -55,7 +55,8 @@ export interface TileSettings {
 //+_+// P6-D9 의 GET_DIAGNOSTICS 가 20번째다. v1 section 15.5 도 화면만 말하고 요청 이름을 주지 않았다
 export type DashboardRequest =
   //+_+// P4-D11. dashboardVisible 을 폴링마다 싣는다. 표시 상태 전용 요청을 만들지 않는다. J15
-  | { type: 'GET_PROJECT_STATE'; projectId: string; dashboardVisible: boolean }
+  //+_+// P8-D8 · TASK-P8-07 §1.5. clientId 가 임차를 가른다. 이 요청 하나만 싣는다
+  | { type: 'GET_PROJECT_STATE'; projectId: string; clientId: string; dashboardVisible: boolean }
   | { type: 'LIST_BROWSER_TABS' }
   | { type: 'BIND_TILE'; projectId: string; tileId: string; tabId: number }
   | { type: 'CAPTURE_TILE'; tileId: string }

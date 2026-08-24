@@ -83,11 +83,18 @@ export async function fetchDiagnostics(): Promise<DashboardResponse> {
 }
 
 //+_+// P5-D22. 활성 프로젝트 id 는 워커가 알려 준 값이다. 상수를 하드코딩하지 않는다
+//+_+// P8-D8 · TASK-P8-07 §1.5. 이 탭의 clientId 를 함께 싣는다. 워커가 그것으로 임차를 가른다
+//+_+// 화면 층은 이 값을 모른다. App.tsx 를 건드리지 않으려고 여기서 붙인다
 export async function fetchProjectState(
   projectId: string,
   dashboardVisible: boolean,
 ): Promise<DashboardResponse> {
-  return send({ type: 'GET_PROJECT_STATE', projectId, dashboardVisible })
+  return send({
+    type: 'GET_PROJECT_STATE',
+    projectId,
+    clientId: dashboardClientId(),
+    dashboardVisible,
+  })
 }
 
 export async function listProjects(): Promise<DashboardResponse> {

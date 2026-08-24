@@ -12,7 +12,11 @@ import {
 } from '../src/background/diagnostics'
 import type { Clock } from '../src/background/previewCaptureManager'
 import { ROUND_LOG_PREFIX, formatRoundClock, frameFingerprint } from '../src/background/roundLog'
-import { createDashboardHost, excludeOwnPages } from '../src/background/serviceWorker'
+import {
+  LEASE_EXPIRY_MS,
+  createDashboardHost,
+  excludeOwnPages,
+} from '../src/background/serviceWorker'
 import type { CreateTab, DashboardHost, FocusTab, ListTabs } from '../src/background/serviceWorker'
 import type { TabsBackend } from '../src/background/tabManager'
 import {
@@ -213,10 +217,16 @@ function driveTick(host: DashboardHost): void {
   host.engine.captures.tick()
 }
 
-async function projectStateOf(host: DashboardHost, projectId: string, dashboardVisible = true) {
+async function projectStateOf(
+  host: DashboardHost,
+  projectId: string,
+  dashboardVisible = true,
+  clientId = 'client-1',
+) {
   const response = await host.handle({
     type: 'GET_PROJECT_STATE',
     projectId,
+    clientId,
     dashboardVisible,
   })
   if (!response.ok || response.type !== 'GET_PROJECT_STATE') {
@@ -251,6 +261,7 @@ describe('P4-D7 - GET_PROJECT_STATE carries the state and the frames together', 
   it('rejects a projectId it does not own', async () => {
     const response = await fixture().host.handle({
       type: 'GET_PROJECT_STATE',
+      clientId: 'client-1',
       projectId: 'someone-else',
       dashboardVisible: true,
     })
@@ -920,24 +931,41 @@ describe('P5-D23 - project CRUD and switching', () => {
     expect(response).toMatchObject({ ok: false, errorCode: 'PROJECT_NOT_FOUND' })
   })
 
-  it('lets GET_PROJECT_STATE follow the project that is active', async () => {
+  //+_+// TASK-P8-07 §1.5 이 이 시험의 전제를 뒤집었다. 전에는 활성이 아닌 프로젝트를 거절했다
+  //+_+// 다중 활성이 그것을 못 하게 한다. 탭마다 다른 프로젝트를 폴링하는 것이 이 절의 목적이다
+  //+_+// 모르는 projectId 를 거절하는 것은 그대로다
+  it('lets GET_PROJECT_STATE poll a project that is not the active one', async () => {
     const { host } = fixture()
     const created = await addProject(host, 'Monitoring')
     await host.handle({ type: 'SET_ACTIVE_PROJECT', projectId: created })
 
-    const stale = await host.handle({
+    const other = await host.handle({
       type: 'GET_PROJECT_STATE',
+      clientId: 'client-1',
       projectId: DEFAULT_PROJECT_ID,
       dashboardVisible: true,
     })
-    expect(stale).toMatchObject({ ok: false, errorCode: 'PROJECT_NOT_FOUND' })
+    expect(other).toMatchObject({ ok: true, type: 'GET_PROJECT_STATE' })
 
-    const fresh = await host.handle({
+    const active = await host.handle({
       type: 'GET_PROJECT_STATE',
+      clientId: 'client-2',
       projectId: created,
       dashboardVisible: true,
     })
-    expect(fresh).toMatchObject({ ok: true, type: 'GET_PROJECT_STATE' })
+    expect(active).toMatchObject({ ok: true, type: 'GET_PROJECT_STATE' })
+  })
+
+  it('still refuses a projectId no project holds', async () => {
+    const { host } = fixture()
+    const response = await host.handle({
+      type: 'GET_PROJECT_STATE',
+      clientId: 'client-1',
+      projectId: 'no-such-project',
+      dashboardVisible: true,
+    })
+
+    expect(response).toMatchObject({ ok: false, errorCode: 'PROJECT_NOT_FOUND' })
   })
 
   it('deletes a project', async () => {
@@ -1036,21 +1064,28 @@ describe('S1 - switching a project stops capturing the one that left', () => {
     return created.project.id
   }
 
-  it('unregisters the tiles of the outgoing project', async () => {
+  //+_+// TASK-P8-07 §1.2. 전환을 SET_ACTIVE_PROJECT 가 아니라 임차가 나른다
+  //+_+// 그 탭의 다음 폴링이 새 projectId 를 실어 오고 그때 집합이 바뀐다
+  it('unregisters the tiles of the project a tab left', async () => {
     const { host } = fixture()
     await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+    await projectStateOf(host, DEFAULT_PROJECT_ID)
     expect(host.engine.captures.statusOf('t1')).not.toBeNull()
 
-    await switchTo(host, 'Monitoring')
+    const other = await switchTo(host, 'Monitoring')
+    await projectStateOf(host, other)
+
     expect(host.engine.captures.statusOf('t1')).toBeNull()
   })
 
-  it('registers the tiles of the incoming project again', async () => {
+  it('registers the tiles of the project a tab came back to', async () => {
     const { host } = fixture()
     await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+    const other = await switchTo(host, 'Monitoring')
+    await projectStateOf(host, other)
+    expect(host.engine.captures.statusOf('t1')).toBeNull()
 
-    await switchTo(host, 'Monitoring')
-    await host.handle({ type: 'SET_ACTIVE_PROJECT', projectId: DEFAULT_PROJECT_ID })
+    await projectStateOf(host, DEFAULT_PROJECT_ID)
 
     expect(host.engine.captures.statusOf('t1')).not.toBeNull()
   })
@@ -1963,9 +1998,12 @@ describe('P5-D35 - the worker reconnects once when it starts', () => {
     expect(state).toMatchObject({ tileId: 't1', tabId: 11 })
   })
 
-  it('captures the reconnected tab on the next tick', async () => {
+  //+_+// TASK-P8-07 §1.2. 기동 직후에는 활성 집합이 비어 있어 등록이 0 이다
+  //+_+// 첫 폴링이 임차를 만들어야 reconnect 이 채운 bindings 가 등록으로 이어진다
+  it('captures the reconnected tab on the next tick after a poll', async () => {
     const value = fixture([11, 12], seeded([storedTile('t1', 'https://example.com/11')]))
     await value.host.load()
+    await projectState(value.host)
 
     driveTick(value.host)
     await new Promise<void>((resolve) => {
@@ -3167,5 +3205,136 @@ describe('8-2 port lifetime - the host records connect and disconnect', () => {
     await host.portConnected('c1', 1000)
 
     expect((await diagnosticsOf(host)).portEvents).toEqual([])
+  })
+})
+
+//+_+// TASK-P8-07 §1.1 · §1.2. 임차 장부가 활성 집합을 만들고 그것이 등록을 가른다
+//+_+// 장부가 host 안이므로 chrome 스텁 없이 진입점으로 직접 덮는다
+describe('8-2.3 2 - the lease ledger drives the active set', () => {
+  async function twoProjects(host: DashboardHost): Promise<string> {
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+    const created = await host.handle({ type: 'CREATE_PROJECT', name: 'Monitoring' })
+    if (!created.ok || created.type !== 'CREATE_PROJECT') {
+      throw new Error('create failed')
+    }
+    const other = created.project.id
+    await host.handle({ type: 'BIND_TILE', projectId: other, tileId: 't2', tabId: 12 })
+    return other
+  }
+
+  it('holds both projects when two leases name different ones', async () => {
+    const { host } = fixture()
+    const other = await twoProjects(host)
+
+    await projectStateOf(host, DEFAULT_PROJECT_ID, true, 'client-1')
+    await projectStateOf(host, other, true, 'client-2')
+
+    expect(host.engine.captures.statusOf('t1')).not.toBeNull()
+    expect(host.engine.captures.statusOf('t2')).not.toBeNull()
+    expect(host.engine.captures.registeredTileCount).toBe(2)
+  })
+
+  //+_+// 포트 끊김이 정상 경로다 (P8-D11). 그 clientId 의 임차만 지운다
+  it('drops a project from the set when its lease goes', async () => {
+    const { host } = fixture()
+    const other = await twoProjects(host)
+    await projectStateOf(host, DEFAULT_PROJECT_ID, true, 'client-1')
+    await projectStateOf(host, other, true, 'client-2')
+
+    await host.portDisconnected('client-2', 1000)
+
+    expect(host.engine.captures.statusOf('t1')).not.toBeNull()
+    expect(host.engine.captures.statusOf('t2')).toBeNull()
+    expect(host.engine.captures.registeredTileCount).toBe(1)
+  })
+
+  //+_+// P8-D7. 하나라도 보이면 캡처가 돈다. 받은 값으로 전역을 덮지 않는다
+  it('keeps the engine running while one lease is visible', async () => {
+    const { host } = fixture()
+    const other = await twoProjects(host)
+
+    await projectStateOf(host, DEFAULT_PROJECT_ID, true, 'client-1')
+    await projectStateOf(host, other, false, 'client-2')
+
+    expect(host.engine.captures.paused).toBe(false)
+  })
+
+  //+_+// 덮는 배선이면 뒤 폴링의 false 가 앞 폴링의 true 를 지워 여기서 true 가 된다
+  it('does not let the last poll overwrite the global', async () => {
+    const { host } = fixture()
+    const other = await twoProjects(host)
+
+    await projectStateOf(host, DEFAULT_PROJECT_ID, true, 'client-1')
+    await projectStateOf(host, other, false, 'client-2')
+    await projectStateOf(host, other, false, 'client-2')
+
+    expect(host.engine.captures.paused).toBe(false)
+  })
+
+  it('pauses when no lease is left', async () => {
+    const { host } = fixture()
+    await twoProjects(host)
+    await projectStateOf(host, DEFAULT_PROJECT_ID, true, 'client-1')
+    expect(host.engine.captures.paused).toBe(false)
+
+    await host.portDisconnected('client-1', 1000)
+
+    expect(host.engine.captures.paused).toBe(true)
+  })
+
+  //+_+// §1.4. 안전망이다. onDisconnect 가 안 난 임차만 여기로 온다
+  it('sweeps a lease that stopped polling', async () => {
+    const value = fixture()
+    await twoProjects(value.host)
+    await projectStateOf(value.host, DEFAULT_PROJECT_ID, true, 'client-1')
+    expect(value.host.engine.captures.statusOf('t1')).not.toBeNull()
+
+    value.clock.current += LEASE_EXPIRY_MS
+    await value.host.sweepLeases()
+
+    expect(value.host.engine.captures.statusOf('t1')).toBeNull()
+    expect(value.host.engine.captures.paused).toBe(true)
+  })
+
+  it('leaves a lease that is still polling', async () => {
+    const value = fixture()
+    await twoProjects(value.host)
+    await projectStateOf(value.host, DEFAULT_PROJECT_ID, true, 'client-1')
+
+    value.clock.current += LEASE_EXPIRY_MS - 1
+    await value.host.sweepLeases()
+
+    expect(value.host.engine.captures.statusOf('t1')).not.toBeNull()
+  })
+
+  //+_+// 폴링이 마지막 시각을 덮으므로 계속 도는 탭은 만료되지 않는다
+  it('renews the lease on every poll', async () => {
+    const value = fixture()
+    await twoProjects(value.host)
+    await projectStateOf(value.host, DEFAULT_PROJECT_ID, true, 'client-1')
+
+    value.clock.current += LEASE_EXPIRY_MS - 1
+    await projectStateOf(value.host, DEFAULT_PROJECT_ID, true, 'client-1')
+    value.clock.current += LEASE_EXPIRY_MS - 1
+    await value.host.sweepLeases()
+
+    expect(value.host.engine.captures.statusOf('t1')).not.toBeNull()
+  })
+
+  //+_+// §1.5. 거절할 때 임차를 만들지 않는다
+  //+_+// 임차가 생겼다면 visible true 하나가 있어 전역이 풀렸을 것이다
+  it('does not open a lease for a projectId it refuses', async () => {
+    const { host } = fixture()
+    await twoProjects(host)
+
+    const response = await host.handle({
+      type: 'GET_PROJECT_STATE',
+      clientId: 'client-1',
+      projectId: 'no-such-project',
+      dashboardVisible: true,
+    })
+
+    expect(response).toMatchObject({ ok: false, errorCode: 'PROJECT_NOT_FOUND' })
+    expect(host.engine.captures.paused).toBe(true)
   })
 })
