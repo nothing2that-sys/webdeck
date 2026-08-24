@@ -93,6 +93,8 @@ export interface AppProps {
 export function App({ projectId }: AppProps): React.JSX.Element {
   const [views, setViews] = useState<TileViewModel[]>([])
   const [tiles, setTiles] = useState<WebTile[]>([])
+  //+_+// 8-2.3 8번. 어느 프로젝트를 보는 화면인지 툴바가 밝힌다. 값은 폴링 응답에서만 온다
+  const [projectName, setProjectName] = useState('')
   const [tabs, setTabs] = useState<BrowserTabInfo[]>([])
   const [selectedTabId, setSelectedTabId] = useState<number | null>(null)
   const [tileUrl, setTileUrl] = useState('')
@@ -129,6 +131,10 @@ export function App({ projectId }: AppProps): React.JSX.Element {
     }
     setTiles(response.project.tiles)
     setPaused(response.previewPaused)
+    //+_+// 8-2.3 8번. 탭 이름이 프로젝트를 가른다. 탭이 여럿이면 이것이 유일한 구별 수단이다
+    //+_+// 첫 폴링 전에는 dashboard.html 의 <title> 인 WebDeck 이다. 별도 갱신 경로를 만들지 않는다
+    setProjectName(response.project.name)
+    document.title = `WebDeck - ${response.project.name}`
     setViews(buildTileViews(response.project, response.runtimeStates, response.frames))
   }, [projectId])
 
@@ -483,6 +489,7 @@ export function App({ projectId }: AppProps): React.JSX.Element {
     <div className="app">
       <header className="toolbar">
         <span className="toolbar-title">WebDeck</span>
+        <span className="toolbar-project">{projectName}</span>
         <span className="toolbar-count">tiles {views.length}</span>
         <span className="toolbar-spacer" />
         <button

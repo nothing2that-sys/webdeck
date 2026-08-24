@@ -63,6 +63,10 @@ body {
   color: var(--text-muted);
 }
 
+.toolbar-project {
+  font-weight: 600;
+}
+
 .toolbar-spacer {
   flex: 1;
 }
