@@ -338,6 +338,7 @@ body {
   background: var(--surface-panel);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
+  cursor: pointer;
 }
 
 .hub-row--on {

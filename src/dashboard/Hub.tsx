@@ -44,12 +44,27 @@ export function Hub(): React.JSX.Element {
     void loadProjects()
   }, [loadProjects])
 
-  //+_+// 고른 행의 이름과 설명을 입력란에 채운다. Rename 이 지금 값을 지우고 시작하지 않게 한다
-  const select = useCallback((project: Project) => {
-    setSelectedProjectId(project.id)
-    setProjectName(project.name)
-    setProjectDescription(project.description ?? '')
+  //+_+// 8-2.3 8번. 선택이 풀리면 입력란도 비운다. removeSelectedProject 가 이미 그 형태다
+  const clearSelection = useCallback(() => {
+    setSelectedProjectId(null)
+    setProjectName('')
+    setProjectDescription('')
   }, [])
+
+  //+_+// 고른 행의 이름과 설명을 입력란에 채운다. Rename 이 지금 값을 지우고 시작하지 않게 한다
+  //+_+// 8-2.3 8번. 고른 것을 다시 누르면 풀린다. 하이라이트 박스 전체가 이것을 부른다
+  const toggleSelect = useCallback(
+    (project: Project) => {
+      if (project.id === selectedProjectId) {
+        clearSelection()
+        return
+      }
+      setSelectedProjectId(project.id)
+      setProjectName(project.name)
+      setProjectDescription(project.description ?? '')
+    },
+    [clearSelection, selectedProjectId],
+  )
 
   //+_+// P8-D16. SET_ACTIVE_PROJECT 를 먼저 보내고 그다음 OPEN_PROJECT_TAB 이다
   //+_+// 앞이 실패하면 뒤를 보내지 않는다. 기록이 어긋난 채로 탭을 열지 않는다
@@ -115,16 +130,21 @@ export function Hub(): React.JSX.Element {
       setNotice(failureNotice(response))
       return
     }
-    setSelectedProjectId(null)
-    setProjectName('')
-    setProjectDescription('')
+    clearSelection()
     setNotice(NOTICE_NONE)
     await loadProjects()
-  }, [loadProjects, selectedProjectId])
+  }, [clearSelection, loadProjects, selectedProjectId])
 
   return (
-    <div className="app">
-      <header className="toolbar">
+    //+_+// 8-2.3 8번. 여백 클릭이 선택을 푼다. document 에 리스너를 붙이지 않는다
+    //+_+// 행과 툴바는 전파를 멈춘다. 그래야 Rename 을 누르는 클릭이 선택을 지우지 않는다
+    <div className="app" onClick={clearSelection}>
+      <header
+        className="toolbar"
+        onClick={(event) => {
+          event.stopPropagation()
+        }}
+      >
         <span className="toolbar-title">WebDeck</span>
         <input
           className="toolbar-input"
@@ -157,20 +177,26 @@ export function Hub(): React.JSX.Element {
 
       <ul className="hub-list">
         {projects.map((project) => (
-          <li key={project.id} className={hubRowClassName(project.id === selectedProjectId)}>
+          <li
+            key={project.id}
+            className={hubRowClassName(project.id === selectedProjectId)}
+            onClick={(event) => {
+              event.stopPropagation()
+              toggleSelect(project)
+            }}
+          >
             <div className="hub-row-head">
-              <button
-                type="button"
-                className="hub-pick"
-                onClick={() => {
-                  select(project)
-                }}
-              >
-                {project.name}
-              </button>
+              <span className="hub-pick">{project.name}</span>
               <span className="hub-description">{project.description ?? ''}</span>
               <span className="toolbar-spacer" />
-              <button type="button" onClick={() => void open(project.id)}>
+              <button
+                type="button"
+                onClick={(event) => {
+                  //+_+// Open 클릭이 선택으로 번지지 않는다. 박스 전체가 선택 대상이기 때문이다
+                  event.stopPropagation()
+                  void open(project.id)
+                }}
+              >
                 Open
               </button>
             </div>
