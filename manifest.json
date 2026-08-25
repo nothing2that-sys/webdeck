@@ -9,14 +9,14 @@
     "type": "module"
   },
   "action": {
-    "default_title": "WebDeck Dashboard"
+    "default_title": "WebDeck Hub"
   },
   "commands": {
     "focus-dashboard": {
       "suggested_key": {
         "default": "Alt+Shift+D"
       },
-      "description": "Focus the WebDeck dashboard tab"
+      "description": "Focus the WebDeck hub tab"
     }
   }
 }
