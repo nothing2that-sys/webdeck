@@ -34,17 +34,12 @@ describe('P6-D113 - the diagnostics snapshot holds only the named items', () => 
     attachedTabs: 3,
     workerStarts: 7,
     recordLogs: [{ name: 'captureRecords', length: 4, limit: RECORD_LOG_LIMIT }],
-    portEvents: [],
   })
 
-  //+_+// TASK-P8-05 §1.6 이 portEvents 를 더해 일곱이 여덟이 됐다
-  //+_+// P6-D113 은 계측 키를 화면에 노출하지 않기로 했고 portEvents 가 그것을 깬다
-  //+_+// 이 목록을 여덟으로 늘린 것은 그 결정을 뒤집는 것이다. 보고에 적었고 판정을 기다린다
   //+_+// 가드 자체는 남긴다. 이 목록에 없는 항목이 늘면 여전히 여기서 깨진다
-  it('names exactly the eight fields the snapshot now holds', () => {
+  it('names exactly the seven fields the snapshot holds', () => {
     expect(Object.keys(snapshot).sort()).toEqual([
       'attachedTabs',
-      'portEvents',
       'recordLogs',
       'registeredTiles',
       'roundDurationMs',
@@ -94,7 +89,6 @@ describe('P6-D113 - the diagnostics snapshot holds only the named items', () => 
       registeredTiles: 0,
       attachedTabs: 0,
       workerStarts: null,
-    portEvents: [],
       recordLogs: [],
     })
     expect(unknown.workerStarts).toBeNull()

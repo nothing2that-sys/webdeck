@@ -1,10 +1,5 @@
 import type { BrowserTabInfo } from '../shared/types'
-import type {
-  DashboardFailure,
-  DurationSpread,
-  PortEventRow,
-  RecordLogSize,
-} from '../shared/messages'
+import type { DashboardFailure, DurationSpread, RecordLogSize } from '../shared/messages'
 
 //+_+// P6-D2. (a) 응답 -> 문구다. React state 를 만지지 않으므로 node 에서 시험할 수 있다. L43
 //+_+// App.tsx 는 여기서 만든 문자열을 setNotice 에 넘기기만 한다. 문구를 화면 층에서 조립하지 않는다
@@ -92,15 +87,6 @@ export function recordLogLabel(log: RecordLogSize): string {
   return `${log.name} ${String(log.length)} / ${String(log.limit)}`
 }
 
-//+_+// TASK-P8-05 §1.6. 관측용 한 줄이다. 로컬 시:분:초다. roundLog 의 시계와 같은 규칙이고
-//+_+// 밀리초는 뺐다 -- 관측이 재는 것은 초 단위다 (TASK-P8-05 §3 6번)
-//+_+// clientId 는 앞 8자만 보인다. 전부 보이면 줄이 길어져 여러 줄을 한눈에 못 본다. J164
-export function portEventLabel(row: PortEventRow): string {
-  const time = new Date(row.at)
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  const hms = [time.getHours(), time.getMinutes(), time.getSeconds()].map(pad).join(':')
-  return `${hms} ${row.event} ${row.clientId.slice(0, 8)}`
-}
 
 //+_+// 제목이 비어 있는 탭은 URL 로 보인다. 빈 줄이 목록에 남지 않게 한다
 export function browserTabLabel(tab: BrowserTabInfo): string {

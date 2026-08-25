@@ -26,12 +26,9 @@ import type { BrowserTabInfo, Project, TileRuntimeState, WebTile } from '../shar
 import { DebuggerSessionManager, errorMessage } from './debuggerSessionManager'
 import type { DebuggerBackend } from './debuggerSessionManager'
 import {
-  PORT_EVENT_KEY,
-  PORT_EVENT_VIEW,
   WORKER_STARTS_KEY,
   buildDiagnostics,
   createRoundLogStore,
-  readPortEvents,
   readWorkerStarts,
   recordPortEvent,
   recordReconnectVerdicts,
@@ -872,22 +869,15 @@ export function createDashboardHost(
 
   //+_+// P6-D9 · D113. v1 section 15.5 다. 값은 전부 엔진이 이미 들고 있는 것이다
   //+_+// 워커 기동 수만 계측 배선에서 읽는다. 배선이 없으면 null 이다. 0 과 구별한다
-  //+_+// 회차 로그도 재연결 판정도 응답에 싣지 않는다. 그것은 실측 도구다
-  //+_+// TASK-P8-05 §1.6 의 portEvents 만 예외다. P6-D113 과 부딪히며 보고에 적었다
+  //+_+// 회차 로그도 재연결 판정도 포트 기록도 응답에 싣지 않는다. 그것은 실측 도구다
   async function diagnosticsSnapshot(): Promise<DashboardResponse> {
     let workerStarts: number | null = null
-    let portEvents: PortEventRow[] = []
     if (diagnostics !== null) {
       try {
         workerStarts = readWorkerStarts(await diagnostics.get(WORKER_STARTS_KEY)).starts
-        //+_+// 저장 상한은 200 이고 화면에 나르는 것은 그 꼬리뿐이다 (PORT_EVENT_VIEW)
-        portEvents = readPortEvents(await diagnostics.get(PORT_EVENT_KEY)).recent.slice(
-          -PORT_EVENT_VIEW,
-        )
       } catch {
-        //+_+// 계측 읽기 실패가 Diagnostics 조회를 깨지 않는다. 모르는 것은 null 과 빈 목록으로 둔다
+        //+_+// 계측 읽기 실패가 Diagnostics 조회를 깨지 않는다. 모르는 것은 null 로 둔다
         workerStarts = null
-        portEvents = []
       }
     }
     return {
@@ -898,7 +888,6 @@ export function createDashboardHost(
         registeredTiles: engine.captures.registeredTileCount,
         attachedTabs: engine.sessions.attachedCount,
         workerStarts,
-        portEvents,
         //+_+// P6-D7 의 다섯 배열이다. 이름은 화면에 그대로 나온다
         recordLogs: [
           {

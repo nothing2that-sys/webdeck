@@ -36,8 +36,6 @@ export const PORT_EVENT_KEY = 'webdeck.diagnostics.portEvents'
 //+_+// 재연결 판정과 같은 상한이다. 탭 하나가 열고 닫을 때 두 줄이므로 주기적으로 늘지 않는다
 export const PORT_EVENT_LIMIT = 200
 
-//+_+// Diagnostics 응답에 싣는 줄 수다. 상한 200 을 2초마다 나르지 않는다. J163
-export const PORT_EVENT_VIEW = 12
 
 //+_+// 누적 둘은 절단되지 않는다. 최근 목록이 잘려도 총계는 남는다. workerStarts 와 같은 규칙이다
 export interface PortEventRecord {
@@ -279,7 +277,6 @@ export function buildDiagnostics(input: {
   attachedTabs: number
   workerStarts: number | null
   recordLogs: readonly RecordLogSize[]
-  portEvents: readonly PortEventRow[]
 }): DiagnosticsSnapshot {
   return {
     sampleLimit: RECORD_LOG_LIMIT,
@@ -289,6 +286,5 @@ export function buildDiagnostics(input: {
     attachedTabs: input.attachedTabs,
     workerStarts: input.workerStarts,
     recordLogs: [...input.recordLogs],
-    portEvents: [...input.portEvents],
   }
 }

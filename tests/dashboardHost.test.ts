@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import type { DebuggerBackend } from '../src/background/debuggerSessionManager'
 import {
   PORT_EVENT_KEY,
-  PORT_EVENT_VIEW,
   RECONNECT_LOG_KEY,
   ROUND_LOG_KEY,
   WORKER_STARTS_KEY,
@@ -3343,14 +3342,7 @@ describe('8-2 port lifetime - the port name carries the clientId', () => {
 //+_+// TASK-P8-05 §1.4. 장부는 host 안이다. 리스너는 이름을 풀어 이 둘을 부르기만 한다
 //+_+// 그래서 chrome 스텁 없이 여기서 직접 부를 수 있다
 describe('8-2 port lifetime - the host records connect and disconnect', () => {
-  async function diagnosticsOf(host: DashboardHost) {
-    const response = await host.handle({ type: 'GET_DIAGNOSTICS' })
-    if (!response.ok || response.type !== 'GET_DIAGNOSTICS') {
-      throw new Error('diagnostics failed')
-    }
-    return response.diagnostics
-  }
-
+  //+_+// 8-2.5 16번. 기록만 남았다. 스냅샷을 지나지 않으므로 저장 키로 직접 본다
   it('records both events in order', async () => {
     const diagnostics = new StubStorage()
     const { host } = fixture([11, 12], new StubStorage(), diagnostics)
@@ -3359,7 +3351,7 @@ describe('8-2 port lifetime - the host records connect and disconnect', () => {
     await host.portConnected('c2', 1100)
     await host.portDisconnected('c1', 1200)
 
-    expect((await diagnosticsOf(host)).portEvents).toEqual([
+    expect(readPortEvents(diagnostics.store.get(PORT_EVENT_KEY)).recent).toEqual([
       { at: 1000, event: 'connect', clientId: 'c1' },
       { at: 1100, event: 'connect', clientId: 'c2' },
       { at: 1200, event: 'disconnect', clientId: 'c1' },
@@ -3386,32 +3378,8 @@ describe('8-2 port lifetime - the host records connect and disconnect', () => {
 
     await Promise.all([host.portDisconnected('c1', 2000), host.portDisconnected('c2', 2001)])
 
-    expect((await diagnosticsOf(host)).portEvents).toHaveLength(2)
+    expect(readPortEvents(diagnostics.store.get(PORT_EVENT_KEY)).recent).toHaveLength(2)
     expect(readPortEvents(diagnostics.store.get(PORT_EVENT_KEY)).disconnects).toBe(2)
-  })
-
-  //+_+// 화면에 나르는 것은 꼬리뿐이다. 저장 상한 200 을 2초마다 응답에 싣지 않는다
-  it('carries only the tail to the screen', async () => {
-    const diagnostics = new StubStorage()
-    const { host } = fixture([11, 12], new StubStorage(), diagnostics)
-
-    for (let index = 0; index < PORT_EVENT_VIEW + 3; index += 1) {
-      await host.portConnected('c1', index)
-    }
-
-    const shown = (await diagnosticsOf(host)).portEvents
-    expect(shown).toHaveLength(PORT_EVENT_VIEW)
-    expect(shown[0]?.at).toBe(3)
-    expect(readPortEvents(diagnostics.store.get(PORT_EVENT_KEY)).connects).toBe(PORT_EVENT_VIEW + 3)
-  })
-
-  //+_+// 계측 배선이 없으면 아무것도 쓰지 않는다. rounds 와 같은 규칙이다
-  it('does nothing when there is no diagnostics backend', async () => {
-    const { host } = fixture()
-
-    await host.portConnected('c1', 1000)
-
-    expect((await diagnosticsOf(host)).portEvents).toEqual([])
   })
 })
 
