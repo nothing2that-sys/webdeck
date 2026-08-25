@@ -234,6 +234,12 @@ Chrome 137 이상을 요구한다 — 그 아래에서는 `--load-extension` 이
   그 탭을 그대로 쓰려면 툴바에서 탭을 고른 뒤 타일의 Bind Existing Tab 을 누른다
   Open Missing Tabs 는 붙지만 같은 URL 의 탭을 하나 더 만든다
 
+타일이 계속 DETACHED 다.  붙을 탭은 열려 있다
+  주소가 열릴 때마다 바뀌는 사이트다.  Google 은 ?zx= 뒤에 매번 다른 숫자를 붙인다
+  match 가 exact 면 저장된 주소와 한 글자만 달라도 못 찾는다
+  그 타일을 고르고 타일 설정 바의 match 를 origin 으로 바꾼 뒤 Apply 를 누른다
+  그다음 타일의 Bind Existing Tab 이나 툴바의 Open Missing Tabs 를 누른다
+
 미리보기가 안 바뀐다
   배경 탭 스로틀일 수 있다.  위의 "배경 탭의 화면 갱신" 을 본다
   Diagnostics 를 열어 타임아웃 수를 본다
