@@ -3371,6 +3371,17 @@ describe('8-2 port lifetime - the host records connect and disconnect', () => {
     })
   })
 
+  it('writes nothing when no diagnostics backend is wired', async () => {
+    const storage = new StubStorage()
+    const value = fixture([11, 12], storage)
+
+    await value.host.portConnected('c1', 1000)
+    await value.host.portDisconnected('c1', 1200)
+
+    expect(value.diagnostics).toBeNull()
+    expect([...storage.store.keys()]).toEqual([])
+  })
+
   //+_+// 탭 둘이 동시에 끊기는 경우다. 직렬화하지 않으면 읽고 쓰는 사이에 서로를 덮는다
   it('keeps both rows when two events are not awaited apart', async () => {
     const diagnostics = new StubStorage()
