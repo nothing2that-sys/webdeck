@@ -136,15 +136,8 @@ export function Hub(): React.JSX.Element {
   }, [clearSelection, loadProjects, selectedProjectId])
 
   return (
-    //+_+// 8-2.3 8번. 여백 클릭이 선택을 푼다. document 에 리스너를 붙이지 않는다
-    //+_+// 행과 툴바는 전파를 멈춘다. 그래야 Rename 을 누르는 클릭이 선택을 지우지 않는다
-    <div className="app" onClick={clearSelection}>
-      <header
-        className="toolbar"
-        onClick={(event) => {
-          event.stopPropagation()
-        }}
-      >
+    <div className="app">
+      <header className="toolbar">
         <span className="toolbar-title">WebDeck</span>
         <input
           className="toolbar-input"
@@ -175,13 +168,22 @@ export function Hub(): React.JSX.Element {
         <span className="toolbar-count">projects {projects.length}</span>
       </header>
 
-      <ul className="hub-list">
+      <ul
+        className="hub-list"
+        onClick={(event) => {
+          //+_+// 8-2.3 8번. 여백은 이 목록 영역의 빈 자리다. 툴바와 안내 줄은 이 요소 바깥이다
+          //+_+// 눌린 것이 목록 자신일 때만 푼다. 그래서 행이 전파를 멈출 필요가 없다
+          //+_+// document 에 리스너를 붙이지 않는다
+          if (event.target === event.currentTarget) {
+            clearSelection()
+          }
+        }}
+      >
         {projects.map((project) => (
           <li
             key={project.id}
             className={hubRowClassName(project.id === selectedProjectId)}
-            onClick={(event) => {
-              event.stopPropagation()
+            onClick={() => {
               toggleSelect(project)
             }}
           >
