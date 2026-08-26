@@ -894,6 +894,48 @@ describe('S3 - FOCUS_TILE activates the bound tab and its window', () => {
   })
 })
 
+//+_+// v1 section 14. Reload Page 는 탭을 다시 읽고 Refresh Preview 는 화면만 다시 찍는다
+//+_+// 실패 판정은 FOCUS_TILE 과 같다. 그쪽 네 시험을 그대로 본뜬다
+describe('v1 14 - RELOAD_TILE reloads the bound tab', () => {
+  it('reloads the tab the tile is bound to', async () => {
+    const { host, reloaded } = fixture()
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+
+    const response = await host.handle({ type: 'RELOAD_TILE', tileId: 't1' })
+    expect(response).toMatchObject({ ok: true, type: 'RELOAD_TILE' })
+    expect(reloaded).toEqual([11])
+  })
+
+  it('follows the rebind rather than the first tab', async () => {
+    const { host, reloaded } = fixture()
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 12 })
+    await host.handle({ type: 'RELOAD_TILE', tileId: 't1' })
+    expect(reloaded).toEqual([12])
+  })
+
+  it('refuses a tileId that is not bound', async () => {
+    const { host, reloaded } = fixture()
+    const response = await host.handle({ type: 'RELOAD_TILE', tileId: 'ghost' })
+    expect(response).toMatchObject({
+      ok: false,
+      type: 'RELOAD_TILE',
+      errorCode: 'TILE_NOT_BOUND',
+    })
+    expect(reloaded).toEqual([])
+  })
+
+  it('refuses once the bound tab is gone', async () => {
+    const { host, tabsBackend, reloaded } = fixture()
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+    tabsBackend.tabs.delete(11)
+
+    const response = await host.handle({ type: 'RELOAD_TILE', tileId: 't1' })
+    expect(response).toMatchObject({ ok: false, errorCode: 'TAB_NOT_FOUND' })
+    expect(reloaded).toEqual([])
+  })
+})
+
 //+_+// P5-D23. v1 section 19 에 대응 항목이 없는 5개다. 명명 규칙만 따랐다
 describe('P5-D23 - project CRUD and switching', () => {
   async function listProjects(host: DashboardHost) {
