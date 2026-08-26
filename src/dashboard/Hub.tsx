@@ -183,7 +183,24 @@ export function Hub(): React.JSX.Element {
           <li
             key={project.id}
             className={hubRowClassName(project.id === selectedProjectId)}
+            //+_+// J175. 클릭 면적은 박스 전체로 두고 키보드 경로만 얹는다
+            //+_+// role 을 달지 않는다. 이 li 는 Open 버튼과 URL 목록을 품고 있고
+            //+_+// role="button" 은 대화형 자손을 금지하며 listitem 을 지운다
+            tabIndex={0}
             onClick={() => {
+              toggleSelect(project)
+            }}
+            onKeyDown={(event) => {
+              //+_+// Open 에 포커스가 있을 때의 Enter 는 그 버튼의 것이다. 행까지 올리지 않는다
+              //+_+// 클릭 쪽 stopPropagation 은 keydown 을 막지 않으므로 여기서 다시 가른다
+              if (event.target !== event.currentTarget) {
+                return
+              }
+              if (event.key !== 'Enter' && event.key !== ' ') {
+                return
+              }
+              //+_+// Space 의 기본 동작은 스크롤이다. 선택에 쓰는 키이므로 막는다
+              event.preventDefault()
               toggleSelect(project)
             }}
           >
