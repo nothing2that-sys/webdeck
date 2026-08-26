@@ -20,6 +20,7 @@ import {
 } from '../shared/scheduler'
 import { RECORD_LOG_LIMIT } from '../shared/recordLimit'
 import { isRestrictedUrl } from '../shared/restrictedUrl'
+import { urlMatches } from '../shared/urlMatcher'
 import { loadPreviewPaused, loadState, savePreviewPaused, saveState } from '../shared/storage'
 import type { KeyValueBackend, LoadResult } from '../shared/storage'
 import type { BrowserTabInfo, Project, TileRuntimeState, WebTile } from '../shared/types'
@@ -320,15 +321,25 @@ export function createDashboardHost(
         await engine.captures.unregister(tile.id)
       }
     }
+    let entered = false
     for (const projectId of next) {
       if (registeredProjects.has(projectId)) {
         continue
       }
+      entered = true
       for (const tile of projectById(projectId)?.tiles ?? []) {
         await reregister(tile)
       }
     }
     registeredProjects = next
+    //+_+// P8-3-D12. 대시보드를 새로 연 자리다. 2026-08-26 실측의 순서가 이것이다
+    //+_+// 워커가 살아 있는 동안 열린 탭은 onTabNavigated 가 가드에 걸려 놓친다
+    //+_+// 그 탭을 여기서 집는다. 집합이 실제로 커진 회차에만 돈다. 폴링마다 돌지 않는다
+    //+_+// bindings 유무로 걸지 않는다. kind 가 none 인 타일 하나로 영구히 참이 되기 때문이다
+    //+_+// "붙을 수 있는 탭이 있는가" 는 reconnect 이 requireBind 로 스스로 판정한다
+    if (entered) {
+      await reconnectForTrigger()
+    }
   }
 
   //+_+// P6-D52. 전환은 재등록하지 않는다. 재등록할 이유였던 hidden 주기가 사라졌다
@@ -681,12 +692,15 @@ export function createDashboardHost(
     summaries.delete(tileId)
   }
 
-  //+_+// P5-D35. v1 section 10 이다. 워커 기동 시 1회이며 전용 메시지를 만들지 않는다
+  //+_+// P5-D35 (개정 · P8-3-D12). v1 section 10 이다. 전용 메시지를 만들지 않는다
+  //+_+// 기동 시 1회이던 것에 트리거 둘이 더해졌다. 부르는 자리는 load 와 reconnectForTrigger 다
   //+_+// tabId 를 저장하지 않으므로 URL 로 다시 찾는다. 살아 있는 바인딩은 건드리지 않는다
   //+_+// P6-D53. 전 프로젝트를 한 번에 판정한다. 활성만 훑으면 다른 프로젝트 타일이 영영 굳는다
   //+_+// 그 타일은 bindings 가 비어 있어 전환해도 reregister 가 첫 줄에서 되돌아간다
   //+_+// P5-D36 의 한 탭 한 타일은 프로젝트 경계를 넘어 성립해야 하므로 targets 를 통째로 넘긴다
-  async function reconnect(): Promise<void> {
+  //+_+// P8-3-D14. requireBind 는 트리거 경로다. 붙을 것이 하나도 없으면 아무것도 남기지 않는다
+  //+_+// 그것이 없으면 none 과 ambiguous 만 남은 상태에서 트리거마다 P6-D56 쓰기가 돈다
+  async function reconnect(requireBind = false): Promise<void> {
     const owners = buildTileOwners(projects)
     //+_+// P8-3-D11. targets 조립보다 앞이다. boundTabId 판정이 이 목록을 본다
     const tabs = await listTabs()
@@ -703,6 +717,9 @@ export function createDashboardHost(
       boundTabId: boundToLiveTab(tile.id, liveTabIds),
     }))
     const verdicts = planReconnect(targets, tabs)
+    if (requireBind && !verdicts.some((verdict) => verdict.kind === 'bind')) {
+      return
+    }
 
     //+_+// TASK-P8-07 §1.2. 등록 여부는 활성 집합이 가른다. 기동 직후에는 비어 있어 전부 bindOnly 다
     //+_+// 위 P7-D41 분할은 activeProjectId 를 그대로 쓴다. 기동 시점에 집합은 아직 비어 있고
@@ -750,6 +767,50 @@ export function createDashboardHost(
       await persist()
     }
   }
+
+  //+_+// P8-3-D13. 어댑터의 url 검사를 지난 발화가 전부 재연결 대상은 아니다
+  //+_+// 2026-08-26 실측. 무관한 탭의 favIconUrl 변경만으로도 onUpdated 가 온다 (L53)
+  //+_+// 새 탭 하나에 chrome://newtab/ 과 최종 URL 둘이 실려 오고 앞의 것은 urlMatches 가 떨군다
+  //+_+// 그래서 발화를 묶는 디바운스를 새로 만들지 않는다. 새 타이머를 만들지 않는다 (J168)
+  function isBindableNavigation(tabId: number, url: string): boolean {
+    for (const boundTabId of bindings.values()) {
+      if (boundTabId === tabId) {
+        return false
+      }
+    }
+    for (const { tile } of buildTileOwners(projects).values()) {
+      if (urlMatches(tile.launchUrl, url, tile.matchMode)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  //+_+// P8-3-D13. 트리거 둘이 함께 쓰는 자리다. 가드를 두 곳에 두지 않는다
+  //+_+// 2026-08-26 실측. 탭 이벤트가 비활성 워커를 깨운다. 대시보드가 하나도 없는 상태에서
+  //+_+// 탭을 열자 워커가 활성으로 돌아왔다. 가드가 없으면 그 워커가 재연결까지 돌고
+  //+_+// 그것이 L1 용의자 1 을 제품으로 재현한다. 활성 집합이 비면 아무것도 하지 않는다
+  //+_+// 리스너가 동기라 여기서 던지면 처리되지 않는 거부가 된다. P5-D39 와 같은 이유로 삼킨다
+  async function reconnectForTrigger(): Promise<void> {
+    if (activeSet().size === 0) {
+      return
+    }
+    try {
+      await reconnect(true)
+    } catch (error: unknown) {
+      console.error('[webdeck] reconnect failed', errorMessage(error))
+    }
+  }
+
+  //+_+// P8-3-D12. 대시보드가 열려 있는 동안 사용자가 연 탭을 여기서 집는다
+  //+_+// 2026-08-26 실측. 새 탭은 changeInfo.url 이 실린 onUpdated 로 온다. about:blank 를 거치지 않는다
+  //+_+// onCreated 어댑터를 만들지 않는다. TabManager 가 이미 그 발화를 나른다 (J8)
+  engine.tabs.onTabNavigated((tabId, url) => {
+    if (!isBindableNavigation(tabId, url)) {
+      return
+    }
+    void reconnectForTrigger()
+  })
 
   //+_+// P5-D37. v1 section 10 의 6단계다. 버튼으로만 돈다. 브라우저 시작과 동시에 돌지 않는다
   //+_+// 한 건이 실패해도 앞의 성공을 되돌리지 않는다. 성공한 것만 응답에 싣는다
@@ -962,7 +1023,8 @@ export function createDashboardHost(
   }
 
   //+_+// 거부된 저장값을 덮어쓰지 않는다. 씨앗 상태를 그대로 두고 실패를 부르는 쪽에 돌려준다
-  //+_+// P5-D35. 재연결은 여기 안에 둔다. 기동 시 1회라는 조건을 한 자리에서 보장한다
+  //+_+// P5-D35 (개정 · P8-3-D12). 기동 시 재연결은 여기 안에 둔다. 그 회차만 판정을 전부 남긴다
+  //+_+// 트리거 둘은 requireBind 로 돌므로 붙을 것이 없으면 아무것도 남기지 않는다
   async function load(): Promise<LoadResult> {
     //+_+// A-e5 · D6c. 수동 Pause 는 워커보다 오래 산다. 저장값을 먼저 읽어 엔진에 반영한다
     manualPaused = await loadPreviewPaused(storage)
