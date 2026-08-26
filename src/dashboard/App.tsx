@@ -18,6 +18,7 @@ import {
   isStaleTabFailure,
   listBrowserTabs,
   openMissingTabs,
+  reloadTile,
   removeTile,
   reopenTile,
   setPreviewPaused,
@@ -274,6 +275,20 @@ export function App({ projectId }: AppProps): React.JSX.Element {
     setNotice(NOTICE_NONE)
     await poll()
   }, [poll, reportFailure, selectedTileId])
+
+  //+_+// v1 section 14 의 Reload Page 다. refreshPreview 와 같은 형태이며 대상도 같다
+  //+_+// 캡처를 부르지 않는다. 다음 예정 캡처가 재적재된 화면을 가져온다
+  const reloadPage = useCallback(async () => {
+    if (selectedTileId === null) {
+      return
+    }
+    const response = await reloadTile(selectedTileId)
+    if (!response.ok) {
+      await reportFailure(response)
+      return
+    }
+    setNotice(NOTICE_NONE)
+  }, [reportFailure, selectedTileId])
 
   //+_+// v1 section 10 의 6단계다. 열린 탭 수만큼 알리고 0건이면 그것도 알린다
   const openMissing = useCallback(async () => {
@@ -622,6 +637,13 @@ export function App({ projectId }: AppProps): React.JSX.Element {
           onClick={() => void refreshPreview()}
         >
           Refresh Preview
+        </button>
+        <button
+          type="button"
+          disabled={selectedTileId === null}
+          onClick={() => void reloadPage()}
+        >
+          Reload Page
         </button>
         <button
           type="button"

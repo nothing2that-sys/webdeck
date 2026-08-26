@@ -23,6 +23,7 @@ import type {
   FocusTab,
   ListTabs,
   ProjectTabUrl,
+  ReloadTab,
 } from '../src/background/serviceWorker'
 import type { TabsBackend } from '../src/background/tabManager'
 import {
@@ -155,6 +156,8 @@ interface Fixture {
   //+_+// P5-D39. 재연결이 던지는 상황을 만든다
   failListTabs: boolean
   activated: { tabId: number; windowId: number }[]
+  //+_+// v1 section 14 의 Reload Page 다. activated 와 갈라 둔다. 배열이 경로를 가른다
+  reloaded: number[]
 }
 
 function fixture(
@@ -168,6 +171,7 @@ function fixture(
   const createdUrls: string[] = []
   const frontUrls: string[] = []
   const activated: { tabId: number; windowId: number }[] = []
+  const reloaded: number[] = []
 
   for (const tabId of tabIds) {
     tabsBackend.tabs.set(tabId, tabInfo(tabId, `https://example.com/${String(tabId)}`))
@@ -181,6 +185,12 @@ function fixture(
 
   const focusTab: FocusTab = (tabId, windowId) => {
     activated.push({ tabId, windowId })
+    return Promise.resolve()
+  }
+
+  //+_+// 제품 어댑터는 chrome.tabs.reload 하나다. 여기서는 부른 탭만 기록한다
+  const reloadTab: ReloadTab = (tabId) => {
+    reloaded.push(tabId)
     return Promise.resolve()
   }
 
@@ -212,6 +222,7 @@ function fixture(
       tabsBackend,
       listTabs,
       focusTab,
+      reloadTab,
       createTab,
       createActiveTab,
       projectTabUrl,
@@ -229,6 +240,7 @@ function fixture(
     failCreateUrls,
     failListTabs: false,
     activated,
+    reloaded,
   }
   return value
 }
@@ -475,17 +487,18 @@ describe('J16 - the extension keeps its own pages out of the tab list', () => {
   })
 })
 
+//+_+// TASK-P83-02 가 RELOAD_TILE 을 구현했으므로 남는 동사가 하나다
+//+_+// P5-D4 를 제목에서 빼지 않는다. 넷을 넘긴 결정이 여전히 이 시험의 근거다
 describe('P5-D4 - the verbs Phase 6 owns fail loudly', () => {
   it('refuses the verbs that later phases own', async () => {
     const { host } = fixture()
-    const reload = await host.handle({ type: 'RELOAD_TILE', tileId: 't1' })
     const keepAlive = await host.handle({
       type: 'SET_TILE_KEEP_ALIVE',
       tileId: 't1',
       enabled: true,
     })
 
-    for (const response of [reload, keepAlive]) {
+    for (const response of [keepAlive]) {
       expect(response).toMatchObject({ ok: false, errorCode: 'NOT_IMPLEMENTED' })
     }
   })

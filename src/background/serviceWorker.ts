@@ -146,6 +146,12 @@ export type ListTabs = () => Promise<BrowserTabInfo[]>
 //+_+// ListTabs 와 같은 자리다. 캡처 엔진이 쓰지 않는 chrome 호출은 어댑터로 따로 주입한다
 export type FocusTab = (tabId: number, windowId: number) => Promise<void>
 
+//+_+// v1 section 14 의 Reload Page 다. FocusTab 과 같은 자리에 둔다
+//+_+// TabsBackend 에 얹지 않는다. 그 인터페이스를 구현하는 harness/p3/worker.ts 가
+//+_+// 동결이라 메서드를 더하면 Phase 3 산출물을 고쳐야 한다. L41
+//+_+// 재적재는 캡처 엔진이 쓰지 않는 호출이므로 엔진 인터페이스에 있을 이유도 없다
+export type ReloadTab = (tabId: number) => Promise<void>
+
 //+_+// P5-D27 의 url 경로다. v1 section 20 이 UI 의 chrome 직접 호출을 금지하므로 워커가 만든다
 export type CreateTab = (url: string) => Promise<BrowserTabInfo>
 
@@ -173,6 +179,7 @@ export function createDashboardHost(
   tabsBackend: TabsBackend,
   listTabs: ListTabs,
   focusTab: FocusTab,
+  reloadTab: ReloadTab,
   createTab: CreateTab,
   createActiveTab: CreateActiveTab,
   projectTabUrl: ProjectTabUrl,
@@ -532,6 +539,22 @@ export function createDashboardHost(
     }
     await focusTab(tabId, tab.windowId)
     return { ok: true, type: 'FOCUS_TILE' }
+  }
+
+  //+_+// v1 section 14. Refresh Preview 는 화면만 다시 찍고 이것은 탭 자체를 다시 읽는다
+  //+_+// 여기서 캡처를 부르지 않는다. 두 동작을 가른 것이 그 절의 요구다
+  //+_+// RESTRICTED 타일도 막지 않는다. 붙을 수 없는 것은 디버거이고 탭은 실재한다
+  //+_+// 실패 판정은 focusTile 과 같다. 창을 쓰지 않으므로 windowId 만 읽지 않는다
+  async function reloadTile(tileId: string): Promise<DashboardResponse> {
+    const tabId = bindings.get(tileId)
+    if (tabId === undefined) {
+      return failure('RELOAD_TILE', 'TILE_NOT_BOUND', `Tile ${tileId} is not bound to a tab`)
+    }
+    if (!(await engine.tabs.exists(tabId))) {
+      return failure('RELOAD_TILE', 'TAB_NOT_FOUND', `No tab with id ${String(tabId)}`)
+    }
+    await reloadTab(tabId)
+    return { ok: true, type: 'RELOAD_TILE' }
   }
 
   //+_+// P4-D2. 모르는 tileId 면 첫 빈 자리에 1x1 타일을 만든다. 아는 tileId 면 탭만 다시 건다
@@ -1001,8 +1024,9 @@ export function createDashboardHost(
           return setPreviewPaused(request.paused)
         case 'GET_DIAGNOSTICS':
           return diagnosticsSnapshot()
-        //+_+// P5-D5 가 Reload Page 를, P5-D3 이 Keep Alive 를 Phase 6 으로 두었다
         case 'RELOAD_TILE':
+          return reloadTile(request.tileId)
+        //+_+// P5-D3 이 Keep Alive 를 Phase 6 으로 두었다. V1_DEVIATIONS 3 이 그 편차다
         case 'SET_TILE_KEEP_ALIVE':
           return failure(request.type, 'NOT_IMPLEMENTED', `${request.type} is Phase 6`)
         default:
@@ -1091,6 +1115,14 @@ function chromeFocusTab(): FocusTab {
   }
 }
 
+//+_+// bypassCache 를 넘기지 않는다. 캐시를 건너뛰는 재적재는 요청되지 않았다
+//+_+// 탭을 앞으로 가져오지 않는다. Reload Page 는 보고 있는 화면을 바꾸지 않는다
+function chromeReloadTab(): ReloadTab {
+  return async (tabId) => {
+    await chrome.tabs.reload(tabId)
+  }
+}
+
 //+_+// 8-2.3 3번. 값은 그대로다. OPEN_PROJECT_TAB 이 여기에 ?project= 를 붙여 쓴다
 //+_+// 툴바 아이콘과 단축키가 여는 것은 HUB_PAGE 다. 그쪽은 화면도 쓰므로 shared 에 있다
 export const DASHBOARD_PAGE = 'dashboard.html'
@@ -1169,6 +1201,7 @@ if (typeof chrome !== 'undefined' && typeof chrome.debugger !== 'undefined') {
     chromeTabsBackend(),
     chromeListTabs(),
     chromeFocusTab(),
+    chromeReloadTab(),
     chromeCreateTab(),
     chromeCreateActiveTab(),
     chromeProjectTabUrl(),

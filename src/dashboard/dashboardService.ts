@@ -177,6 +177,11 @@ export async function captureTile(tileId: string): Promise<DashboardResponse> {
   return send({ type: 'CAPTURE_TILE', tileId })
 }
 
+//+_+// v1 section 14 의 Reload Page 다. 위와 짝이며 이쪽만 탭을 다시 읽는다
+export async function reloadTile(tileId: string): Promise<DashboardResponse> {
+  return send({ type: 'RELOAD_TILE', tileId })
+}
+
 export async function setTileSettings(
   tileId: string,
   settings: TileSettings,
