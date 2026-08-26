@@ -280,9 +280,17 @@ export function createDashboardHost(
   //+_+// 여기서 걸지 않으면 첫 폴링 전까지 억제가 없어 D6b 의 요지가 load 호출에 매달린다
   applyPause()
 
-  //+_+// F2. 재등록은 TileState 를 새로 만들어 fault 와 신선도 기준을 초기화한다
-  //+_+// 탭이 사라진 타일을 다시 등록하면 DETACHED 가 LIVE 로 뒤집히고 죽은 탭에 다시 attach 한다
-  //+_+// 탭 존재 여부의 권위는 워커의 tabs 층이다. 등록 전에 그 층에 물어본다
+  //+_+// F2 정정 (P8-3-D17). 이 주석의 옛 문안은 재등록이 fault 와 신선도 기준을 초기화한다고
+  //+_+// 적었다. 그것은 P5-D20 이 kept 를 넣기 전의 동작이고 P6-D44 가 범위를 더 넓혔다
+  //+_+// 지금은 같은 tabId 면 register 가 7필드를 승계한다. 초기화되는 6은 시각과 주기 축이다
+  //+_+// 승계  consecutiveFailures 와 demoted (실패 계단) · lastFrameAt (신선도 기준) ·
+  //+_+//       fault · tabGone · restricted · holdsLease
+  //+_+// 초기화 baseIntervalMs · appliedIntervalMs · touchedAt · nextDueAt · scheduledAt · attemptCount
+  //+_+// 그래서 탭이 사라진 타일을 다시 등록해도 DETACHED 가 LIVE 로 뒤집히지 않는다
+  //+_+// tabGone 이 승계되고 runDue 가 그 타일을 회차에서 뺀다. 죽은 탭에 다시 attach 하지 않는다
+  //+_+// 그럼에도 exists 를 먼저 묻는다. 승계는 이전 상태가 남아 있을 때만 성립한다
+  //+_+// unregister 를 지난 타일은 승계할 것이 없어 tabGone 이 false 로 새로 서고
+  //+_+// 그러면 죽은 탭에 다시 붙으려 한다. 탭 존재 여부의 권위는 워커의 tabs 층이다
   async function reregister(tile: WebTile): Promise<void> {
     const tabId = bindings.get(tile.id)
     if (tabId === undefined) {
