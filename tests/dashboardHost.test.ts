@@ -82,6 +82,7 @@ class StubDebugger implements DebuggerBackend {
 class StubTabs implements TabsBackend {
   readonly tabs = new Map<number, BrowserTabInfo>()
   private readonly removedListeners: ((tabId: number) => void)[] = []
+  private readonly navigatedListeners: ((tabId: number, url: string) => void)[] = []
 
   get(tabId: number): Promise<BrowserTabInfo | null> {
     return Promise.resolve(this.tabs.get(tabId) ?? null)
@@ -99,8 +100,17 @@ class StubTabs implements TabsBackend {
     }
   }
 
-  onUpdated(): void {
-    return undefined
+  onUpdated(listener: (tabId: number, changedUrl: string) => void): void {
+    this.navigatedListeners.push(listener)
+  }
+
+  //+_+// P8-3-D12. 사용자가 탭을 새로 연 것을 재현한다. 어댑터는 url 이 실린 갱신만 올린다
+  //+_+// closeTab 이 onRemoved 에 대해 이미 이 형태다. 같은 자리에 같은 모양으로 둔다
+  navigate(tabId: number, url: string): void {
+    this.tabs.set(tabId, tabInfo(tabId, url))
+    for (const listener of this.navigatedListeners) {
+      listener(tabId, url)
+    }
   }
 }
 
@@ -155,6 +165,8 @@ interface Fixture {
   failCreateUrls: Set<string>
   //+_+// P5-D39. 재연결이 던지는 상황을 만든다
   failListTabs: boolean
+  //+_+// P8-3-D13. 트리거가 돌았는지를 호출 횟수로 센다. 부재 단언으로는 가드를 못 가른다
+  listTabsCalls: number
   activated: { tabId: number; windowId: number }[]
   //+_+// v1 section 14 의 Reload Page 다. activated 와 갈라 둔다. 배열이 경로를 가른다
   reloaded: number[]
@@ -178,10 +190,12 @@ function fixture(
   }
 
   //+_+// P5-D12. 창 인자가 사라졌다. 창 제한은 chromeListTabs 안의 query 로만 남는다
-  const listTabs: ListTabs = () =>
-    value.failListTabs
+  const listTabs: ListTabs = () => {
+    value.listTabsCalls += 1
+    return value.failListTabs
       ? Promise.reject(new Error('tab listing refused'))
       : Promise.resolve([...tabsBackend.tabs.values()])
+  }
 
   const focusTab: FocusTab = (tabId, windowId) => {
     activated.push({ tabId, windowId })
@@ -239,6 +253,7 @@ function fixture(
     frontUrls,
     failCreateUrls,
     failListTabs: false,
+    listTabsCalls: 0,
     activated,
     reloaded,
   }
@@ -2891,6 +2906,126 @@ describe('P7-D41 - reconnect gives the shared tab to the active project first', 
     expect(rowsOf(value).map((row) => row.tileId)).toEqual(['active-first', 'active-second', 'stored-first'])
   })
 })
+
+//+_+// L45. 워커가 살아 있는 동안 사용자가 연 탭이 영영 안 붙던 것을 닫는다
+describe('P8-3-D12 - reconnect also runs from a tab event and from a newly opened dashboard', () => {
+  const TILE_URL = 'https://example.com/11'
+
+  function storedTile(id: string, launchUrl: string): WebTile {
+    return {
+      id,
+      launchUrl,
+      matchMode: 'exact',
+      x: 0,
+      y: 0,
+      w: 1,
+      h: 1,
+      refreshIntervalMs: CAPTURE_INTERVAL_MS.spanSmall,
+      fitMode: 'contain',
+      keepAlive: false,
+    }
+  }
+
+  function seeded(tiles: WebTile[]): StubStorage {
+    const storage = new StubStorage()
+    storage.store.set(STORAGE_KEY, {
+      schemaVersion: 2,
+      activeProjectId: DEFAULT_PROJECT_ID,
+      projects: [
+        {
+          id: DEFAULT_PROJECT_ID,
+          name: 'WebDeck',
+          gridColumns: 4,
+          gridRows: 4,
+          keepManagedTabsAlive: false,
+          tiles,
+        },
+      ],
+    })
+    return storage
+  }
+
+  //+_+// 리스너가 동기라 트리거는 void 로 떠난다. 그 체인이 끝난 뒤에 단언해야 한다
+  async function settled(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0)
+    })
+  }
+
+  it('binds a tab the user opened while the dashboard was up', async () => {
+    const value = fixture([], seeded([storedTile('t1', TILE_URL)]))
+    await value.host.load()
+    expect(Object.hasOwn((await projectState(value.host)).runtimeStates[0], 'tabId')).toBe(false)
+
+    value.tabsBackend.navigate(11, TILE_URL)
+    await settled()
+
+    expect((await projectState(value.host)).runtimeStates[0]).toMatchObject({ tileId: 't1', tabId: 11 })
+  })
+
+  //+_+// 2026-08-26 실측. 탭 이벤트가 비활성 워커를 깨운다. 가드가 없으면 L1 용의자 1 재현이다
+  it('does not run while no dashboard holds a lease', async () => {
+    const value = fixture([], seeded([storedTile('t1', TILE_URL)]))
+    await value.host.load()
+    const before = value.listTabsCalls
+
+    value.tabsBackend.navigate(11, TILE_URL)
+    await settled()
+
+    expect(value.listTabsCalls).toBe(before)
+  })
+
+  //+_+// 새 탭 하나에 chrome://newtab/ 과 최종 URL 둘이 실려 온다. 앞의 것을 urlMatches 가 떨군다
+  it('does not run for a navigation no tile matches', async () => {
+    const value = fixture([], seeded([storedTile('t1', TILE_URL)]))
+    await value.host.load()
+    await projectState(value.host)
+    const before = value.listTabsCalls
+
+    value.tabsBackend.navigate(11, 'chrome://newtab/')
+    await settled()
+
+    expect(value.listTabsCalls).toBe(before)
+  })
+
+  it('does not run for a tab it has already bound', async () => {
+    const value = fixture([11], seeded([storedTile('t1', TILE_URL)]))
+    await value.host.load()
+    expect((await projectState(value.host)).runtimeStates[0]).toMatchObject({ tabId: 11 })
+    const before = value.listTabsCalls
+
+    value.tabsBackend.navigate(11, TILE_URL)
+    await settled()
+
+    expect(value.listTabsCalls).toBe(before)
+  })
+
+  //+_+// 2026-08-26 순서다. 대시보드가 없을 때 열린 탭은 가드에 걸린다. 그 탭을 여는 회차가 집는다
+  it('binds a tab that was opened before the dashboard was opened', async () => {
+    const value = fixture([], seeded([storedTile('t1', TILE_URL)]))
+    await value.host.load()
+
+    value.tabsBackend.navigate(11, TILE_URL)
+    await settled()
+
+    expect((await projectState(value.host)).runtimeStates[0]).toMatchObject({ tileId: 't1', tabId: 11 })
+  })
+
+  //+_+// TASK-P83-04 의 문제 B 다. 붙을 탭이 없는데도 도는 것이 P7-D41 시험을 깨뜨렸다
+  it('leaves no new verdict rows when the project has no tab to bind', async () => {
+    const value = fixture([], seeded([storedTile('t1', TILE_URL)]), new StubStorage())
+    await value.host.load()
+    const after = readReconnectRows(value.diagnostics?.store.get(RECONNECT_LOG_KEY)).length
+    expect(after).toBe(1)
+
+    await projectState(value.host)
+    await value.host.portDisconnected('client-1', 1000)
+    await projectState(value.host)
+
+    expect(readReconnectRows(value.diagnostics?.store.get(RECONNECT_LOG_KEY))).toHaveLength(after)
+  })
+})
+
 
 //+_+// P6-D47. v1 section 15.1 의 전체 Pause 다. P5-D4 가 Phase 6 으로 넘긴 넷 중 하나다
 describe('P6-D47 - SET_PREVIEW_PAUSED is the manual whole-dashboard pause', () => {
