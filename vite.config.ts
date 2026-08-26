@@ -89,7 +89,26 @@ export default defineConfig(({ mode }): ViteUserConfig => {
     },
     test: {
       root: projectRoot,
-      include: ['tests/**/*.test.ts'],
+      //+_+// TASK-P83-01-a 1.2. tsx 만 jsdom 이다. environment 를 전역으로 세우지 않는다
+      //+_+// vitest 4.1.10 에 environmentMatchGlobs 가 없고 파일 상단 지시 주석은
+      //+_+// local/require-comment-prefix 에 걸린다. 남는 길이 projects 하나다
+      projects: [
+        {
+          test: {
+            name: 'node',
+            root: projectRoot,
+            include: ['tests/**/*.test.ts'],
+          },
+        },
+        {
+          test: {
+            name: 'jsdom',
+            root: projectRoot,
+            include: ['tests/**/*.test.tsx'],
+            environment: 'jsdom',
+          },
+        },
+      ],
     },
   }
 })
