@@ -643,11 +643,26 @@ export function createDashboardHost(
     return { ok: true, type: 'ADD_TILE', tileId }
   }
 
-  //+_+// P5-D35 · P5-D37 이 같은 정의를 쓴다. 두 곳에 규칙을 두지 않는다
-  //+_+// 바인딩이 없거나 엔진이 스케줄에서 뺀 타일이 재연결 대상이다
+  //+_+// P8-3-D11. P5-D37 전용 정의다. reconnect 은 더 이상 이것을 쓰지 않는다
+  //+_+// 기동 1회 시절에만 두 물음의 답이 같았다. reconnect 이 폴링과 탭 이벤트로도 돌게 되면서
+  //+_+// "이 타일이 이미 쥐고 있는 탭이 무엇인가" 와 "이 타일이 지금 캡처되고 있는가" 가 갈렸다
+  //+_+// 뜻이 둘이면 정의도 둘이다. reconnect 쪽 정의는 boundToLiveTab 이다
   function liveBoundTabId(tileId: string): number | null {
     const tabId = bindings.get(tileId)
     if (tabId === undefined || !engine.captures.isScheduled(tileId)) {
+      return null
+    }
+    return tabId
+  }
+
+  //+_+// P8-3-D11. P5-D37 정본이 tabGone 이라 적은 것을 reconnect 쪽에서 복원한다
+  //+_+// 탭 존재 여부를 listTabs 결과로 판정한다. exists 를 타일마다 await 하지 않으므로
+  //+_+// 새 chrome.* 호출이 0 이고 targets 조립이 동기로 남는다
+  //+_+// chromeListTabs 가 확장 자기 페이지를 뺀다. 그 탭에 걸린 타일은 "없는 탭" 으로 읽힌다
+  //+_+// ADD_TILE 이 그 목록에서만 고르므로 그런 타일은 실제로 생기지 않는다
+  function boundToLiveTab(tileId: string, liveTabIds: ReadonlySet<number>): number | null {
+    const tabId = bindings.get(tileId)
+    if (tabId === undefined || !liveTabIds.has(tabId)) {
       return null
     }
     return tabId
@@ -673,6 +688,9 @@ export function createDashboardHost(
   //+_+// P5-D36 의 한 탭 한 타일은 프로젝트 경계를 넘어 성립해야 하므로 targets 를 통째로 넘긴다
   async function reconnect(): Promise<void> {
     const owners = buildTileOwners(projects)
+    //+_+// P8-3-D11. targets 조립보다 앞이다. boundTabId 판정이 이 목록을 본다
+    const tabs = await listTabs()
+    const liveTabIds = new Set(tabs.map((tab) => tab.tabId))
     //+_+// P7-D41. 활성 프로젝트 타일을 앞에 둔다. taken 이 배열 순서로 탭을 주므로 순서가 승자를 정한다
     //+_+// 앞에 두지 않으면 비활성 타일이 탭을 가져가고 bindOnly 라 활성 프로젝트가 통째로 굶는다 (L49)
     //+_+// 정렬이 아니라 분할이다. 두 그룹 안의 저장 순서가 그대로 남아야 결정성이 유지된다 (P5-D36)
@@ -682,9 +700,9 @@ export function createDashboardHost(
       ...owned.filter((entry) => entry.project.id !== activeProjectId),
     ].map(({ tile }) => ({
       tile,
-      boundTabId: liveBoundTabId(tile.id),
+      boundTabId: boundToLiveTab(tile.id, liveTabIds),
     }))
-    const verdicts = planReconnect(targets, await listTabs())
+    const verdicts = planReconnect(targets, tabs)
 
     //+_+// TASK-P8-07 §1.2. 등록 여부는 활성 집합이 가른다. 기동 직후에는 비어 있어 전부 bindOnly 다
     //+_+// 위 P7-D41 분할은 activeProjectId 를 그대로 쓴다. 기동 시점에 집합은 아직 비어 있고
