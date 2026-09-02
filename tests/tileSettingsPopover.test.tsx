@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from '../src/dashboard/App'
 import type { DashboardRequest, DashboardResponse } from '../src/shared/messages'
-import type { Project, TileRuntimeState, WebTile } from '../src/shared/types'
+import type { Project, TileRuntimeState, TileStatus, WebTile } from '../src/shared/types'
 
 //+_+// TASK-P9-04 (P9-D8~D13). settingsbar 를 걷어내고 타일마다 자기 톱니·팝오버로 옮긴 뒤의
 //+_+// 동작을 고정한다. 톱니는 항상 DOM 에 있고(P9-D11), 팝오버는 그 타일 자신의 값으로 열린다
@@ -32,6 +32,9 @@ const TILE_A = tile({
   refreshIntervalOverrideMs: 5000,
 })
 const TILE_B = tile({ id: 't.b', x: 1, y: 0 })
+//+_+// TASK-P9-04-R1 (P9-D15). x + w >= GRID_COLUMNS(4) 인 맨 오른쪽 열이다. flip 시험 대상
+//+_+// STALE 로 둬 P9-D16 의 "LIVE 아니면 tile-foot 이 있다" 도 같은 타일로 시험한다
+const TILE_C = tile({ id: 't.c', x: 3, y: 0 })
 
 function project(tiles: WebTile[]): Project {
   return {
@@ -44,8 +47,8 @@ function project(tiles: WebTile[]): Project {
   }
 }
 
-function runtimeState(tileId: string): TileRuntimeState {
-  return { tileId, status: 'LIVE', consecutiveCaptureFailures: 0 }
+function runtimeState(tileId: string, status: TileStatus = 'LIVE'): TileRuntimeState {
+  return { tileId, status, consecutiveCaptureFailures: 0 }
 }
 
 let sent: DashboardRequest[] = []
@@ -57,8 +60,8 @@ function answer(request: DashboardRequest): DashboardResponse {
       return {
         ok: true,
         type: 'GET_PROJECT_STATE',
-        project: project([TILE_A, TILE_B]),
-        runtimeStates: [runtimeState(TILE_A.id), runtimeState(TILE_B.id)],
+        project: project([TILE_A, TILE_B, TILE_C]),
+        runtimeStates: [runtimeState(TILE_A.id), runtimeState(TILE_B.id), runtimeState(TILE_C.id, 'STALE')],
         frames: [],
         previewPaused: false,
       }
@@ -99,10 +102,28 @@ async function renderApp(): Promise<HTMLElement[]> {
   return screen.findAllByRole('button', { name: '타일 설정 열기' })
 }
 
+function articleFor(launchUrl: string): HTMLElement {
+  const titled = screen.getByTitle(launchUrl)
+  const article = titled.closest('article')
+  if (article === null) {
+    throw new Error(`no tile article for ${launchUrl}`)
+  }
+  return article
+}
+
+//+_+// Apply 는 열린 팝오버 안에서 유일하다. 그 조상을 타면 지금 열린 팝오버를 정확히 짚는다
+function openPopover(): HTMLElement {
+  const popover = screen.getByRole('button', { name: 'Apply' }).closest('.tile-settings-popover')
+  if (!(popover instanceof HTMLElement)) {
+    throw new Error('no open settings popover')
+  }
+  return popover
+}
+
 describe('TASK-P9-04 - the gear is always in the DOM', () => {
   it('renders one gear per tile without hovering', async () => {
     const gears = await renderApp()
-    expect(gears).toHaveLength(2)
+    expect(gears).toHaveLength(3)
   })
 })
 
@@ -164,5 +185,34 @@ describe('TASK-P9-04 - closing the popover (P9-D12)', () => {
     expect(screen.getByRole('button', { name: 'Apply' })).not.toBeNull()
     await user.click(screen.getByText('WebDeck'))
     expect(screen.queryByRole('button', { name: 'Apply' })).toBeNull()
+  })
+})
+
+describe('TASK-P9-04-R1 - the popover flips at the rightmost column (P9-D15)', () => {
+  it('does not flip for a tile that is not in the rightmost column', async () => {
+    const user = userEvent.setup()
+    const gears = await renderApp()
+    await user.click(gears[0])
+    expect(openPopover().classList.contains('tile-settings-popover--flip')).toBe(false)
+  })
+
+  it('flips for a tile whose x + w reaches GRID_COLUMNS', async () => {
+    const user = userEvent.setup()
+    const gears = await renderApp()
+    await user.click(gears[2])
+    expect(openPopover().classList.contains('tile-settings-popover--flip')).toBe(true)
+  })
+})
+
+describe('TASK-P9-04-R1 - tile-foot only shows for non-LIVE tiles (P9-D16)', () => {
+  it('hides tile-foot for a LIVE tile', async () => {
+    await renderApp()
+    //+_+// TILE_A 는 customTitle 이 있어 title 속성이 launchUrl 이 아니라 그 별칭이다
+    expect(articleFor('A 별칭').querySelector('.tile-foot')).toBeNull()
+  })
+
+  it('shows tile-foot for a non-LIVE tile', async () => {
+    await renderApp()
+    expect(articleFor(TILE_C.launchUrl).querySelector('.tile-foot')).not.toBeNull()
   })
 })

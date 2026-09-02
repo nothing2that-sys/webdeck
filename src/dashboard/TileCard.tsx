@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { GRID_COLUMNS } from '../shared/grid'
 import type { DragMode } from './layoutDrag'
 import { tileClassName, tileSettingsDraft } from './tileView'
 import type { TileSettingsDraft, TileViewModel } from './tileView'
@@ -112,6 +113,11 @@ export function TileCard({
     .join(' ')
   //+_+// P9-D11. editing 중엔 톱니 자체를 비활성·비표시로 둔다. disabled 버튼은 Tab 순서에서도 빠진다
   const iconVisible = !editing && (hovered || focusedWithin)
+  //+_+// P9-D15. 맨 오른쪽 열이면 왼쪽으로 뒤집는다. 그 밖엔 기본값(오른쪽 열림)을 쓴다
+  const flipPopover = tile.x + tile.w >= GRID_COLUMNS
+  const popoverClassName = flipPopover
+    ? 'tile-settings-popover tile-settings-popover--flip'
+    : 'tile-settings-popover'
 
   return (
     <article
@@ -186,7 +192,7 @@ export function TileCard({
         </button>
 
         {isSettingsOpen ? (
-          <div ref={popoverRef} className="tile-settings-popover">
+          <div ref={popoverRef} className={popoverClassName}>
             <div className="tile-settings-popover-head">
               <span>Tile</span>
               <button type="button" aria-label="타일 설정 닫기" onClick={closeSettings}>
@@ -268,10 +274,12 @@ export function TileCard({
         </div>
       ) : null}
 
-      <footer className="tile-foot">
-        <span>{view.lastCaptureLabel}</span>
-        <span>{view.tabLabel}</span>
-      </footer>
+      {view.status === 'LIVE' ? null : (
+        <footer className="tile-foot">
+          <span>{view.lastCaptureLabel}</span>
+          <span>{view.tabLabel}</span>
+        </footer>
+      )}
 
       {editing ? <span className="tile-resize" data-resize="" /> : null}
     </article>
