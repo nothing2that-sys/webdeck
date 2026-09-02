@@ -1,13 +1,15 @@
+import { useEffect, useRef, useState } from 'react'
 import type { DragMode } from './layoutDrag'
-import { tileClassName } from './tileView'
-import type { TileViewModel } from './tileView'
+import { tileClassName, tileSettingsDraft } from './tileView'
+import type { TileSettingsDraft, TileViewModel } from './tileView'
+import type { WebTile } from '../shared/types'
 
 export interface TileCardProps {
   view: TileViewModel
-  selected: boolean
+  //+_+// P9-D8. 팝오버를 열 때 이 타일의 저장값으로 draft 를 채운다. TileViewModel 은 그 값들을 안 든다
+  tile: WebTile
   editing: boolean
   dragClassName: string
-  onSelect: () => void
   onFocus: () => void
   onDragStart: (mode: DragMode, event: React.PointerEvent) => void
   onDragMove: (event: React.PointerEvent) => void
@@ -16,6 +18,9 @@ export interface TileCardProps {
   onReopen: () => void
   onBindExisting: () => void
   onRemove: () => void
+  onRefreshPreview: () => void
+  onReloadPage: () => void
+  onApplySettings: (draft: TileSettingsDraft) => void
 }
 
 //+_+// Resize Handle 위에서 시작한 것만 크기 변경이다. 그 밖에서 시작한 것은 이동이다
@@ -29,10 +34,9 @@ function dragModeFor(event: React.PointerEvent): DragMode {
 //+_+// v1 section 15.6. fitMode 값이 그대로 CSS object-fit 이다. 매핑표를 만들지 않는다
 export function TileCard({
   view,
-  selected,
+  tile,
   editing,
   dragClassName,
-  onSelect,
   onFocus,
   onDragStart,
   onDragMove,
@@ -41,16 +45,93 @@ export function TileCard({
   onReopen,
   onBindExisting,
   onRemove,
+  onRefreshPreview,
+  onReloadPage,
+  onApplySettings,
 }: TileCardProps): React.JSX.Element {
-  //+_+// P6-D2 (b). 조립 규칙은 tileView 에 있다. 여기서는 부르기만 한다
-  const className = tileClassName(selected, editing, dragClassName)
+  //+_+// P9-D11. Hub.tsx 의 hoveredId/focusedId 패턴을 그대로 참고한다. 이 타일 하나 안의 지역 상태다
+  const [hovered, setHovered] = useState(false)
+  const [focusedWithin, setFocusedWithin] = useState(false)
+  //+_+// P9-D8. 이 타일의 팝오버 열림 여부와 편집 중인 draft 를 여기서 든다
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [draft, setDraft] = useState<TileSettingsDraft>(() => tileSettingsDraft(tile))
+  const gearRef = useRef<HTMLButtonElement | null>(null)
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+
+  //+_+// P5-D34 의 연장이다. 톱니·팝오버가 이제 tile-preview 위 overlay 라 pointerdown 이
+  //+_+// article 에서 드래그를 잡아채는 것과 같은 자리를 다툰다. Edit Layout 중엔 닫아 둔다
+  useEffect(() => {
+    if (editing) {
+      setIsSettingsOpen(false)
+    }
+  }, [editing])
+
+  //+_+// P9-D12. 바깥 클릭과 Escape 둘 다 여기서 감지한다. 톱니·팝오버 안쪽 클릭은 바깥이 아니다
+  useEffect(() => {
+    if (!isSettingsOpen) {
+      return undefined
+    }
+    const handlePointerDown = (event: PointerEvent): void => {
+      if (!(event.target instanceof Node)) {
+        return
+      }
+      const insideGear = gearRef.current?.contains(event.target) ?? false
+      const insidePopover = popoverRef.current?.contains(event.target) ?? false
+      if (!insideGear && !insidePopover) {
+        setIsSettingsOpen(false)
+      }
+    }
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setIsSettingsOpen(false)
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isSettingsOpen])
+
+  //+_+// J97 선례를 "선택" 대신 "열기" 에 적용한다. 열 때 한 번만 저장값을 읽는다
+  const toggleSettings = (): void => {
+    if (!isSettingsOpen) {
+      setDraft(tileSettingsDraft(tile))
+    }
+    setIsSettingsOpen((current) => !current)
+  }
+
+  const closeSettings = (): void => {
+    setIsSettingsOpen(false)
+  }
+
+  //+_+// P9-D9. tileView.ts 의 tileClassName 을 고치지 않는다 (이 라운드 범위 밖). 문자열로 덧붙인다
+  const className = [tileClassName(false, editing, dragClassName), isSettingsOpen ? 'tile--settings-open' : '']
+    .filter((part) => part.length > 0)
+    .join(' ')
+  //+_+// P9-D11. editing 중엔 톱니 자체를 비활성·비표시로 둔다. disabled 버튼은 Tab 순서에서도 빠진다
+  const iconVisible = !editing && (hovered || focusedWithin)
 
   return (
     <article
       className={className}
       style={{ gridArea: view.gridArea }}
-      onClick={onSelect}
       onDoubleClick={editing ? undefined : onFocus}
+      onMouseEnter={() => {
+        setHovered(true)
+      }}
+      onMouseLeave={() => {
+        setHovered(false)
+      }}
+      onFocus={() => {
+        setFocusedWithin(true)
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          setFocusedWithin(false)
+        }
+      }}
       onPointerDown={
         editing
           ? (event) => {
@@ -90,6 +171,87 @@ export function TileCard({
             draggable={false}
           />
         )}
+
+        <button
+          ref={gearRef}
+          type="button"
+          className="tile-gear"
+          style={{ opacity: iconVisible ? 1 : 0 }}
+          aria-label="타일 설정 열기"
+          aria-expanded={isSettingsOpen}
+          disabled={editing}
+          onClick={toggleSettings}
+        >
+          ⚙
+        </button>
+
+        {isSettingsOpen ? (
+          <div ref={popoverRef} className="tile-settings-popover">
+            <div className="tile-settings-popover-head">
+              <span>Tile</span>
+              <button type="button" aria-label="타일 설정 닫기" onClick={closeSettings}>
+                ×
+              </button>
+            </div>
+            <input
+              value={draft.customTitle}
+              placeholder="Custom Tile Name"
+              onChange={(event) => {
+                setDraft((current) => ({ ...current, customTitle: event.target.value }))
+              }}
+            />
+            <select
+              value={draft.fitMode}
+              onChange={(event) => {
+                const fitMode = event.target.value === 'cover' ? 'cover' : 'contain'
+                setDraft((current) => ({ ...current, fitMode }))
+              }}
+            >
+              <option value="contain">fit · contain</option>
+              <option value="cover">fit · cover</option>
+            </select>
+            <select
+              value={draft.matchMode}
+              onChange={(event) => {
+                const matchMode =
+                  event.target.value === 'origin'
+                    ? 'origin'
+                    : event.target.value === 'prefix'
+                      ? 'prefix'
+                      : 'exact'
+                setDraft((current) => ({ ...current, matchMode }))
+              }}
+            >
+              <option value="exact">match · exact</option>
+              <option value="origin">match · origin</option>
+              <option value="prefix">match · prefix</option>
+            </select>
+            <input
+              value={draft.refreshIntervalOverrideMs}
+              placeholder="주기 ms · 비우면 자동"
+              onChange={(event) => {
+                setDraft((current) => ({ ...current, refreshIntervalOverrideMs: event.target.value }))
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                onApplySettings(draft)
+              }}
+            >
+              Apply
+            </button>
+            <button type="button" onClick={onRefreshPreview}>
+              Refresh Preview
+            </button>
+            <button type="button" onClick={onReloadPage}>
+              Reload Page
+            </button>
+            <button type="button" onClick={onRemove}>
+              Remove Tile
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {view.showsRecoveryActions ? (

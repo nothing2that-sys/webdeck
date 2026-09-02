@@ -49,12 +49,11 @@ import {
   gridClassName,
   openedTabsNotice,
   recordLogLabel,
-  tileSettingsLabel,
   toggleClassName,
   toggleLabel,
   workerStartsLabel,
 } from './screenText'
-import { buildTileViews, gridArea, parseTileSettings, tileSettingsDraft } from './tileView'
+import { buildTileViews, gridArea, parseTileSettings } from './tileView'
 import type { TileSettingsDraft, TileViewModel } from './tileView'
 
 //+_+// 4x4 를 항상 보이게 하는 빈 칸이다. 타일과 같은 좌표 계산을 쓴다
@@ -98,8 +97,6 @@ export function App({ projectId }: AppProps): React.JSX.Element {
   const [tabs, setTabs] = useState<BrowserTabInfo[]>([])
   const [selectedTabId, setSelectedTabId] = useState<number | null>(null)
   const [tileUrl, setTileUrl] = useState('')
-  const [selectedTileId, setSelectedTileId] = useState<string | null>(null)
-  const [settings, setSettings] = useState<TileSettingsDraft | null>(null)
   const [editing, setEditing] = useState(false)
   //+_+// P6-D47. 정본은 워커다. 화면은 폴링 응답이 알려 준 값을 그린다
   const [paused, setPaused] = useState(false)
@@ -263,32 +260,33 @@ export function App({ projectId }: AppProps): React.JSX.Element {
 
   //+_+// P5-D6. v1 section 14 의 Refresh Preview 다. 응답의 프레임을 직접 그리지 않고 폴링에 맡긴다
   //+_+// 워커가 최신 프레임을 이미 들고 있으므로 다음 상태 응답이 같은 것을 나른다. J126
-  const refreshPreview = useCallback(async () => {
-    if (selectedTileId === null) {
-      return
-    }
-    const response = await captureTile(selectedTileId)
-    if (!response.ok) {
-      await reportFailure(response)
-      return
-    }
-    setNotice(NOTICE_NONE)
-    await poll()
-  }, [poll, reportFailure, selectedTileId])
+  //+_+// P9-D8. 대상은 팝오버를 연 타일 자신이 넘긴다. 페이지 차원의 selectedTileId 가 없다
+  const refreshPreview = useCallback(
+    async (tileId: string) => {
+      const response = await captureTile(tileId)
+      if (!response.ok) {
+        await reportFailure(response)
+        return
+      }
+      setNotice(NOTICE_NONE)
+      await poll()
+    },
+    [poll, reportFailure],
+  )
 
   //+_+// v1 section 14 의 Reload Page 다. refreshPreview 와 같은 형태이며 대상도 같다
   //+_+// 캡처를 부르지 않는다. 다음 예정 캡처가 재적재된 화면을 가져온다
-  const reloadPage = useCallback(async () => {
-    if (selectedTileId === null) {
-      return
-    }
-    const response = await reloadTile(selectedTileId)
-    if (!response.ok) {
-      await reportFailure(response)
-      return
-    }
-    setNotice(NOTICE_NONE)
-  }, [reportFailure, selectedTileId])
+  const reloadPage = useCallback(
+    async (tileId: string) => {
+      const response = await reloadTile(tileId)
+      if (!response.ok) {
+        await reportFailure(response)
+        return
+      }
+      setNotice(NOTICE_NONE)
+    },
+    [reportFailure],
+  )
 
   //+_+// v1 section 10 의 6단계다. 열린 탭 수만큼 알리고 0건이면 그것도 알린다
   const openMissing = useCallback(async () => {
@@ -314,14 +312,10 @@ export function App({ projectId }: AppProps): React.JSX.Element {
         await reportFailure(response)
         return
       }
-      if (tileId === selectedTileId) {
-        setSelectedTileId(null)
-        setSettings(null)
-      }
       setNotice(NOTICE_NONE)
       await poll()
     },
-    [poll, reportFailure, selectedTileId],
+    [poll, reportFailure],
   )
 
   //+_+// v1 section 9.1 의 (b) 경로다. 탭 생성은 워커가 한다. 화면은 chrome.* 를 부르지 않는다
@@ -344,34 +338,25 @@ export function App({ projectId }: AppProps): React.JSX.Element {
     await loadTabs()
   }, [loadTabs, poll, projectId, tileUrl])
 
-  //+_+// 선택할 때 한 번만 현재값을 읽는다. 폴링에 맞춰 다시 읽으면 입력 중인 값이 2초마다 덮인다
-  const selectTile = useCallback(
-    (tileId: string) => {
-      setSelectedTileId(tileId)
-      const tile = tiles.find((item) => item.id === tileId)
-      setSettings(tile === undefined ? null : tileSettingsDraft(tile))
-    },
-    [tiles],
-  )
-
   //+_+// P5-D31. 4필드 전체 교체다. 값이 규칙에 맞지 않으면 보내지 않는다. 판정 권위는 워커다
-  const applySettings = useCallback(async () => {
-    if (selectedTileId === null || settings === null) {
-      return
-    }
-    const parsed = parseTileSettings(settings)
-    if (parsed === null) {
-      setNotice(NOTICE_INTERVAL_INVALID)
-      return
-    }
-    const response = await setTileSettings(selectedTileId, parsed)
-    if (!response.ok) {
-      setNotice(failureNotice(response))
-      return
-    }
-    setNotice(NOTICE_NONE)
-    await poll()
-  }, [poll, selectedTileId, settings])
+  //+_+// P9-D8. draft 는 팝오버를 연 타일이 자기 지역 상태로 들고, 여기엔 tileId 와 함께 넘어온다
+  const applySettings = useCallback(
+    async (tileId: string, draft: TileSettingsDraft) => {
+      const parsed = parseTileSettings(draft)
+      if (parsed === null) {
+        setNotice(NOTICE_INTERVAL_INVALID)
+        return
+      }
+      const response = await setTileSettings(tileId, parsed)
+      if (!response.ok) {
+        setNotice(failureNotice(response))
+        return
+      }
+      setNotice(NOTICE_NONE)
+      await poll()
+    },
+    [poll],
+  )
 
   //+_+// v1 section 7.1. 더블클릭이 실제 탭으로 간다. 활성화는 워커가 한다
   const focus = useCallback(async (tileId: string) => {
@@ -570,94 +555,6 @@ export function App({ projectId }: AppProps): React.JSX.Element {
         </button>
       </header>
 
-      <section className="settingsbar">
-        <span className="settingsbar-label">
-          {tileSettingsLabel(settings !== null)}
-        </span>
-        <input
-          className="toolbar-input"
-          value={settings?.customTitle ?? ''}
-          placeholder="Custom Tile Name"
-          disabled={settings === null}
-          onChange={(event) => {
-            setSettings((current) =>
-              current === null ? current : { ...current, customTitle: event.target.value },
-            )
-          }}
-        />
-        <select
-          className="toolbar-select"
-          value={settings?.fitMode ?? 'contain'}
-          disabled={settings === null}
-          onChange={(event) => {
-            const fitMode = event.target.value === 'cover' ? 'cover' : 'contain'
-            setSettings((current) => (current === null ? current : { ...current, fitMode }))
-          }}
-        >
-          <option value="contain">fit · contain</option>
-          <option value="cover">fit · cover</option>
-        </select>
-        <select
-          className="toolbar-select"
-          value={settings?.matchMode ?? 'exact'}
-          disabled={settings === null}
-          onChange={(event) => {
-            const matchMode =
-              event.target.value === 'origin'
-                ? 'origin'
-                : event.target.value === 'prefix'
-                  ? 'prefix'
-                  : 'exact'
-            setSettings((current) => (current === null ? current : { ...current, matchMode }))
-          }}
-        >
-          <option value="exact">match · exact</option>
-          <option value="origin">match · origin</option>
-          <option value="prefix">match · prefix</option>
-        </select>
-        <input
-          className="toolbar-input"
-          value={settings?.refreshIntervalOverrideMs ?? ''}
-          placeholder="주기 ms · 비우면 자동"
-          disabled={settings === null}
-          onChange={(event) => {
-            setSettings((current) =>
-              current === null
-                ? current
-                : { ...current, refreshIntervalOverrideMs: event.target.value },
-            )
-          }}
-        />
-        <button type="button" disabled={settings === null} onClick={() => void applySettings()}>
-          Apply
-        </button>
-        <button
-          type="button"
-          disabled={selectedTileId === null}
-          onClick={() => void refreshPreview()}
-        >
-          Refresh Preview
-        </button>
-        <button
-          type="button"
-          disabled={selectedTileId === null}
-          onClick={() => void reloadPage()}
-        >
-          Reload Page
-        </button>
-        <button
-          type="button"
-          disabled={selectedTileId === null}
-          onClick={() => {
-            if (selectedTileId !== null) {
-              void remove(selectedTileId)
-            }
-          }}
-        >
-          Remove Tile
-        </button>
-      </section>
-
       {showDiagnostics && diagnostics !== null ? (
         <section className="diagnosticsbar">
           <span className="diagnosticsbar-note">
@@ -687,28 +584,35 @@ export function App({ projectId }: AppProps): React.JSX.Element {
         {GRID_SLOTS.map((slot) => (
           <div key={slot.key} className="grid-slot" style={{ gridArea: slot.area }} />
         ))}
-        {views.map((view) => (
-          <TileCard
-            key={view.tileId}
-            view={view}
-            selected={view.tileId === selectedTileId}
-            editing={editing}
-            dragClassName={dragClassName(drag, view.tileId)}
-            onSelect={() => {
-              selectTile(view.tileId)
-            }}
-            onFocus={() => void focus(view.tileId)}
-            onDragStart={(mode, event) => {
-              startDrag(view.tileId, mode, event)
-            }}
-            onDragMove={moveDrag}
-            onDragEnd={() => void endDrag()}
-            onDragCancel={cancelDrag}
-            onReopen={() => void reopen(view.tileId)}
-            onBindExisting={() => void bindExisting(view.tileId)}
-            onRemove={() => void remove(view.tileId)}
-          />
-        ))}
+        {views.flatMap((view) => {
+          //+_+// P9-D8. 팝오버가 draft 를 채우려면 raw WebTile 이 필요하다. TileViewModel 엔 없다
+          const tile = tiles.find((item) => item.id === view.tileId)
+          if (tile === undefined) {
+            return []
+          }
+          return [
+            <TileCard
+              key={view.tileId}
+              view={view}
+              tile={tile}
+              editing={editing}
+              dragClassName={dragClassName(drag, view.tileId)}
+              onFocus={() => void focus(view.tileId)}
+              onDragStart={(mode, event) => {
+                startDrag(view.tileId, mode, event)
+              }}
+              onDragMove={moveDrag}
+              onDragEnd={() => void endDrag()}
+              onDragCancel={cancelDrag}
+              onReopen={() => void reopen(view.tileId)}
+              onBindExisting={() => void bindExisting(view.tileId)}
+              onRemove={() => void remove(view.tileId)}
+              onRefreshPreview={() => void refreshPreview(view.tileId)}
+              onReloadPage={() => void reloadPage(view.tileId)}
+              onApplySettings={(draft) => void applySettings(view.tileId, draft)}
+            />,
+          ]
+        })}
         {indicator === null ? null : (
           <div className={indicator.className} style={{ gridArea: indicator.gridArea }} />
         )}
