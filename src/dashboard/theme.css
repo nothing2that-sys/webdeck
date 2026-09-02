@@ -47,11 +47,26 @@ body {
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   padding: 8px 12px;
   background: var(--surface-panel);
   border-bottom: 1px solid var(--border-soft);
+}
+
+.toolbar-panel {
+  display: none;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.toolbar-panel--open {
+  display: flex;
 }
 
 .toolbar-title {
@@ -65,6 +80,10 @@ body {
 
 .toolbar-project {
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .toolbar-spacer {
@@ -107,6 +126,7 @@ body {
 }
 
 .toolbar button,
+.toolbar-panel button,
 .toolbar-select,
 .toolbar-input,
 .settingsbar button {
@@ -119,11 +139,15 @@ body {
 }
 
 .toolbar-select {
+  min-width: 0;
   max-width: 320px;
+  flex: 1 1 auto;
 }
 
 .toolbar-input {
+  min-width: 0;
   width: 140px;
+  flex: 1 1 auto;
 }
 
 .toolbar-toggle--on {

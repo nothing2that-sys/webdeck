@@ -98,6 +98,8 @@ export function App({ projectId }: AppProps): React.JSX.Element {
   const [selectedTabId, setSelectedTabId] = useState<number | null>(null)
   const [tileUrl, setTileUrl] = useState('')
   const [editing, setEditing] = useState(false)
+  //+_+// P9-D17. Edit Layout(editing) 과 다른 개념이다. 같은 변수로 묶지 않는다
+  const [isToolbarExpanded, setIsToolbarExpanded] = useState(false)
   //+_+// P6-D47. 정본은 워커다. 화면은 폴링 응답이 알려 준 값을 그린다
   const [paused, setPaused] = useState(false)
   //+_+// P6-D9. 열려 있는 동안만 읽는다. 닫혀 있으면 요청을 보내지 않는다
@@ -482,6 +484,11 @@ export function App({ projectId }: AppProps): React.JSX.Element {
     setPrivacy((current) => !current)
   }, [])
 
+  //+_+// P9-D17. 화면에서만 산다. Privacy 와 같은 성질이다. 저장하지 않는다
+  const toggleToolbarExpanded = useCallback(() => {
+    setIsToolbarExpanded((current) => !current)
+  }, [])
+
   const indicator = dropIndicator(drag)
 
   return (
@@ -507,17 +514,28 @@ export function App({ projectId }: AppProps): React.JSX.Element {
         </button>
         <button
           type="button"
-          className={toggleClassName(showDiagnostics)}
-          onClick={toggleDiagnostics}
-        >
-          {toggleLabel('Diagnostics', showDiagnostics)}
-        </button>
-        <button
-          type="button"
           className={toggleClassName(privacy)}
           onClick={togglePrivacy}
         >
           {toggleLabel('Privacy', privacy)}
+        </button>
+        <button
+          type="button"
+          className={toggleClassName(isToolbarExpanded)}
+          aria-expanded={isToolbarExpanded}
+          onClick={toggleToolbarExpanded}
+        >
+          {toggleLabel('More', isToolbarExpanded)}
+        </button>
+      </header>
+
+      <section className={isToolbarExpanded ? 'toolbar-panel toolbar-panel--open' : 'toolbar-panel'}>
+        <button
+          type="button"
+          className={toggleClassName(showDiagnostics)}
+          onClick={toggleDiagnostics}
+        >
+          {toggleLabel('Diagnostics', showDiagnostics)}
         </button>
         <select
           className="toolbar-select"
@@ -553,7 +571,7 @@ export function App({ projectId }: AppProps): React.JSX.Element {
         <button type="button" onClick={() => void openMissing()}>
           Open Missing Tabs
         </button>
-      </header>
+      </section>
 
       {showDiagnostics && diagnostics !== null ? (
         <section className="diagnosticsbar">
