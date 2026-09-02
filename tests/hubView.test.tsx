@@ -172,6 +172,42 @@ describe('TASK-P9-02 - delete confirmation', () => {
   })
 })
 
+describe('TASK-P9-02-R1 - Edit and Delete stay reachable by keyboard', () => {
+  it('finds Edit and Delete without hovering (they are always in the DOM)', async () => {
+    await renderHub()
+    expect(screen.getByRole('button', { name: `Edit ${ALPHA.name}` })).not.toBeNull()
+    expect(screen.getByRole('button', { name: `Delete ${ALPHA.name}` })).not.toBeNull()
+  })
+
+  it('keeps the icons visible when focus moves to a sibling button in the same row', async () => {
+    await renderHub()
+    const editButton = screen.getByRole('button', { name: `Edit ${ALPHA.name}` })
+    const deleteButton = screen.getByRole('button', { name: `Delete ${ALPHA.name}` })
+    fireEvent.focus(editButton)
+    expect(editButton.style.opacity).toBe('1')
+    fireEvent.blur(editButton, { relatedTarget: deleteButton })
+    expect(editButton.style.opacity).toBe('1')
+  })
+
+  it('hides the icons again once focus leaves the row entirely', async () => {
+    await renderHub()
+    const editButton = screen.getByRole('button', { name: `Edit ${ALPHA.name}` })
+    fireEvent.focus(editButton)
+    expect(editButton.style.opacity).toBe('1')
+    fireEvent.blur(editButton, { relatedTarget: document.body })
+    expect(editButton.style.opacity).toBe('0')
+  })
+
+  it('opens edit mode with Enter on a focused Edit button', async () => {
+    const user = userEvent.setup()
+    await renderHub()
+    const editButton = screen.getByRole('button', { name: `Edit ${ALPHA.name}` })
+    editButton.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByDisplayValue(ALPHA.name)).not.toBeNull()
+  })
+})
+
 describe('TASK-P9-02 - New opens a blank row at the top', () => {
   it('creates a new project from the blank row', async () => {
     const user = userEvent.setup()

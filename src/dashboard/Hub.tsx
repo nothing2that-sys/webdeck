@@ -30,6 +30,9 @@ export function Hub(): React.JSX.Element {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   //+_+// P9-D2 는 타일 hover 이야기다. 이 hoveredId 는 허브 행 Edit·Delete 아이콘 노출 전용이다
   const [hoveredId, setHoveredId] = useState<string | null>(null)
+  //+_+// P9-D6. hoveredId 와 합치지 않는다. 마우스가 행을 벗어나도 포커스가 남아 있으면
+  //+_+// 계속 보여야 하고, 그 반대(포커스는 없는데 마우스만 얹힌 채)도 마찬가지다
+  const [focusedId, setFocusedId] = useState<string | null>(null)
 
   const loadProjects = useCallback(async () => {
     const response = await listProjects()
@@ -172,7 +175,8 @@ export function Hub(): React.JSX.Element {
         {projects.map((project) => {
           const isEditing = editingId === project.id
           const isConfirmingDelete = confirmingDeleteId === project.id
-          const showIcons = hoveredId === project.id && !isEditing && !isConfirmingDelete
+          //+_+// P9-D6. 조건부 렌더링을 없앤 자리다. 버튼은 늘 DOM 에 있고 opacity 만 가른다
+          const iconsVisible = hoveredId === project.id || focusedId === project.id
 
           return (
             <li
@@ -183,6 +187,15 @@ export function Hub(): React.JSX.Element {
               }}
               onMouseLeave={() => {
                 setHoveredId((current) => (current === project.id ? null : current))
+              }}
+              onFocus={() => {
+                setFocusedId(project.id)
+              }}
+              onBlur={(event) => {
+                //+_+// P9-D6. 같은 행 안(Edit -> Delete 등)으로 포커스가 옮겨가는 것은 이탈이 아니다
+                if (!event.currentTarget.contains(event.relatedTarget)) {
+                  setFocusedId(null)
+                }
               }}
             >
               {isEditing ? (
@@ -228,28 +241,26 @@ export function Hub(): React.JSX.Element {
                   <button type="button" onClick={() => void open(project.id)}>
                     Open
                   </button>
-                  {showIcons ? (
-                    <>
-                      <button
-                        type="button"
-                        aria-label={`Edit ${project.name}`}
-                        onClick={() => {
-                          startEdit(project)
-                        }}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Delete ${project.name}`}
-                        onClick={() => {
-                          startDeleteConfirm(project.id)
-                        }}
-                      >
-                        Delete
-                      </button>
-                    </>
-                  ) : null}
+                  <button
+                    type="button"
+                    aria-label={`Edit ${project.name}`}
+                    style={{ opacity: iconsVisible ? 1 : 0 }}
+                    onClick={() => {
+                      startEdit(project)
+                    }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Delete ${project.name}`}
+                    style={{ opacity: iconsVisible ? 1 : 0 }}
+                    onClick={() => {
+                      startDeleteConfirm(project.id)
+                    }}
+                  >
+                    Delete
+                  </button>
                 </div>
               )}
               <ul className="hub-urls">
