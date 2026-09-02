@@ -1,12 +1,12 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Hub } from '../src/dashboard/Hub'
 import type { DashboardRequest, DashboardResponse } from '../src/shared/messages'
 import type { Project } from '../src/shared/types'
 
-//+_+// TASK-P83-01-a 2. 완료 조건 22 · 23 과 J175 를 고정한다. 대상은 Hub.tsx 하나다
-//+_+// 완료 조건 20 · 21 은 App.tsx 조건이라 이 파일이 열지 않는다 (TASK-P83-01-a 1.4)
+//+_+// TASK-P9-02. 선택 스캐폴딩(P8-3-D3, J175)을 없앤 뒤의 행 인라인 편집을 고정한다
+//+_+// Open/Edit/Delete/Save/Cancel/예/아니오 는 실제 button 이라 role 로 찾는다. 우회 장치가 없다
 
 function project(id: string, name: string, description: string, launchUrl: string): Project {
   return {
@@ -36,16 +36,54 @@ function project(id: string, name: string, description: string, launchUrl: strin
 const ALPHA = project('p.alpha', '알파', '첫 설명', 'https://example.com/alpha')
 const BETA = project('p.beta', '베타', '둘 설명', 'https://example.com/beta')
 
-//+_+// TASK-P83-01-a 1.3. LIST_PROJECTS 1회 응답이다. 폴링을 흉내 내지 않는다
-//+_+// 허브는 GET_PROJECT_STATE 를 보내지 않으므로 그 분기를 두지 않는다 (P8-D17)
+//+_+// 워커를 흉내 낸다. CREATE/RENAME/DELETE 가 다음 LIST_PROJECTS 응답에 반영되게
+//+_+// projectsState 를 들고 있다. sent 는 각 시험이 실제 보낸 요청을 들여다보는 자리다
+let projectsState: Project[] = []
+let sent: DashboardRequest[] = []
+
 function answer(request: DashboardRequest): DashboardResponse {
-  if (request.type === 'LIST_PROJECTS') {
-    return { ok: true, type: 'LIST_PROJECTS', projects: [ALPHA, BETA], activeProjectId: ALPHA.id }
+  sent.push(request)
+  switch (request.type) {
+    case 'LIST_PROJECTS':
+      return {
+        ok: true,
+        type: 'LIST_PROJECTS',
+        projects: projectsState,
+        activeProjectId: projectsState[0]?.id ?? '',
+      }
+    case 'CREATE_PROJECT': {
+      const created = project(
+        `p.created-${String(projectsState.length)}`,
+        request.name,
+        request.description ?? '',
+        'https://example.com/created',
+      )
+      projectsState = [...projectsState, created]
+      return { ok: true, type: 'CREATE_PROJECT', project: created }
+    }
+    case 'RENAME_PROJECT': {
+      projectsState = projectsState.map((item) =>
+        item.id === request.projectId
+          ? { ...item, name: request.name, description: request.description }
+          : item,
+      )
+      return { ok: true, type: 'RENAME_PROJECT' }
+    }
+    case 'DELETE_PROJECT': {
+      projectsState = projectsState.filter((item) => item.id !== request.projectId)
+      return { ok: true, type: 'DELETE_PROJECT' }
+    }
+    default:
+      return { ok: false, type: request.type, errorCode: 'SEND_FAILED', message: 'not stubbed' }
   }
-  return { ok: false, type: request.type, errorCode: 'SEND_FAILED', message: 'not stubbed' }
 }
 
 beforeEach(() => {
+  projectsState = [
+    project('p.alpha', ALPHA.name, ALPHA.description ?? '', 'https://example.com/alpha'),
+    project('p.beta', BETA.name, BETA.description ?? '', 'https://example.com/beta'),
+  ]
+  sent = []
   vi.stubGlobal('chrome', {
     runtime: {
       sendMessage: (request: DashboardRequest): Promise<DashboardResponse> =>
@@ -60,121 +98,102 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-async function renderHub(): Promise<HTMLElement> {
-  const view = render(<Hub />)
+async function renderHub(): Promise<void> {
+  render(<Hub />)
   await screen.findByText(ALPHA.name)
-  return view.container
 }
 
-function row(container: HTMLElement, name: string): HTMLElement {
-  const pick = Array.from(container.querySelectorAll('.hub-pick')).find(
-    (node) => node.textContent === name,
-  )
-  const found = pick?.closest('li')
-  if (found === null || found === undefined) {
+//+_+// userEvent.hover 는 hover 뒤의 user.click 호출에서 별개의 포인터 이동으로 계산돼
+//+_+// li 의 mouseleave 를 먼저 쏘고 Edit·Delete 버튼을 지운다 (jsdom 환경 한정 관찰).
+//+_+// fireEvent 로 직접 mouseenter 를 쏘아 그 문제를 피한다
+function hoverRow(name: string): void {
+  const pick = screen.getByText(name)
+  const row = pick.closest('li')
+  if (row === null) {
     throw new Error(`no hub row for ${name}`)
   }
-  return found
+  fireEvent.mouseEnter(row)
 }
 
-function child(parent: HTMLElement, selector: string): HTMLElement {
-  const found = parent.querySelector(selector)
-  if (!(found instanceof HTMLElement)) {
-    throw new Error(`no ${selector} under the given element`)
-  }
-  return found
-}
-
-function isSelected(element: HTMLElement): boolean {
-  return element.className === 'hub-row hub-row--on'
-}
-
-describe('WEBDECK_PLAN 22 - any part of the highlight box selects the row', () => {
-  it('selects the row from the description text', async () => {
+describe('TASK-P9-02 - inline edit', () => {
+  it('edits a project name and description inline, then saves', async () => {
     const user = userEvent.setup()
-    const container = await renderHub()
-    await user.click(child(row(container, ALPHA.name), '.hub-description'))
-    expect(isSelected(row(container, ALPHA.name))).toBe(true)
+    await renderHub()
+    hoverRow(ALPHA.name)
+    await user.click(screen.getByRole('button', { name: `Edit ${ALPHA.name}` }))
+    const nameInput = screen.getByDisplayValue(ALPHA.name)
+    await user.clear(nameInput)
+    await user.type(nameInput, '알파-수정')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByText('알파-수정')
+    expect(
+      sent.some((request) => request.type === 'RENAME_PROJECT' && request.name === '알파-수정'),
+    ).toBe(true)
   })
 
-  it('selects the row from the launch url list', async () => {
+  it('cancels inline edit and keeps the original values', async () => {
     const user = userEvent.setup()
-    const container = await renderHub()
-    await user.click(child(row(container, ALPHA.name), '.hub-urls'))
-    expect(isSelected(row(container, ALPHA.name))).toBe(true)
-  })
-
-  //+_+// 이름 글자가 아닌 자리다. 1ce19fe 가 button 을 span 으로 바꾼 이유가 이것이다
-  it('selects the row from the row padding', async () => {
-    const user = userEvent.setup()
-    const container = await renderHub()
-    await user.click(row(container, ALPHA.name))
-    expect(isSelected(row(container, ALPHA.name))).toBe(true)
-  })
-
-  //+_+// J177 이 남긴 유일한 stopPropagation 이다. 눌린 행이 선택 대상이 됐기 때문이다
-  it('keeps the selection when Open is pressed', async () => {
-    const user = userEvent.setup()
-    const container = await renderHub()
-    await user.click(row(container, ALPHA.name))
-    await user.click(child(row(container, BETA.name), 'button'))
-    expect(isSelected(row(container, ALPHA.name))).toBe(true)
-    expect(isSelected(row(container, BETA.name))).toBe(false)
+    await renderHub()
+    hoverRow(ALPHA.name)
+    await user.click(screen.getByRole('button', { name: `Edit ${ALPHA.name}` }))
+    const nameInput = screen.getByDisplayValue(ALPHA.name)
+    await user.clear(nameInput)
+    await user.type(nameInput, '지워질 이름')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByText(ALPHA.name)).not.toBeNull()
+    expect(screen.queryByText('지워질 이름')).toBeNull()
+    expect(sent.some((request) => request.type === 'RENAME_PROJECT')).toBe(false)
   })
 })
 
-describe('WEBDECK_PLAN 23 - the selection is released', () => {
-  //+_+// J177. 눌린 것이 목록 자신일 때만 푼다. document 에 리스너를 붙이지 않는다
-  it('clears the selection when the list background is pressed', async () => {
+describe('TASK-P9-02 - delete confirmation', () => {
+  it('deletes a project after the two-step confirmation', async () => {
     const user = userEvent.setup()
-    const container = await renderHub()
-    await user.click(row(container, ALPHA.name))
-    await user.click(child(container, '.hub-list'))
-    expect(isSelected(row(container, ALPHA.name))).toBe(false)
+    await renderHub()
+    hoverRow(BETA.name)
+    await user.click(screen.getByRole('button', { name: `Delete ${BETA.name}` }))
+    await user.click(screen.getByRole('button', { name: '예' }))
+    await waitFor(() => {
+      expect(screen.queryByText(BETA.name)).toBeNull()
+    })
+    expect(
+      sent.some((request) => request.type === 'DELETE_PROJECT' && request.projectId === BETA.id),
+    ).toBe(true)
   })
 
-  it('clears the selection when the selected row is pressed again', async () => {
+  it('keeps the project when delete confirmation is declined', async () => {
     const user = userEvent.setup()
-    const container = await renderHub()
-    await user.click(row(container, ALPHA.name))
-    await user.click(row(container, ALPHA.name))
-    expect(isSelected(row(container, ALPHA.name))).toBe(false)
-  })
-
-  it('empties the name and description inputs when the selection goes away', async () => {
-    const user = userEvent.setup()
-    const container = await renderHub()
-    await user.click(row(container, ALPHA.name))
-    const [name, description] = screen.getAllByRole('textbox') as HTMLInputElement[]
-    expect([name.value, description.value]).toEqual([ALPHA.name, ALPHA.description])
-    await user.click(child(container, '.hub-list'))
-    expect([name.value, description.value]).toEqual(['', ''])
+    await renderHub()
+    hoverRow(BETA.name)
+    await user.click(screen.getByRole('button', { name: `Delete ${BETA.name}` }))
+    await user.click(screen.getByRole('button', { name: '아니오' }))
+    expect(screen.queryByText(BETA.name)).not.toBeNull()
+    expect(sent.some((request) => request.type === 'DELETE_PROJECT')).toBe(false)
   })
 })
 
-describe('J175 - the hub row is reachable by keyboard', () => {
-  it('carries a tab stop', async () => {
-    const container = await renderHub()
-    const target = row(container, ALPHA.name)
-    expect(target.tabIndex).toBe(0)
-    target.focus()
-    expect(document.activeElement).toBe(target)
+describe('TASK-P9-02 - New opens a blank row at the top', () => {
+  it('creates a new project from the blank row', async () => {
+    const user = userEvent.setup()
+    await renderHub()
+    await user.click(screen.getByRole('button', { name: 'New' }))
+    const nameInput = screen.getByPlaceholderText('프로젝트 이름')
+    await user.type(nameInput, '감마')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByText('감마')
+    expect(
+      sent.some((request) => request.type === 'CREATE_PROJECT' && request.name === '감마'),
+    ).toBe(true)
   })
 
-  it('selects on Enter', async () => {
+  it('discards the blank row on cancel without creating a project', async () => {
     const user = userEvent.setup()
-    const container = await renderHub()
-    row(container, ALPHA.name).focus()
-    await user.keyboard('{Enter}')
-    expect(isSelected(row(container, ALPHA.name))).toBe(true)
-  })
-
-  //+_+// role="button" 을 달면 Space 가 서지 않는 것이 더 어긋난다 (TASK-P83-01-a 1.1)
-  it('selects on Space', async () => {
-    const user = userEvent.setup()
-    const container = await renderHub()
-    row(container, ALPHA.name).focus()
-    await user.keyboard(' ')
-    expect(isSelected(row(container, ALPHA.name))).toBe(true)
+    await renderHub()
+    await user.click(screen.getByRole('button', { name: 'New' }))
+    const nameInput = screen.getByPlaceholderText('프로젝트 이름')
+    await user.type(nameInput, '버릴 이름')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByPlaceholderText('프로젝트 이름')).toBeNull()
+    expect(sent.some((request) => request.type === 'CREATE_PROJECT')).toBe(false)
   })
 })

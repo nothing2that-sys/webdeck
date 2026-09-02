@@ -12,21 +12,24 @@ import {
   HUB_NO_TILES,
   NOTICE_NONE,
   NOTICE_PROJECT_NAME_REQUIRED,
-  NOTICE_PROJECT_REQUIRED,
   NOTICE_RENAME_REQUIRED,
   failureNotice,
-  hubRowClassName,
 } from './screenText'
 
-//+_+// WEBDECK_PLAN 8-2.3 6번. 프로젝트 목록 · 설명 · launchUrl 을 보이고 CRUD 를 받는다
-//+_+// P8-D17. LIST_PROJECTS 하나로 다 받는다. GET_PROJECT_STATE 를 보내지 않으므로 임차가 없다
-//+_+// activeProjectId 를 상태로 들이지 않는다. Rename 과 Delete 의 대상은 고른 행이다
+//+_+// WEBDECK_PLAN 8-4.1. 행 자체가 편집·삭제를 받는다. 위쪽 공용 폼을 두지 않는다
+//+_+// P9-D3. New 도 목록 맨 위의 빈 행을 이 편집 모드로 여는 것으로 처리한다
+const NEW_PROJECT_ID = 'new'
+
 export function Hub(): React.JSX.Element {
   const [projects, setProjects] = useState<Project[]>([])
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
-  const [projectName, setProjectName] = useState('')
-  const [projectDescription, setProjectDescription] = useState('')
   const [notice, setNotice] = useState(NOTICE_NONE)
+  //+_+// P9-D5. 선택 상태(li tabIndex/keydown)를 없앤 자리다. 지금 편집 중인 행 하나만 있다
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draftName, setDraftName] = useState('')
+  const [draftDescription, setDraftDescription] = useState('')
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
+  //+_+// P9-D2 는 타일 hover 이야기다. 이 hoveredId 는 허브 행 Edit·Delete 아이콘 노출 전용이다
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
 
   const loadProjects = useCallback(async () => {
     const response = await listProjects()
@@ -44,26 +47,70 @@ export function Hub(): React.JSX.Element {
     void loadProjects()
   }, [loadProjects])
 
-  //+_+// 8-2.3 8번. 선택이 풀리면 입력란도 비운다. removeSelectedProject 가 이미 그 형태다
-  const clearSelection = useCallback(() => {
-    setSelectedProjectId(null)
-    setProjectName('')
-    setProjectDescription('')
+  const startEdit = useCallback((project: Project) => {
+    setConfirmingDeleteId(null)
+    setEditingId(project.id)
+    setDraftName(project.name)
+    setDraftDescription(project.description ?? '')
   }, [])
 
-  //+_+// 고른 행의 이름과 설명을 입력란에 채운다. Rename 이 지금 값을 지우고 시작하지 않게 한다
-  //+_+// 8-2.3 8번. 고른 것을 다시 누르면 풀린다. 하이라이트 박스 전체가 이것을 부른다
-  const toggleSelect = useCallback(
-    (project: Project) => {
-      if (project.id === selectedProjectId) {
-        clearSelection()
+  const startNewProject = useCallback(() => {
+    setConfirmingDeleteId(null)
+    setEditingId(NEW_PROJECT_ID)
+    setDraftName('')
+    setDraftDescription('')
+  }, [])
+
+  //+_+// 새 행이면 projects 상태에 아직 없으므로 editingId 를 지우는 것만으로 목록에서 빠진다
+  const cancelEdit = useCallback(() => {
+    setEditingId(null)
+    setDraftName('')
+    setDraftDescription('')
+  }, [])
+
+  const saveEdit = useCallback(async () => {
+    const name = draftName.trim()
+    if (name.length === 0) {
+      setNotice(editingId === NEW_PROJECT_ID ? NOTICE_PROJECT_NAME_REQUIRED : NOTICE_RENAME_REQUIRED)
+      return
+    }
+    const response =
+      editingId === NEW_PROJECT_ID
+        ? await createProject(name, draftDescription)
+        : await renameProject(editingId ?? '', name, draftDescription)
+    if (!response.ok) {
+      setNotice(failureNotice(response))
+      return
+    }
+    setEditingId(null)
+    setDraftName('')
+    setDraftDescription('')
+    setNotice(NOTICE_NONE)
+    await loadProjects()
+  }, [draftDescription, draftName, editingId, loadProjects])
+
+  const startDeleteConfirm = useCallback((projectId: string) => {
+    setEditingId(null)
+    setConfirmingDeleteId(projectId)
+  }, [])
+
+  const cancelDeleteConfirm = useCallback(() => {
+    setConfirmingDeleteId(null)
+  }, [])
+
+  const confirmDelete = useCallback(
+    async (projectId: string) => {
+      const response = await deleteProject(projectId)
+      if (!response.ok) {
+        setNotice(failureNotice(response))
+        setConfirmingDeleteId(null)
         return
       }
-      setSelectedProjectId(project.id)
-      setProjectName(project.name)
-      setProjectDescription(project.description ?? '')
+      setConfirmingDeleteId(null)
+      setNotice(NOTICE_NONE)
+      await loadProjects()
     },
-    [clearSelection, selectedProjectId],
+    [loadProjects],
   )
 
   //+_+// P8-D16. SET_ACTIVE_PROJECT 를 먼저 보내고 그다음 OPEN_PROJECT_TAB 이다
@@ -82,152 +129,139 @@ export function Hub(): React.JSX.Element {
     setNotice(NOTICE_NONE)
   }, [])
 
-  //+_+// J82 · 8-2.3 6번. New 는 만들고 허브에 머문다. 전환도 탭 열기도 하지 않는다
-  const addProject = useCallback(async () => {
-    const name = projectName.trim()
-    if (name.length === 0) {
-      setNotice(NOTICE_PROJECT_NAME_REQUIRED)
-      return
-    }
-    const response = await createProject(name, projectDescription)
-    if (!response.ok) {
-      setNotice(failureNotice(response))
-      return
-    }
-    setProjectName('')
-    setProjectDescription('')
-    setNotice(NOTICE_NONE)
-    await loadProjects()
-  }, [loadProjects, projectDescription, projectName])
-
-  const renameSelectedProject = useCallback(async () => {
-    if (selectedProjectId === null) {
-      setNotice(NOTICE_PROJECT_REQUIRED)
-      return
-    }
-    const name = projectName.trim()
-    if (name.length === 0) {
-      setNotice(NOTICE_RENAME_REQUIRED)
-      return
-    }
-    const response = await renameProject(selectedProjectId, name, projectDescription)
-    if (!response.ok) {
-      setNotice(failureNotice(response))
-      return
-    }
-    setNotice(NOTICE_NONE)
-    await loadProjects()
-  }, [loadProjects, projectDescription, projectName, selectedProjectId])
-
-  //+_+// P5-D23. 마지막 하나여도 워커가 거부하지 않는다. 기본 프로젝트가 다시 선다
-  const removeSelectedProject = useCallback(async () => {
-    if (selectedProjectId === null) {
-      setNotice(NOTICE_PROJECT_REQUIRED)
-      return
-    }
-    const response = await deleteProject(selectedProjectId)
-    if (!response.ok) {
-      setNotice(failureNotice(response))
-      return
-    }
-    clearSelection()
-    setNotice(NOTICE_NONE)
-    await loadProjects()
-  }, [clearSelection, loadProjects, selectedProjectId])
-
   return (
     <div className="app">
       <header className="toolbar">
         <span className="toolbar-title">WebDeck</span>
-        <input
-          className="toolbar-input"
-          value={projectName}
-          placeholder="프로젝트 이름"
-          onChange={(event) => {
-            setProjectName(event.target.value)
-          }}
-        />
-        <input
-          className="toolbar-input"
-          value={projectDescription}
-          placeholder="설명"
-          onChange={(event) => {
-            setProjectDescription(event.target.value)
-          }}
-        />
-        <button type="button" onClick={() => void addProject()}>
+        <button type="button" onClick={startNewProject}>
           New
-        </button>
-        <button type="button" onClick={() => void renameSelectedProject()}>
-          Rename
-        </button>
-        <button type="button" onClick={() => void removeSelectedProject()}>
-          Delete
         </button>
         <span className="toolbar-spacer" />
         <span className="toolbar-count">projects {projects.length}</span>
       </header>
 
-      <ul
-        className="hub-list"
-        onClick={(event) => {
-          //+_+// 8-2.3 8번. 여백은 이 목록 영역의 빈 자리다. 툴바와 안내 줄은 이 요소 바깥이다
-          //+_+// 눌린 것이 목록 자신일 때만 푼다. 그래서 행이 전파를 멈출 필요가 없다
-          //+_+// document 에 리스너를 붙이지 않는다
-          if (event.target === event.currentTarget) {
-            clearSelection()
-          }
-        }}
-      >
-        {projects.map((project) => (
-          <li
-            key={project.id}
-            className={hubRowClassName(project.id === selectedProjectId)}
-            //+_+// J175. 클릭 면적은 박스 전체로 두고 키보드 경로만 얹는다
-            //+_+// role 을 달지 않는다. 이 li 는 Open 버튼과 URL 목록을 품고 있고
-            //+_+// role="button" 은 대화형 자손을 금지하며 listitem 을 지운다
-            tabIndex={0}
-            onClick={() => {
-              toggleSelect(project)
-            }}
-            onKeyDown={(event) => {
-              //+_+// Open 에 포커스가 있을 때의 Enter 는 그 버튼의 것이다. 행까지 올리지 않는다
-              //+_+// 클릭 쪽 stopPropagation 은 keydown 을 막지 않으므로 여기서 다시 가른다
-              if (event.target !== event.currentTarget) {
-                return
-              }
-              if (event.key !== 'Enter' && event.key !== ' ') {
-                return
-              }
-              //+_+// Space 의 기본 동작은 스크롤이다. 선택에 쓰는 키이므로 막는다
-              event.preventDefault()
-              toggleSelect(project)
-            }}
-          >
+      <ul className="hub-list">
+        {editingId === NEW_PROJECT_ID ? (
+          <li className="hub-row" key={NEW_PROJECT_ID}>
             <div className="hub-row-head">
-              <span className="hub-pick">{project.name}</span>
-              <span className="hub-description">{project.description ?? ''}</span>
-              <span className="toolbar-spacer" />
-              <button
-                type="button"
-                onClick={(event) => {
-                  //+_+// Open 클릭이 선택으로 번지지 않는다. 박스 전체가 선택 대상이기 때문이다
-                  event.stopPropagation()
-                  void open(project.id)
+              <input
+                value={draftName}
+                placeholder="프로젝트 이름"
+                onChange={(event) => {
+                  setDraftName(event.target.value)
                 }}
-              >
-                Open
+              />
+              <input
+                value={draftDescription}
+                placeholder="설명"
+                onChange={(event) => {
+                  setDraftDescription(event.target.value)
+                }}
+              />
+              <span className="toolbar-spacer" />
+              <button type="button" onClick={() => void saveEdit()}>
+                Save
+              </button>
+              <button type="button" onClick={cancelEdit}>
+                Cancel
               </button>
             </div>
-            <ul className="hub-urls">
-              {project.tiles.length === 0 ? (
-                <li className="hub-empty">{HUB_NO_TILES}</li>
-              ) : (
-                project.tiles.map((tile) => <li key={tile.id}>{tile.launchUrl}</li>)
-              )}
-            </ul>
           </li>
-        ))}
+        ) : null}
+
+        {projects.map((project) => {
+          const isEditing = editingId === project.id
+          const isConfirmingDelete = confirmingDeleteId === project.id
+          const showIcons = hoveredId === project.id && !isEditing && !isConfirmingDelete
+
+          return (
+            <li
+              key={project.id}
+              className="hub-row"
+              onMouseEnter={() => {
+                setHoveredId(project.id)
+              }}
+              onMouseLeave={() => {
+                setHoveredId((current) => (current === project.id ? null : current))
+              }}
+            >
+              {isEditing ? (
+                <div className="hub-row-head">
+                  <input
+                    value={draftName}
+                    placeholder="프로젝트 이름"
+                    onChange={(event) => {
+                      setDraftName(event.target.value)
+                    }}
+                  />
+                  <input
+                    value={draftDescription}
+                    placeholder="설명"
+                    onChange={(event) => {
+                      setDraftDescription(event.target.value)
+                    }}
+                  />
+                  <span className="toolbar-spacer" />
+                  <button type="button" onClick={() => void saveEdit()}>
+                    Save
+                  </button>
+                  <button type="button" onClick={cancelEdit}>
+                    Cancel
+                  </button>
+                </div>
+              ) : isConfirmingDelete ? (
+                <div className="hub-row-head">
+                  <span>정말 삭제?</span>
+                  <span className="toolbar-spacer" />
+                  <button type="button" onClick={() => void confirmDelete(project.id)}>
+                    예
+                  </button>
+                  <button type="button" onClick={cancelDeleteConfirm}>
+                    아니오
+                  </button>
+                </div>
+              ) : (
+                <div className="hub-row-head">
+                  <span className="hub-pick">{project.name}</span>
+                  <span className="hub-description">{project.description ?? ''}</span>
+                  <span className="toolbar-spacer" />
+                  <button type="button" onClick={() => void open(project.id)}>
+                    Open
+                  </button>
+                  {showIcons ? (
+                    <>
+                      <button
+                        type="button"
+                        aria-label={`Edit ${project.name}`}
+                        onClick={() => {
+                          startEdit(project)
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete ${project.name}`}
+                        onClick={() => {
+                          startDeleteConfirm(project.id)
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              )}
+              <ul className="hub-urls">
+                {project.tiles.length === 0 ? (
+                  <li className="hub-empty">{HUB_NO_TILES}</li>
+                ) : (
+                  project.tiles.map((tile) => <li key={tile.id}>{tile.launchUrl}</li>)
+                )}
+              </ul>
+            </li>
+          )
+        })}
       </ul>
 
       <footer className="statusbar">{notice}</footer>
