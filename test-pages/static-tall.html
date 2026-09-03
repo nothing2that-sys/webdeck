@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>static-tall</title>
+<!-- TASK-P10-01-R1 3.1의 정지 화면 조건이다. script 태그를 아예 넣지 않는다.
+     타이머 · 애니메이션 · transition · 외부 리소스가 하나라도 있으면 프레임이 바뀔 수 있어
+     baseline/after 캡처 대조(P10-D6)가 무효화된다. -->
+<style>
+  body { font-family: monospace; margin: 0; padding: 0; background: #0a0a0a; color: #eee; }
+  #head { padding: 16px; }
+  #head h1 { font-size: 20px; margin: 0 0 6px; }
+  #head p { font-size: 12px; color: #9cf; margin: 2px 0; }
+  .blk { display: flex; align-items: center; gap: 12px; padding: 0 16px; box-sizing: border-box; border-top: 1px solid rgba(255,255,255,0.08); }
+  .num { font-size: 22px; font-weight: bold; color: #111; padding: 4px 10px; border-radius: 3px; }
+  .off { font-size: 13px; color: #ccc; }
+</style>
+</head>
+<body>
+<div id="head">
+<h1>static-tall</h1>
+<p>TASK-P10-01-R1 픽스처 1. 로드 뒤 한 픽셀도 바뀌지 않는다. 타이머 없음. 애니메이션 없음. 외부 리소스 없음.</p>
+<p>블록 60개 x 100px = 본문 높이 약 6000px + 헤드.</p>
+</div>
+<div class="blk" style="background:hsl(0, 45%, 14%);height:100px"><span class="num" style="background:hsl(0, 65%, 55%)">#0</span><span class="off">y≈0px</span></div>
+<div class="blk" style="background:hsl(137, 45%, 14%);height:100px"><span class="num" style="background:hsl(137, 65%, 55%)">#1</span><span class="off">y≈100px</span></div>
+<div class="blk" style="background:hsl(274, 45%, 14%);height:100px"><span class="num" style="background:hsl(274, 65%, 55%)">#2</span><span class="off">y≈200px</span></div>
+<div class="blk" style="background:hsl(51, 45%, 14%);height:100px"><span class="num" style="background:hsl(51, 65%, 55%)">#3</span><span class="off">y≈300px</span></div>
+<div class="blk" style="background:hsl(188, 45%, 14%);height:100px"><span class="num" style="background:hsl(188, 65%, 55%)">#4</span><span class="off">y≈400px</span></div>
+<div class="blk" style="background:hsl(325, 45%, 14%);height:100px"><span class="num" style="background:hsl(325, 65%, 55%)">#5</span><span class="off">y≈500px</span></div>
+<div class="blk" style="background:hsl(102, 45%, 14%);height:100px"><span class="num" style="background:hsl(102, 65%, 55%)">#6</span><span class="off">y≈600px</span></div>
+<div class="blk" style="background:hsl(239, 45%, 14%);height:100px"><span class="num" style="background:hsl(239, 65%, 55%)">#7</span><span class="off">y≈700px</span></div>
+<div class="blk" style="background:hsl(16, 45%, 14%);height:100px"><span class="num" style="background:hsl(16, 65%, 55%)">#8</span><span class="off">y≈800px</span></div>
+<div class="blk" style="background:hsl(153, 45%, 14%);height:100px"><span class="num" style="background:hsl(153, 65%, 55%)">#9</span><span class="off">y≈900px</span></div>
+<div class="blk" style="background:hsl(290, 45%, 14%);height:100px"><span class="num" style="background:hsl(290, 65%, 55%)">#10</span><span class="off">y≈1000px</span></div>
+<div class="blk" style="background:hsl(67, 45%, 14%);height:100px"><span class="num" style="background:hsl(67, 65%, 55%)">#11</span><span class="off">y≈1100px</span></div>
+<div class="blk" style="background:hsl(204, 45%, 14%);height:100px"><span class="num" style="background:hsl(204, 65%, 55%)">#12</span><span class="off">y≈1200px</span></div>
+<div class="blk" style="background:hsl(341, 45%, 14%);height:100px"><span class="num" style="background:hsl(341, 65%, 55%)">#13</span><span class="off">y≈1300px</span></div>
+<div class="blk" style="background:hsl(118, 45%, 14%);height:100px"><span class="num" style="background:hsl(118, 65%, 55%)">#14</span><span class="off">y≈1400px</span></div>
+<div class="blk" style="background:hsl(255, 45%, 14%);height:100px"><span class="num" style="background:hsl(255, 65%, 55%)">#15</span><span class="off">y≈1500px</span></div>
+<div class="blk" style="background:hsl(32, 45%, 14%);height:100px"><span class="num" style="background:hsl(32, 65%, 55%)">#16</span><span class="off">y≈1600px</span></div>
+<div class="blk" style="background:hsl(169, 45%, 14%);height:100px"><span class="num" style="background:hsl(169, 65%, 55%)">#17</span><span class="off">y≈1700px</span></div>
+<div class="blk" style="background:hsl(306, 45%, 14%);height:100px"><span class="num" style="background:hsl(306, 65%, 55%)">#18</span><span class="off">y≈1800px</span></div>
+<div class="blk" style="background:hsl(83, 45%, 14%);height:100px"><span class="num" style="background:hsl(83, 65%, 55%)">#19</span><span class="off">y≈1900px</span></div>
+<div class="blk" style="background:hsl(220, 45%, 14%);height:100px"><span class="num" style="background:hsl(220, 65%, 55%)">#20</span><span class="off">y≈2000px</span></div>
+<div class="blk" style="background:hsl(357, 45%, 14%);height:100px"><span class="num" style="background:hsl(357, 65%, 55%)">#21</span><span class="off">y≈2100px</span></div>
+<div class="blk" style="background:hsl(134, 45%, 14%);height:100px"><span class="num" style="background:hsl(134, 65%, 55%)">#22</span><span class="off">y≈2200px</span></div>
+<div class="blk" style="background:hsl(271, 45%, 14%);height:100px"><span class="num" style="background:hsl(271, 65%, 55%)">#23</span><span class="off">y≈2300px</span></div>
+<div class="blk" style="background:hsl(48, 45%, 14%);height:100px"><span class="num" style="background:hsl(48, 65%, 55%)">#24</span><span class="off">y≈2400px</span></div>
+<div class="blk" style="background:hsl(185, 45%, 14%);height:100px"><span class="num" style="background:hsl(185, 65%, 55%)">#25</span><span class="off">y≈2500px</span></div>
+<div class="blk" style="background:hsl(322, 45%, 14%);height:100px"><span class="num" style="background:hsl(322, 65%, 55%)">#26</span><span class="off">y≈2600px</span></div>
+<div class="blk" style="background:hsl(99, 45%, 14%);height:100px"><span class="num" style="background:hsl(99, 65%, 55%)">#27</span><span class="off">y≈2700px</span></div>
+<div class="blk" style="background:hsl(236, 45%, 14%);height:100px"><span class="num" style="background:hsl(236, 65%, 55%)">#28</span><span class="off">y≈2800px</span></div>
+<div class="blk" style="background:hsl(13, 45%, 14%);height:100px"><span class="num" style="background:hsl(13, 65%, 55%)">#29</span><span class="off">y≈2900px</span></div>
+<div class="blk" style="background:hsl(150, 45%, 14%);height:100px"><span class="num" style="background:hsl(150, 65%, 55%)">#30</span><span class="off">y≈3000px</span></div>
+<div class="blk" style="background:hsl(287, 45%, 14%);height:100px"><span class="num" style="background:hsl(287, 65%, 55%)">#31</span><span class="off">y≈3100px</span></div>
+<div class="blk" style="background:hsl(64, 45%, 14%);height:100px"><span class="num" style="background:hsl(64, 65%, 55%)">#32</span><span class="off">y≈3200px</span></div>
+<div class="blk" style="background:hsl(201, 45%, 14%);height:100px"><span class="num" style="background:hsl(201, 65%, 55%)">#33</span><span class="off">y≈3300px</span></div>
+<div class="blk" style="background:hsl(338, 45%, 14%);height:100px"><span class="num" style="background:hsl(338, 65%, 55%)">#34</span><span class="off">y≈3400px</span></div>
+<div class="blk" style="background:hsl(115, 45%, 14%);height:100px"><span class="num" style="background:hsl(115, 65%, 55%)">#35</span><span class="off">y≈3500px</span></div>
+<div class="blk" style="background:hsl(252, 45%, 14%);height:100px"><span class="num" style="background:hsl(252, 65%, 55%)">#36</span><span class="off">y≈3600px</span></div>
+<div class="blk" style="background:hsl(29, 45%, 14%);height:100px"><span class="num" style="background:hsl(29, 65%, 55%)">#37</span><span class="off">y≈3700px</span></div>
+<div class="blk" style="background:hsl(166, 45%, 14%);height:100px"><span class="num" style="background:hsl(166, 65%, 55%)">#38</span><span class="off">y≈3800px</span></div>
+<div class="blk" style="background:hsl(303, 45%, 14%);height:100px"><span class="num" style="background:hsl(303, 65%, 55%)">#39</span><span class="off">y≈3900px</span></div>
+<div class="blk" style="background:hsl(80, 45%, 14%);height:100px"><span class="num" style="background:hsl(80, 65%, 55%)">#40</span><span class="off">y≈4000px</span></div>
+<div class="blk" style="background:hsl(217, 45%, 14%);height:100px"><span class="num" style="background:hsl(217, 65%, 55%)">#41</span><span class="off">y≈4100px</span></div>
+<div class="blk" style="background:hsl(354, 45%, 14%);height:100px"><span class="num" style="background:hsl(354, 65%, 55%)">#42</span><span class="off">y≈4200px</span></div>
+<div class="blk" style="background:hsl(131, 45%, 14%);height:100px"><span class="num" style="background:hsl(131, 65%, 55%)">#43</span><span class="off">y≈4300px</span></div>
+<div class="blk" style="background:hsl(268, 45%, 14%);height:100px"><span class="num" style="background:hsl(268, 65%, 55%)">#44</span><span class="off">y≈4400px</span></div>
+<div class="blk" style="background:hsl(45, 45%, 14%);height:100px"><span class="num" style="background:hsl(45, 65%, 55%)">#45</span><span class="off">y≈4500px</span></div>
+<div class="blk" style="background:hsl(182, 45%, 14%);height:100px"><span class="num" style="background:hsl(182, 65%, 55%)">#46</span><span class="off">y≈4600px</span></div>
+<div class="blk" style="background:hsl(319, 45%, 14%);height:100px"><span class="num" style="background:hsl(319, 65%, 55%)">#47</span><span class="off">y≈4700px</span></div>
+<div class="blk" style="background:hsl(96, 45%, 14%);height:100px"><span class="num" style="background:hsl(96, 65%, 55%)">#48</span><span class="off">y≈4800px</span></div>
+<div class="blk" style="background:hsl(233, 45%, 14%);height:100px"><span class="num" style="background:hsl(233, 65%, 55%)">#49</span><span class="off">y≈4900px</span></div>
+<div class="blk" style="background:hsl(10, 45%, 14%);height:100px"><span class="num" style="background:hsl(10, 65%, 55%)">#50</span><span class="off">y≈5000px</span></div>
+<div class="blk" style="background:hsl(147, 45%, 14%);height:100px"><span class="num" style="background:hsl(147, 65%, 55%)">#51</span><span class="off">y≈5100px</span></div>
+<div class="blk" style="background:hsl(284, 45%, 14%);height:100px"><span class="num" style="background:hsl(284, 65%, 55%)">#52</span><span class="off">y≈5200px</span></div>
+<div class="blk" style="background:hsl(61, 45%, 14%);height:100px"><span class="num" style="background:hsl(61, 65%, 55%)">#53</span><span class="off">y≈5300px</span></div>
+<div class="blk" style="background:hsl(198, 45%, 14%);height:100px"><span class="num" style="background:hsl(198, 65%, 55%)">#54</span><span class="off">y≈5400px</span></div>
+<div class="blk" style="background:hsl(335, 45%, 14%);height:100px"><span class="num" style="background:hsl(335, 65%, 55%)">#55</span><span class="off">y≈5500px</span></div>
+<div class="blk" style="background:hsl(112, 45%, 14%);height:100px"><span class="num" style="background:hsl(112, 65%, 55%)">#56</span><span class="off">y≈5600px</span></div>
+<div class="blk" style="background:hsl(249, 45%, 14%);height:100px"><span class="num" style="background:hsl(249, 65%, 55%)">#57</span><span class="off">y≈5700px</span></div>
+<div class="blk" style="background:hsl(26, 45%, 14%);height:100px"><span class="num" style="background:hsl(26, 65%, 55%)">#58</span><span class="off">y≈5800px</span></div>
+<div class="blk" style="background:hsl(163, 45%, 14%);height:100px"><span class="num" style="background:hsl(163, 65%, 55%)">#59</span><span class="off">y≈5900px</span></div>
+</body>
+</html>
