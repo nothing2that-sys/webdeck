@@ -95,6 +95,9 @@ export type DashboardRequest =
   | { type: 'SET_PREVIEW_PAUSED'; paused: boolean }
   //+_+// P6-D9. v1 section 15.5 의 Diagnostics 다. 조회 1종만 더한다. 20번째다
   | { type: 'GET_DIAGNOSTICS' }
+  //+_+// P10-D22 (§8-5). 타일 프리뷰 위 휠을 배경 탭에 전달한다. deltaX 는 안 싣는다 - 가로 스크롤은
+  //+_+// §8-5.4 가 담지 않고, dispatch 파라미터의 deltaX 는 0 고정이다. 21번째다
+  | { type: 'SCROLL_TILE'; tileId: string; deltaY: number }
 
 export type DashboardRequestType = DashboardRequest['type']
 
@@ -213,6 +216,8 @@ export type DashboardResponse =
   | { ok: true; type: 'OPEN_PROJECT_TAB' }
   | { ok: true; type: 'SET_PREVIEW_PAUSED'; paused: boolean }
   | { ok: true; type: 'GET_DIAGNOSTICS'; diagnostics: DiagnosticsSnapshot }
+  //+_+// tabId 가 없어도 ok:true 다 (P10-D21). 조용히 아무것도 안 한 것과 실제로 보낸 것을 화면에서 안 가른다
+  | { ok: true; type: 'SCROLL_TILE' }
   | DashboardFailure
 
 type SuccessResponseType = Extract<DashboardResponse, { ok: true }>['type']

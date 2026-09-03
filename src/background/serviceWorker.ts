@@ -75,6 +75,10 @@ export const DRIVER_TICK_MS = 250
 //+_+// 넉넉히 잡는 대신 onDisconnect 가 안 난 임차가 최대 이만큼 남는다. J167
 export const LEASE_EXPIRY_MS = 120_000
 
+//+_+// P10-D11 (§8-5). dispatchMouseEvent 가 배경 탭에서 반환되지 않는 것은 정상 동작이다.
+//+_+// 이 상한을 넘겨도 오류로 세지 않는다. poc-scroll/background.js 의 dispatchTimeoutMs 와 같은 값이다
+export const SCROLL_DISPATCH_TIMEOUT_MS = 300
+
 export interface PreviewEngine {
   sessions: DebuggerSessionManager
   captures: PreviewCaptureManager
@@ -196,6 +200,8 @@ export function createDashboardHost(
   let activeProjectId = seeded.activeProjectId
   const bindings = new Map<string, number>()
   const summaries = new Map<string, TileCaptureSummary>()
+  //+_+// P10-D23 (§8-5). SCROLL_TILE 좌표용 뷰포트 크기다. 탭별이며 detach·탐색 시 버린다
+  const scrollViewportCache = new Map<number, { width: number; height: number }>()
 
   //+_+// TASK-P8-07 §1.1. 임차 장부다. 폴링이 만들고 갱신하며 포트 끊김이 지운다
   //+_+// 저장하지 않는다 (§8-2.2). 워커가 죽으면 통째로 사라지고 다음 폴링이 다시 쌓는다
@@ -274,6 +280,15 @@ export function createDashboardHost(
         //+_+// 계측이 제품 동작을 바꾸지 않는다는 것이 F4 의 조건이다
       }
     },
+  })
+
+  //+_+// P10-D23 (§8-5). 좌표 캐시 폐기다. 기존 다중 리스너 자리(addDetachListener · onTabNavigated)에
+  //+_+// 별도 리스너로 붙인다. previewCaptureManager 의 리스너를 고치지 않는다
+  engine.sessions.addDetachListener((event) => {
+    scrollViewportCache.delete(event.tabId)
+  })
+  engine.tabs.onTabNavigated((tabId) => {
+    scrollViewportCache.delete(tabId)
   })
 
   //+_+// P6-D49. 초기값이 hidden 이므로 엔진도 처음부터 Pause 다. load 를 기다리지 않는다
@@ -574,6 +589,61 @@ export function createDashboardHost(
     }
     await reloadTab(tabId)
     return { ok: true, type: 'RELOAD_TILE' }
+  }
+
+  //+_+// P10-D23 (§8-5). 휠은 스로틀하지 않으므로(P10-D11) 캐시가 없으면 휠 1회마다 CDP 왕복이 붙는다
+  //+_+// 캐시 없을 때만 읽는다. 읽기 실패는 오류로 올리지 않고 좌표를 못 구한 것으로 다룬다
+  async function tileViewportSize(tabId: number): Promise<{ width: number; height: number } | null> {
+    const cached = scrollViewportCache.get(tabId)
+    if (cached !== undefined) {
+      return cached
+    }
+    try {
+      const result = (await debuggerBackend.sendCommand(tabId, 'Runtime.evaluate', {
+        expression: '({ width: window.innerWidth, height: window.innerHeight })',
+        returnByValue: true,
+      })) as { result?: { value?: unknown } }
+      const value = result.result?.value as { width?: unknown; height?: unknown } | undefined
+      if (typeof value?.width !== 'number' || typeof value.height !== 'number') {
+        return null
+      }
+      const size = { width: value.width, height: value.height }
+      scrollViewportCache.set(tabId, size)
+      return size
+    } catch (error) {
+      console.error('[webdeck] SCROLL_TILE viewport read failed', tabId, errorMessage(error))
+      return null
+    }
+  }
+
+  //+_+// P10-D11. await 하지 않는다는 것은 dispatch 완료까지 기다리지 않는다는 뜻이다.
+  //+_+// SCROLL_DISPATCH_TIMEOUT_MS 상한만 던지고 진행한다. poc-scroll/background.js dispatchWheel 과 같은 형태다
+  //+_+// catch 가 rejection 을 resolve 로 바꾸므로 race 가 unhandled rejection 을 남기지 않는다
+  async function dispatchWheel(tabId: number, x: number, y: number, deltaY: number): Promise<void> {
+    const commandPromise = debuggerBackend
+      .sendCommand(tabId, 'Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: 0, deltaY })
+      .catch((error: unknown) => {
+        console.error('[webdeck] SCROLL_TILE dispatch failed', tabId, errorMessage(error))
+      })
+    const guard = new Promise<void>((resolve) => {
+      setTimeout(resolve, SCROLL_DISPATCH_TIMEOUT_MS)
+    })
+    await Promise.race([commandPromise, guard])
+  }
+
+  //+_+// v1 section 17 경계를 넘는 결정이다 (P10-D2). 휠만이다. tabId 가 없으면 조용히 아무것도
+  //+_+// 하지 않고 정상 응답한다 (P10-D21) - status 이름으로 분기하지 않는다
+  async function scrollTile(tileId: string, deltaY: number): Promise<DashboardResponse> {
+    const tabId = bindings.get(tileId)
+    if (tabId === undefined) {
+      return { ok: true, type: 'SCROLL_TILE' }
+    }
+    const viewport = await tileViewportSize(tabId)
+    if (viewport === null) {
+      return { ok: true, type: 'SCROLL_TILE' }
+    }
+    await dispatchWheel(tabId, Math.round(viewport.width / 2), Math.round(viewport.height / 2), deltaY)
+    return { ok: true, type: 'SCROLL_TILE' }
   }
 
   //+_+// P4-D2. 모르는 tileId 면 첫 빈 자리에 1x1 타일을 만든다. 아는 tileId 면 탭만 다시 건다
@@ -1114,6 +1184,8 @@ export function createDashboardHost(
           return diagnosticsSnapshot()
         case 'RELOAD_TILE':
           return reloadTile(request.tileId)
+        case 'SCROLL_TILE':
+          return scrollTile(request.tileId, request.deltaY)
         //+_+// P5-D3 이 Keep Alive 를 Phase 6 으로 두었다. V1_DEVIATIONS 3 이 그 편차다
         case 'SET_TILE_KEEP_ALIVE':
           return failure(request.type, 'NOT_IMPLEMENTED', `${request.type} is Phase 6`)
