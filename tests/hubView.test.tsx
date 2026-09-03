@@ -208,6 +208,25 @@ describe('TASK-P9-02-R1 - Edit and Delete stay reachable by keyboard', () => {
   })
 })
 
+describe('TASK-P9-06 - the New row is visually marked as creating (P9-D21)', () => {
+  it('adds hub-row--creating to the blank row opened by New', async () => {
+    const user = userEvent.setup()
+    await renderHub()
+    await user.click(screen.getByRole('button', { name: 'New' }))
+    const row = screen.getByPlaceholderText('프로젝트 이름').closest('li')
+    expect(row?.classList.contains('hub-row--creating')).toBe(true)
+  })
+
+  it('does not add hub-row--creating to a row opened by Rename', async () => {
+    const user = userEvent.setup()
+    await renderHub()
+    hoverRow(ALPHA.name)
+    await user.click(screen.getByRole('button', { name: `Edit ${ALPHA.name}` }))
+    const row = screen.getByDisplayValue(ALPHA.name).closest('li')
+    expect(row?.classList.contains('hub-row--creating')).toBe(false)
+  })
+})
+
 describe('TASK-P9-02 - New opens a blank row at the top', () => {
   it('creates a new project from the blank row', async () => {
     const user = userEvent.setup()

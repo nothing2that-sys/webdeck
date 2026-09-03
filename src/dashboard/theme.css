@@ -90,15 +90,6 @@ body {
   flex: 1;
 }
 
-.settingsbar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 6px 12px;
-  background: var(--surface-panel);
-  border-bottom: 1px solid var(--border-soft);
-}
-
 .diagnosticsbar {
   display: flex;
   flex-wrap: wrap;
@@ -115,21 +106,10 @@ body {
   color: var(--text-muted);
 }
 
-.settingsbar-label {
-  color: var(--text-muted);
-}
-
-.settingsbar button:disabled,
-.settingsbar .toolbar-select:disabled,
-.settingsbar .toolbar-input:disabled {
-  opacity: 0.5;
-}
-
 .toolbar button,
 .toolbar-panel button,
 .toolbar-select,
-.toolbar-input,
-.settingsbar button {
+.toolbar-input {
   background: var(--surface-slot);
   color: var(--text-primary);
   border: 1px solid var(--border-soft);
@@ -178,11 +158,6 @@ body {
   background: var(--surface-panel);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-}
-
-.tile--selected {
-  border-color: var(--select-ring);
-  box-shadow: inset 0 0 0 1px var(--select-ring);
 }
 
 .tile--editing {
@@ -427,6 +402,10 @@ body {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   cursor: pointer;
+}
+
+.hub-row--creating {
+  border-left: 3px solid var(--select-ring);
 }
 
 .hub-row-head {

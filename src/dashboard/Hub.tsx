@@ -145,7 +145,8 @@ export function Hub(): React.JSX.Element {
 
       <ul className="hub-list">
         {editingId === NEW_PROJECT_ID ? (
-          <li className="hub-row" key={NEW_PROJECT_ID}>
+          //+_+// P9-D21. 이 행은 editingId==='new' 일 때만 존재하므로 늘 "만드는 중"이다
+          <li className="hub-row hub-row--creating" key={NEW_PROJECT_ID}>
             <div className="hub-row-head">
               <input
                 value={draftName}

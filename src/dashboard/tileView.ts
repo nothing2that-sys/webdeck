@@ -119,10 +119,9 @@ export function showsRecoveryActions(status: TileStatus): boolean {
 }
 
 //+_+// P6-D2 (b). 빈 조각을 걸러 이어 붙인다. 클래스 조립 규칙을 컴포넌트에 두지 않는다
-export function tileClassName(selected: boolean, editing: boolean, dragClassName: string): string {
-  return ['tile', selected ? 'tile--selected' : '', editing ? 'tile--editing' : '', dragClassName]
-    .filter((part) => part.length > 0)
-    .join(' ')
+//+_+// P9-D22. selected 매개변수를 없앴다. 유일한 호출부(TileCard.tsx)가 항상 false 로 불렀다
+export function tileClassName(editing: boolean, dragClassName: string): string {
+  return ['tile', editing ? 'tile--editing' : '', dragClassName].filter((part) => part.length > 0).join(' ')
 }
 
 //+_+// 프로젝트의 타일 목록이 기준이다. 워커가 보낸 런타임 상태와 프레임을 여기에 맞춘다

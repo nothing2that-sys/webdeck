@@ -338,13 +338,12 @@ describe('P6-D2 - the tile display rules live in tileView', () => {
   })
 
   it('drops the empty parts when it joins the tile classes', () => {
-    expect(tileClassName(false, false, '')).toBe('tile')
+    expect(tileClassName(false, '')).toBe('tile')
   })
 
-  it('keeps the order selected, editing, drag', () => {
-    expect(tileClassName(true, true, 'tile--dragging')).toBe(
-      'tile tile--selected tile--editing tile--dragging',
-    )
+  //+_+// P9-D22. selected 매개변수를 없앴다. 유일한 호출부(TileCard.tsx)가 늘 false 로 불렀다
+  it('keeps the order editing, drag', () => {
+    expect(tileClassName(true, 'tile--dragging')).toBe('tile tile--editing tile--dragging')
   })
 
   it('carries both rules into the view model', () => {

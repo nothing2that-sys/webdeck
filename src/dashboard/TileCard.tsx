@@ -107,8 +107,8 @@ export function TileCard({
     setIsSettingsOpen(false)
   }
 
-  //+_+// P9-D9. tileView.ts 의 tileClassName 을 고치지 않는다 (이 라운드 범위 밖). 문자열로 덧붙인다
-  const className = [tileClassName(false, editing, dragClassName), isSettingsOpen ? 'tile--settings-open' : '']
+  //+_+// P9-D22. selected 매개변수가 없어지면서 tileClassName 을 고치지 않던 이유(P9-D9)도 없어졌다
+  const className = [tileClassName(editing, dragClassName), isSettingsOpen ? 'tile--settings-open' : '']
     .filter((part) => part.length > 0)
     .join(' ')
   //+_+// P9-D11. editing 중엔 톱니 자체를 비활성·비표시로 둔다. disabled 버튼은 Tab 순서에서도 빠진다
