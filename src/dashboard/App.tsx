@@ -21,6 +21,7 @@ import {
   reloadTile,
   removeTile,
   reopenTile,
+  scrollTile,
   setPreviewPaused,
   setTileRect,
   setTileSettings,
@@ -625,9 +626,10 @@ export function App({ projectId }: AppProps): React.JSX.Element {
               onReopen={() => void reopen(view.tileId)}
               onBindExisting={() => void bindExisting(view.tileId)}
               onRemove={() => void remove(view.tileId)}
-              onRefreshPreview={() => void refreshPreview(view.tileId)}
+              onRefreshPreview={() => refreshPreview(view.tileId)}
               onReloadPage={() => void reloadPage(view.tileId)}
               onApplySettings={(draft) => void applySettings(view.tileId, draft)}
+              onScroll={(deltaY) => void scrollTile(view.tileId, deltaY)}
             />,
           ]
         })}

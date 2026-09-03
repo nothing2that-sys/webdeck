@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { GRID_COLUMNS } from '../shared/grid'
 import type { DragMode } from './layoutDrag'
+import {
+  MIN_CAPTURE_INTERVAL_MS,
+  INITIAL_SCROLL_CAPTURE_THROTTLE_STATE,
+  onCaptureRequested,
+  onSettled,
+  onWheel as onWheelThrottle,
+  shouldCapture,
+} from './scrollCaptureThrottle'
+import type { ScrollCaptureThrottleState } from './scrollCaptureThrottle'
 import { tileClassName, tileSettingsDraft } from './tileView'
 import type { TileSettingsDraft, TileViewModel } from './tileView'
 import type { WebTile } from '../shared/types'
@@ -19,9 +28,12 @@ export interface TileCardProps {
   onReopen: () => void
   onBindExisting: () => void
   onRemove: () => void
-  onRefreshPreview: () => void
+  //+_+// P10-D18 (§8-5). 스크롤 스로틀이 정산 시점(onSettled)을 알아야 해 Promise 를 돌려받는다
+  onRefreshPreview: () => Promise<void>
   onReloadPage: () => void
   onApplySettings: (draft: TileSettingsDraft) => void
+  //+_+// P10-D22 (§8-5). 휠을 배경 탭에 전달한다. deltaX 는 싣지 않는다 (§8-5.4)
+  onScroll: (deltaY: number) => void
 }
 
 //+_+// Resize Handle 위에서 시작한 것만 크기 변경이다. 그 밖에서 시작한 것은 이동이다
@@ -49,6 +61,7 @@ export function TileCard({
   onRefreshPreview,
   onReloadPage,
   onApplySettings,
+  onScroll,
 }: TileCardProps): React.JSX.Element {
   //+_+// P9-D11. Hub.tsx 의 hoveredId/focusedId 패턴을 그대로 참고한다. 이 타일 하나 안의 지역 상태다
   const [hovered, setHovered] = useState(false)
@@ -58,6 +71,9 @@ export function TileCard({
   const [draft, setDraft] = useState<TileSettingsDraft>(() => tileSettingsDraft(tile))
   const gearRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
+  //+_+// P10-D18 (§8-5). 화면에 안 보이는 판정값이라 리렌더를 안 일으키는 ref 로 든다
+  const throttleStateRef = useRef<ScrollCaptureThrottleState>(INITIAL_SCROLL_CAPTURE_THROTTLE_STATE)
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   //+_+// P5-D34 의 연장이다. 톱니·팝오버가 이제 tile-preview 위 overlay 라 pointerdown 이
   //+_+// article 에서 드래그를 잡아채는 것과 같은 자리를 다툰다. Edit Layout 중엔 닫아 둔다
@@ -105,6 +121,57 @@ export function TileCard({
 
   const closeSettings = (): void => {
     setIsSettingsOpen(false)
+  }
+
+  //+_+// P10-D18 (§8-5). attempt 를 부르는 시점 셋 중 "휠이 들어왔을 때" · "onSettled 후" 가 여기를 거친다
+  //+_+// 세 번째(디바운스)는 scheduleDebounce 가 부른다
+  const attemptCapture = (): void => {
+    const now = Date.now()
+    if (!shouldCapture(throttleStateRef.current, now, MIN_CAPTURE_INTERVAL_MS)) {
+      return
+    }
+    throttleStateRef.current = onCaptureRequested(throttleStateRef.current, now)
+    void onRefreshPreview().then(() => {
+      throttleStateRef.current = onSettled(throttleStateRef.current)
+      attemptCapture()
+    })
+  }
+
+  //+_+// P10-D18. 휠 멈춤 후 1회 더 -- 마지막 휠로부터 MIN_CAPTURE_INTERVAL_MS 뒤의 디바운스 타이머 1개
+  const scheduleDebounce = (): void => {
+    if (debounceTimerRef.current !== null) {
+      clearTimeout(debounceTimerRef.current)
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      debounceTimerRef.current = null
+      attemptCapture()
+    }, MIN_CAPTURE_INTERVAL_MS)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current !== null) {
+        clearTimeout(debounceTimerRef.current)
+      }
+    }
+  }, [])
+
+  //+_+// P10-D20 (§8-5). 톱니는 막지 않는다 -- stopPropagation 을 안 부르므로 그 위의 휠도 그대로 버블한다
+  //+_+// 팝오버 안의 휠은 이벤트 타깃으로 가른다 (popoverRef.contains).  isSettingsOpen 만으로 가르면
+  //+_+// 팝오버가 열린 동안 프리뷰 나머지 영역의 휠까지 막혀 버린다
+  //+_+// P10-D21. tabId 가 없으면 조용히 무시한다.  React 가 wheel 을 passive 로 등록해 (S0-2)
+  //+_+// preventDefault 는 부르지 않는다 (P10-D19)
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
+    if (view.tabId === null) {
+      return
+    }
+    if (popoverRef.current?.contains(event.target as Node) === true) {
+      return
+    }
+    onScroll(event.deltaY)
+    throttleStateRef.current = onWheelThrottle(throttleStateRef.current)
+    attemptCapture()
+    scheduleDebounce()
   }
 
   //+_+// P9-D22. selected 매개변수가 없어지면서 tileClassName 을 고치지 않던 이유(P9-D9)도 없어졌다
@@ -165,7 +232,7 @@ export function TileCard({
         <span className={view.statusClassName}>{view.status}</span>
       </header>
 
-      <div className="tile-preview">
+      <div className="tile-preview" onWheel={handleWheel}>
         {view.previewDataUrl === null ? (
           <span className="tile-preview-empty">no preview</span>
         ) : (

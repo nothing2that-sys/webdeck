@@ -188,3 +188,8 @@ export async function setTileSettings(
 ): Promise<DashboardResponse> {
   return send({ type: 'SET_TILE_SETTINGS', tileId, settings })
 }
+
+//+_+// P10-D22 · P10-D24 (§8-5). 타일 프리뷰 위 휠을 배경 탭에 전달한다
+export async function scrollTile(tileId: string, deltaY: number): Promise<DashboardResponse> {
+  return send({ type: 'SCROLL_TILE', tileId, deltaY })
+}
