@@ -10,6 +10,7 @@ import {
   shouldCapture,
 } from './scrollCaptureThrottle'
 import type { ScrollCaptureThrottleState } from './scrollCaptureThrottle'
+import { tileWheelTargetPoint } from './tileWheelCoordinate'
 import { tileClassName, tileSettingsDraft } from './tileView'
 import type { TileSettingsDraft, TileViewModel } from './tileView'
 import type { WebTile } from '../shared/types'
@@ -33,7 +34,8 @@ export interface TileCardProps {
   onReloadPage: () => void
   onApplySettings: (draft: TileSettingsDraft) => void
   //+_+// P10-D22 (§8-5). 휠을 배경 탭에 전달한다. deltaX 는 싣지 않는다 (§8-5.4)
-  onScroll: (deltaY: number) => void
+  //+_+// TASK-P11-01 (§8-6). x · y 는 tileWheelTargetPoint 로 이미 환산된 대상 탭 좌표다
+  onScroll: (deltaY: number, x: number, y: number) => void
 }
 
 //+_+// Resize Handle 위에서 시작한 것만 크기 변경이다. 그 밖에서 시작한 것은 이동이다
@@ -71,6 +73,9 @@ export function TileCard({
   const [draft, setDraft] = useState<TileSettingsDraft>(() => tileSettingsDraft(tile))
   const gearRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
+  //+_+// TASK-P11-01 (§8-6). naturalWidth · naturalHeight 를 읽을 자리다. .tile-preview 가 아니라
+  //+_+// 이 박스 기준으로 상대 좌표를 잡는다 - naturalWidth 와 짝이 맞아야 한다
+  const previewImageRef = useRef<HTMLImageElement | null>(null)
   //+_+// P10-D18 (§8-5). 화면에 안 보이는 판정값이라 리렌더를 안 일으키는 ref 로 든다
   const throttleStateRef = useRef<ScrollCaptureThrottleState>(INITIAL_SCROLL_CAPTURE_THROTTLE_STATE)
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -161,6 +166,9 @@ export function TileCard({
   //+_+// 팝오버가 열린 동안 프리뷰 나머지 영역의 휠까지 막혀 버린다
   //+_+// P10-D21. tabId 가 없으면 조용히 무시한다.  React 가 wheel 을 passive 로 등록해 (S0-2)
   //+_+// preventDefault 는 부르지 않는다 (P10-D19)
+  //+_+// TASK-P11-01 (§8-6). img 박스 기준 상대 좌표를 환산해 싣는다. 환산이 null 이면(레터박스
+  //+_+// 여백, 이미지 미로딩 등) 메시지를 안 보낸다. 스로틀도 건드리지 않는다 - 스크롤이 안 났는데
+  //+_+// 캡처를 부를 이유가 없다
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>): void => {
     if (view.tabId === null) {
       return
@@ -168,7 +176,25 @@ export function TileCard({
     if (popoverRef.current?.contains(event.target as Node) === true) {
       return
     }
-    onScroll(event.deltaY)
+    const image = previewImageRef.current
+    if (image === null) {
+      return
+    }
+    const rect = image.getBoundingClientRect()
+    const target = tileWheelTargetPoint({
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+      boxWidth: rect.width,
+      boxHeight: rect.height,
+      naturalWidth: image.naturalWidth,
+      naturalHeight: image.naturalHeight,
+      fitMode: view.fitMode,
+      scale: 1,
+    })
+    if (target === null) {
+      return
+    }
+    onScroll(event.deltaY, target.x, target.y)
     throttleStateRef.current = onWheelThrottle(throttleStateRef.current)
     attemptCapture()
     scheduleDebounce()
@@ -237,6 +263,7 @@ export function TileCard({
           <span className="tile-preview-empty">no preview</span>
         ) : (
           <img
+            ref={previewImageRef}
             className="tile-preview-image"
             style={{ objectFit: view.fitMode }}
             src={view.previewDataUrl}

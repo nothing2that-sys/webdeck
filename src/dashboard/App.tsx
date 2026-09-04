@@ -629,7 +629,7 @@ export function App({ projectId }: AppProps): React.JSX.Element {
               onRefreshPreview={() => refreshPreview(view.tileId)}
               onReloadPage={() => void reloadPage(view.tileId)}
               onApplySettings={(draft) => void applySettings(view.tileId, draft)}
-              onScroll={(deltaY) => void scrollTile(view.tileId, deltaY)}
+              onScroll={(deltaY, x, y) => void scrollTile(view.tileId, deltaY, x, y)}
             />,
           ]
         })}

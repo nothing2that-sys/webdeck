@@ -190,6 +190,12 @@ export async function setTileSettings(
 }
 
 //+_+// P10-D22 · P10-D24 (§8-5). 타일 프리뷰 위 휠을 배경 탭에 전달한다
-export async function scrollTile(tileId: string, deltaY: number): Promise<DashboardResponse> {
-  return send({ type: 'SCROLL_TILE', tileId, deltaY })
+//+_+// TASK-P11-01 (§8-6). x · y 는 대상 탭 좌표로 환산된 값이다 (§8-6)
+export async function scrollTile(
+  tileId: string,
+  deltaY: number,
+  x: number,
+  y: number,
+): Promise<DashboardResponse> {
+  return send({ type: 'SCROLL_TILE', tileId, deltaY, x, y })
 }

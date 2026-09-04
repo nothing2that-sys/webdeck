@@ -633,7 +633,8 @@ export function createDashboardHost(
 
   //+_+// v1 section 17 경계를 넘는 결정이다 (P10-D2). 휠만이다. tabId 가 없으면 조용히 아무것도
   //+_+// 하지 않고 정상 응답한다 (P10-D21) - status 이름으로 분기하지 않는다
-  async function scrollTile(tileId: string, deltaY: number): Promise<DashboardResponse> {
+  //+_+// TASK-P11-01 (§8-6). x · y 는 UI 가 이미 환산한 대상 탭 좌표다. 정중앙 대신 이 값을 쓴다
+  async function scrollTile(tileId: string, deltaY: number, x: number, y: number): Promise<DashboardResponse> {
     const tabId = bindings.get(tileId)
     if (tabId === undefined) {
       return { ok: true, type: 'SCROLL_TILE' }
@@ -642,7 +643,11 @@ export function createDashboardHost(
     if (viewport === null) {
       return { ok: true, type: 'SCROLL_TILE' }
     }
-    await dispatchWheel(tabId, Math.round(viewport.width / 2), Math.round(viewport.height / 2), deltaY)
+    //+_+// 캐시된 뷰포트 크기가 낡았을 때(대상 탭 창 크기 변경, P10-D23) 엉뚱한 곳을 때리지 않게 한다
+    if (x < 0 || x > viewport.width || y < 0 || y > viewport.height) {
+      return { ok: true, type: 'SCROLL_TILE' }
+    }
+    await dispatchWheel(tabId, x, y, deltaY)
     return { ok: true, type: 'SCROLL_TILE' }
   }
 
@@ -1185,7 +1190,7 @@ export function createDashboardHost(
         case 'RELOAD_TILE':
           return reloadTile(request.tileId)
         case 'SCROLL_TILE':
-          return scrollTile(request.tileId, request.deltaY)
+          return scrollTile(request.tileId, request.deltaY, request.x, request.y)
         //+_+// P5-D3 이 Keep Alive 를 Phase 6 으로 두었다. V1_DEVIATIONS 3 이 그 편차다
         case 'SET_TILE_KEEP_ALIVE':
           return failure(request.type, 'NOT_IMPLEMENTED', `${request.type} is Phase 6`)

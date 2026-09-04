@@ -97,7 +97,9 @@ export type DashboardRequest =
   | { type: 'GET_DIAGNOSTICS' }
   //+_+// P10-D22 (§8-5). 타일 프리뷰 위 휠을 배경 탭에 전달한다. deltaX 는 안 싣는다 - 가로 스크롤은
   //+_+// §8-5.4 가 담지 않고, dispatch 파라미터의 deltaX 는 0 고정이다. 21번째다
-  | { type: 'SCROLL_TILE'; tileId: string; deltaY: number }
+  //+_+// TASK-P11-01 (§8-6). x · y 는 대상 탭 좌표로 이미 환산된 값이다. optional 로 두지 않는다 -
+  //+_+// UI 가 환산에 실패하면(레터박스 여백 등) 애초에 이 메시지를 안 보낸다
+  | { type: 'SCROLL_TILE'; tileId: string; deltaY: number; x: number; y: number }
 
 export type DashboardRequestType = DashboardRequest['type']
 
