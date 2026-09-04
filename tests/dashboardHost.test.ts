@@ -3783,14 +3783,30 @@ describe('TASK-P11-04 (§8-6) - SCROLL_TILE divides by devicePixelRatio before t
     expect(debuggerBackend.dispatchCalls).toEqual([])
   })
 
-  //+_+// P10-D23 이 이 캐시를 세운 이유 그대로다 - 휠은 스로틀하지 않으므로 캐시가 없으면
-  //+_+// 휠 1회마다 CDP 왕복이 붙는다.  ratio 를 더 읽어도 호출 횟수는 그대로여야 한다
-  it('reuses the cached viewport - Runtime.evaluate is called only once for two SCROLL_TILE calls', async () => {
+  //+_+// TASK-P11-05 (§8-6). P10-D23 의 캐시를 없앴다 - 창 크기 변경이 detach·탐색 어느 쪽도
+  //+_+// 아니라서 캐시된 값이 낡아도 무효화될 계기가 없었다 (Chrome 관측, JH 2026-09-04).
+  //+_+// 휠마다 새로 읽는다 - Runtime.evaluate 호출 횟수가 SCROLL_TILE 횟수를 그대로 따른다
+  it('does not cache the viewport - Runtime.evaluate is called once per SCROLL_TILE call', async () => {
     const { host, debuggerBackend } = await bound(1)
     await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 100, y: 100 })
     await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 200, y: 200 })
 
-    expect(debuggerBackend.evaluateCalls).toEqual([11])
+    expect(debuggerBackend.evaluateCalls).toEqual([11, 11])
     expect(debuggerBackend.dispatchCalls).toHaveLength(2)
+  })
+
+  //+_+// 이 라운드가 고치는 것을 직접 덮는다 - 대상 탭 창 크기가 바뀌어 ratio 나 뷰포트가
+  //+_+// 달라지면, 캐시가 없으므로 다음 SCROLL_TILE 이 그 새 값으로 나간다
+  it('picks up a viewport that changed between two SCROLL_TILE calls', async () => {
+    const { host, debuggerBackend } = await bound(1)
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 500, y: 400 })
+
+    debuggerBackend.viewport = { width: 1000, height: 800, ratio: 2 }
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 500, y: 400 })
+
+    expect(debuggerBackend.dispatchCalls).toEqual([
+      { tabId: 11, x: 500, y: 400, deltaY: 50 },
+      { tabId: 11, x: 250, y: 200, deltaY: 50 },
+    ])
   })
 })

@@ -237,8 +237,6 @@ export function createDashboardHost(
   let activeProjectId = seeded.activeProjectId
   const bindings = new Map<string, number>()
   const summaries = new Map<string, TileCaptureSummary>()
-  //+_+// P10-D23 (§8-5). SCROLL_TILE 좌표용 뷰포트 크기다. 탭별이며 detach·탐색 시 버린다
-  const scrollViewportCache = new Map<number, ScrollViewport>()
 
   //+_+// TASK-P8-07 §1.1. 임차 장부다. 폴링이 만들고 갱신하며 포트 끊김이 지운다
   //+_+// 저장하지 않는다 (§8-2.2). 워커가 죽으면 통째로 사라지고 다음 폴링이 다시 쌓는다
@@ -317,15 +315,6 @@ export function createDashboardHost(
         //+_+// 계측이 제품 동작을 바꾸지 않는다는 것이 F4 의 조건이다
       }
     },
-  })
-
-  //+_+// P10-D23 (§8-5). 좌표 캐시 폐기다. 기존 다중 리스너 자리(addDetachListener · onTabNavigated)에
-  //+_+// 별도 리스너로 붙인다. previewCaptureManager 의 리스너를 고치지 않는다
-  engine.sessions.addDetachListener((event) => {
-    scrollViewportCache.delete(event.tabId)
-  })
-  engine.tabs.onTabNavigated((tabId) => {
-    scrollViewportCache.delete(tabId)
   })
 
   //+_+// P6-D49. 초기값이 hidden 이므로 엔진도 처음부터 Pause 다. load 를 기다리지 않는다
@@ -628,25 +617,17 @@ export function createDashboardHost(
     return { ok: true, type: 'RELOAD_TILE' }
   }
 
-  //+_+// P10-D23 (§8-5). 휠은 스로틀하지 않으므로(P10-D11) 캐시가 없으면 휠 1회마다 CDP 왕복이 붙는다
-  //+_+// 캐시 없을 때만 읽는다. 읽기 실패는 오류로 올리지 않고 좌표를 못 구한 것으로 다룬다
+  //+_+// TASK-P11-05 (§8-6). 캐시하지 않는다 -- 창 크기 변경이 detach·탐색 둘 다 아니라서
+  //+_+// 캐시된 값이 낡아도 무효화될 계기가 없었다 (Chrome 관측, JH 2026-09-04). 휠마다 새로 읽는다
+  //+_+// 읽기 실패는 오류로 올리지 않고 좌표를 못 구한 것으로 다룬다
   async function tileViewportSize(tabId: number): Promise<ScrollViewport | null> {
-    const cached = scrollViewportCache.get(tabId)
-    if (cached !== undefined) {
-      return cached
-    }
     try {
       const result = (await debuggerBackend.sendCommand(tabId, 'Runtime.evaluate', {
         expression:
           '({ width: window.innerWidth, height: window.innerHeight, ratio: window.devicePixelRatio })',
         returnByValue: true,
       })) as { result?: { value?: unknown } }
-      const viewport = parseScrollViewport(result.result?.value)
-      if (viewport === null) {
-        return null
-      }
-      scrollViewportCache.set(tabId, viewport)
-      return viewport
+      return parseScrollViewport(result.result?.value)
     } catch (error) {
       console.error('[webdeck] SCROLL_TILE viewport read failed', tabId, errorMessage(error))
       return null
