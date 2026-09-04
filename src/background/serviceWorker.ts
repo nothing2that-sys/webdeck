@@ -79,6 +79,43 @@ export const LEASE_EXPIRY_MS = 120_000
 //+_+// 이 상한을 넘겨도 오류로 세지 않는다. poc-scroll/background.js 의 dispatchTimeoutMs 와 같은 값이다
 export const SCROLL_DISPATCH_TIMEOUT_MS = 300
 
+//+_+// TASK-P11-04 (§8-6). ratio 는 devicePixelRatio 다. Runtime.evaluate 가 돌려준 원시 값을
+//+_+// 검증한다. 숫자가 아니거나 0 이하면 null -- 안 잰 값을 1 로 메우지 않는다 (P13)
+export interface ScrollViewport {
+  width: number
+  height: number
+  ratio: number
+}
+
+export function parseScrollViewport(value: unknown): ScrollViewport | null {
+  const candidate = value as { width?: unknown; height?: unknown; ratio?: unknown } | undefined
+  if (
+    typeof candidate?.width !== 'number' ||
+    typeof candidate.height !== 'number' ||
+    typeof candidate.ratio !== 'number' ||
+    candidate.ratio <= 0
+  ) {
+    return null
+  }
+  return { width: candidate.width, height: candidate.height, ratio: candidate.ratio }
+}
+
+//+_+// TASK-P11-04. 캡처 원본은 디바이스 px 다 (JH 관측, 2026-09-04). x · y 를 ratio 로 나눠
+//+_+// CSS px 로 되돌린 뒤 뷰포트 범위를 검사한다. 순서가 중요하다 -- 나눗셈이 먼저다.
+//+_+// 나누기 전 값으로 비교하면 가장자리 근처가 실제보다 크게 나가 범위 밖으로 튕긴다
+export function resolveScrollDispatchPoint(
+  x: number,
+  y: number,
+  viewport: ScrollViewport,
+): { x: number; y: number } | null {
+  const cssX = x / viewport.ratio
+  const cssY = y / viewport.ratio
+  if (cssX < 0 || cssX > viewport.width || cssY < 0 || cssY > viewport.height) {
+    return null
+  }
+  return { x: cssX, y: cssY }
+}
+
 export interface PreviewEngine {
   sessions: DebuggerSessionManager
   captures: PreviewCaptureManager
@@ -201,7 +238,7 @@ export function createDashboardHost(
   const bindings = new Map<string, number>()
   const summaries = new Map<string, TileCaptureSummary>()
   //+_+// P10-D23 (§8-5). SCROLL_TILE 좌표용 뷰포트 크기다. 탭별이며 detach·탐색 시 버린다
-  const scrollViewportCache = new Map<number, { width: number; height: number }>()
+  const scrollViewportCache = new Map<number, ScrollViewport>()
 
   //+_+// TASK-P8-07 §1.1. 임차 장부다. 폴링이 만들고 갱신하며 포트 끊김이 지운다
   //+_+// 저장하지 않는다 (§8-2.2). 워커가 죽으면 통째로 사라지고 다음 폴링이 다시 쌓는다
@@ -593,23 +630,23 @@ export function createDashboardHost(
 
   //+_+// P10-D23 (§8-5). 휠은 스로틀하지 않으므로(P10-D11) 캐시가 없으면 휠 1회마다 CDP 왕복이 붙는다
   //+_+// 캐시 없을 때만 읽는다. 읽기 실패는 오류로 올리지 않고 좌표를 못 구한 것으로 다룬다
-  async function tileViewportSize(tabId: number): Promise<{ width: number; height: number } | null> {
+  async function tileViewportSize(tabId: number): Promise<ScrollViewport | null> {
     const cached = scrollViewportCache.get(tabId)
     if (cached !== undefined) {
       return cached
     }
     try {
       const result = (await debuggerBackend.sendCommand(tabId, 'Runtime.evaluate', {
-        expression: '({ width: window.innerWidth, height: window.innerHeight })',
+        expression:
+          '({ width: window.innerWidth, height: window.innerHeight, ratio: window.devicePixelRatio })',
         returnByValue: true,
       })) as { result?: { value?: unknown } }
-      const value = result.result?.value as { width?: unknown; height?: unknown } | undefined
-      if (typeof value?.width !== 'number' || typeof value.height !== 'number') {
+      const viewport = parseScrollViewport(result.result?.value)
+      if (viewport === null) {
         return null
       }
-      const size = { width: value.width, height: value.height }
-      scrollViewportCache.set(tabId, size)
-      return size
+      scrollViewportCache.set(tabId, viewport)
+      return viewport
     } catch (error) {
       console.error('[webdeck] SCROLL_TILE viewport read failed', tabId, errorMessage(error))
       return null
@@ -634,6 +671,8 @@ export function createDashboardHost(
   //+_+// v1 section 17 경계를 넘는 결정이다 (P10-D2). 휠만이다. tabId 가 없으면 조용히 아무것도
   //+_+// 하지 않고 정상 응답한다 (P10-D21) - status 이름으로 분기하지 않는다
   //+_+// TASK-P11-01 (§8-6). x · y 는 UI 가 이미 환산한 대상 탭 좌표다. 정중앙 대신 이 값을 쓴다
+  //+_+// TASK-P11-04. 캡처 원본은 디바이스 px 다 (JH 관측, 2026-09-04). resolveScrollDispatchPoint 가
+  //+_+// ratio 로 나눈 뒤 범위를 검사한다 -- 나누기 전 값으로 비교하면 가장자리가 죽는다
   async function scrollTile(tileId: string, deltaY: number, x: number, y: number): Promise<DashboardResponse> {
     const tabId = bindings.get(tileId)
     if (tabId === undefined) {
@@ -644,10 +683,11 @@ export function createDashboardHost(
       return { ok: true, type: 'SCROLL_TILE' }
     }
     //+_+// 캐시된 뷰포트 크기가 낡았을 때(대상 탭 창 크기 변경, P10-D23) 엉뚱한 곳을 때리지 않게 한다
-    if (x < 0 || x > viewport.width || y < 0 || y > viewport.height) {
+    const point = resolveScrollDispatchPoint(x, y, viewport)
+    if (point === null) {
       return { ok: true, type: 'SCROLL_TILE' }
     }
-    await dispatchWheel(tabId, x, y, deltaY)
+    await dispatchWheel(tabId, point.x, point.y, deltaY)
     return { ok: true, type: 'SCROLL_TILE' }
   }
 

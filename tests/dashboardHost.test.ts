@@ -56,6 +56,10 @@ class StubDebugger implements DebuggerBackend {
   attached: number[] = []
   detached: number[] = []
   data: string | null = 'AAAA'
+  //+_+// TASK-P11-04. SCROLL_TILE 의 Runtime.evaluate 응답이다. 탭마다 같은 값을 준다
+  viewport: { width: number; height: number; ratio: number } = { width: 1000, height: 800, ratio: 1 }
+  evaluateCalls: number[] = []
+  dispatchCalls: { tabId: number; x: number; y: number; deltaY: number }[] = []
 
   attach(tabId: number): Promise<void> {
     this.attached.push(tabId)
@@ -67,7 +71,16 @@ class StubDebugger implements DebuggerBackend {
     return Promise.resolve()
   }
 
-  sendCommand(): Promise<unknown> {
+  sendCommand(tabId: number, method: string, params?: Record<string, unknown>): Promise<unknown> {
+    if (method === 'Runtime.evaluate') {
+      this.evaluateCalls.push(tabId)
+      return Promise.resolve({ result: { value: this.viewport } })
+    }
+    if (method === 'Input.dispatchMouseEvent') {
+      const { x, y, deltaY } = params as { x: number; y: number; deltaY: number }
+      this.dispatchCalls.push({ tabId, x, y, deltaY })
+      return Promise.resolve(undefined)
+    }
     if (this.data === null) {
       return Promise.reject(new Error('capture refused'))
     }
@@ -3712,5 +3725,72 @@ describe('8-2.3 2 - the lease ledger drives the active set', () => {
 
     expect(response).toMatchObject({ ok: false, errorCode: 'PROJECT_NOT_FOUND' })
     expect(host.engine.captures.paused).toBe(true)
+  })
+})
+
+//+_+// TASK-P11-04 (§8-6). 캡처 원본은 디바이스 px 다 (JH 관측, 2026-09-04).  P11-D9 가 예상한
+//+_+// 나눗셈 방향이 맞았다.  범위 검사보다 먼저 나눠야 가장자리 근처가 죽지 않는다
+describe('TASK-P11-04 (§8-6) - SCROLL_TILE divides by devicePixelRatio before the range check', () => {
+  async function bound(ratio: number): Promise<{ host: DashboardHost; debuggerBackend: StubDebugger }> {
+    const { host, debuggerBackend } = fixture()
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+    debuggerBackend.viewport = { width: 1000, height: 800, ratio }
+    return { host, debuggerBackend }
+  }
+
+  it('ratio 1 leaves the coordinates unchanged (regression - a 100% monitor keeps working)', async () => {
+    const { host, debuggerBackend } = await bound(1)
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 100, x: 500, y: 400 })
+    expect(debuggerBackend.dispatchCalls).toEqual([{ tabId: 11, x: 500, y: 400, deltaY: 100 }])
+  })
+
+  it('ratio 1.5 divides the incoming device-pixel coordinates by 1.5', async () => {
+    const { host, debuggerBackend } = await bound(1.5)
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 100, x: 750, y: 600 })
+    expect(debuggerBackend.dispatchCalls).toEqual([{ tabId: 11, x: 500, y: 400, deltaY: 100 }])
+  })
+
+  //+_+// 이 라운드의 핵심 회귀 방지다.  raw 1350 · 1050 은 나누기 전 값으로 비교하던 예전 코드라면
+  //+_+// viewport(1000x800) 를 넘어 버려졌다.  나눈 뒤(900 · 700)는 범위 안이라 dispatch 된다
+  it('ratio 1.5, x/y beyond the raw viewport but inside it after dividing - dispatched', async () => {
+    const { host, debuggerBackend } = await bound(1.5)
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 1350, y: 1050 })
+    expect(debuggerBackend.dispatchCalls).toEqual([{ tabId: 11, x: 900, y: 700, deltaY: 50 }])
+  })
+
+  it('still out of range after dividing is not dispatched', async () => {
+    const { host, debuggerBackend } = await bound(1.5)
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 2000, y: 400 })
+    expect(debuggerBackend.dispatchCalls).toEqual([])
+  })
+
+  it('a missing or non-positive ratio is not dispatched', async () => {
+    const { host, debuggerBackend } = await bound(1)
+
+    debuggerBackend.viewport = { width: 1000, height: 800, ratio: 0 }
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 500, y: 400 })
+
+    debuggerBackend.viewport = { width: 1000, height: 800, ratio: -2 }
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 500, y: 400 })
+
+    debuggerBackend.viewport = { width: 1000, height: 800 } as unknown as {
+      width: number
+      height: number
+      ratio: number
+    }
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 500, y: 400 })
+
+    expect(debuggerBackend.dispatchCalls).toEqual([])
+  })
+
+  //+_+// P10-D23 이 이 캐시를 세운 이유 그대로다 - 휠은 스로틀하지 않으므로 캐시가 없으면
+  //+_+// 휠 1회마다 CDP 왕복이 붙는다.  ratio 를 더 읽어도 호출 횟수는 그대로여야 한다
+  it('reuses the cached viewport - Runtime.evaluate is called only once for two SCROLL_TILE calls', async () => {
+    const { host, debuggerBackend } = await bound(1)
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 100, y: 100 })
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 200, y: 200 })
+
+    expect(debuggerBackend.evaluateCalls).toEqual([11])
+    expect(debuggerBackend.dispatchCalls).toHaveLength(2)
   })
 })
