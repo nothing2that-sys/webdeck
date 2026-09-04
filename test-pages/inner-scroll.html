@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>inner-scroll</title>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: 'Courier New', monospace; background: #0d1117; color: #58a6ff; }
+
+  .top-tick {
+    height: 200px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 40px;
+    font-weight: 900;
+    border-bottom: 2px dashed #30363d;
+    overflow-wrap: break-word;
+  }
+
+  .panes {
+    display: flex;
+    gap: 16px;
+    padding: 16px;
+    box-sizing: border-box;
+    background: #010409;
+  }
+
+  .pane {
+    flex: 1;
+    min-width: 0;
+    height: 480px;
+    overflow-y: auto;
+    box-sizing: border-box;
+    border: 4px solid;
+    color: #fff;
+  }
+
+  .pane-a { background: #0b3d91; border-color: #58a6ff; }
+  .pane-b { background: #6a1b6a; border-color: #ff7de9; }
+
+  .pane-tick {
+    height: 200px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    font-weight: 900;
+    border-bottom: 2px dashed rgba(255, 255, 255, 0.35);
+    overflow-wrap: break-word;
+  }
+
+  .pane-tick:first-child { font-size: 36px; }
+
+  .frame-row {
+    padding: 16px;
+    box-sizing: border-box;
+    background: #010409;
+  }
+
+  .frame-label {
+    height: 80px;
+    margin-bottom: 8px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 36px;
+    font-weight: 900;
+    background: #0f3d0f;
+    color: #7ee787;
+  }
+
+  iframe {
+    display: block;
+    width: 100%;
+    height: 320px;
+    border: 4px solid #2ea043;
+    box-sizing: border-box;
+  }
+</style>
+</head>
+<body>
+
+<div class="top-tick">TOP &middot; 0</div>
+<div class="top-tick">TOP &middot; 200</div>
+<div class="top-tick">TOP &middot; 400</div>
+<div class="top-tick">TOP &middot; 600</div>
+
+<div class="panes">
+  <div class="pane pane-a">
+    <div class="pane-tick">A &middot; 0</div>
+    <div class="pane-tick">A &middot; 200</div>
+    <div class="pane-tick">A &middot; 400</div>
+    <div class="pane-tick">A &middot; 600</div>
+    <div class="pane-tick">A &middot; 800</div>
+    <div class="pane-tick">A &middot; 1000</div>
+    <div class="pane-tick">A &middot; 1200</div>
+    <div class="pane-tick">A &middot; 1400</div>
+    <div class="pane-tick">A &middot; 1600</div>
+    <div class="pane-tick">A &middot; 1800</div>
+    <div class="pane-tick">A &middot; 2000</div>
+    <div class="pane-tick">A &middot; 2200</div>
+    <div class="pane-tick">A &middot; 2400</div>
+    <div class="pane-tick">A &middot; 2600</div>
+    <div class="pane-tick">A &middot; 2800</div>
+    <div class="pane-tick">A &middot; 3000</div>
+  </div>
+  <div class="pane pane-b">
+    <div class="pane-tick">B &middot; 0</div>
+    <div class="pane-tick">B &middot; 200</div>
+    <div class="pane-tick">B &middot; 400</div>
+    <div class="pane-tick">B &middot; 600</div>
+    <div class="pane-tick">B &middot; 800</div>
+    <div class="pane-tick">B &middot; 1000</div>
+    <div class="pane-tick">B &middot; 1200</div>
+    <div class="pane-tick">B &middot; 1400</div>
+    <div class="pane-tick">B &middot; 1600</div>
+    <div class="pane-tick">B &middot; 1800</div>
+    <div class="pane-tick">B &middot; 2000</div>
+    <div class="pane-tick">B &middot; 2200</div>
+    <div class="pane-tick">B &middot; 2400</div>
+    <div class="pane-tick">B &middot; 2600</div>
+    <div class="pane-tick">B &middot; 2800</div>
+    <div class="pane-tick">B &middot; 3000</div>
+  </div>
+</div>
+
+<div class="frame-row">
+  <div class="frame-label">IFRAME</div>
+  <iframe src="inner-scroll-frame.html"></iframe>
+</div>
+
+<div class="top-tick">TOP &middot; 800</div>
+<div class="top-tick">TOP &middot; 1000</div>
+<div class="top-tick">TOP &middot; 1200</div>
+<div class="top-tick">TOP &middot; 1400</div>
+<div class="top-tick">TOP &middot; 1600</div>
+<div class="top-tick">TOP &middot; 1800</div>
+<div class="top-tick">TOP &middot; 2000</div>
+<div class="top-tick">TOP &middot; 2200</div>
+<div class="top-tick">TOP &middot; 2400</div>
+<div class="top-tick">TOP &middot; 2600</div>
+<div class="top-tick">TOP &middot; 2800</div>
+<div class="top-tick">TOP &middot; 3000</div>
+<div class="top-tick">TOP &middot; 3200</div>
+<div class="top-tick">TOP &middot; 3400</div>
+<div class="top-tick">TOP &middot; 3600</div>
+<div class="top-tick">TOP &middot; 3800</div>
+<div class="top-tick">TOP &middot; 4000</div>
+<div class="top-tick">TOP &middot; 4200</div>
+<div class="top-tick">TOP &middot; 4400</div>
+<div class="top-tick">TOP &middot; 4600</div>
+<div class="top-tick">TOP &middot; 4800</div>
+<div class="top-tick">TOP &middot; 5000</div>
+<div class="top-tick">TOP &middot; 5200</div>
+
+</body>
+</html>
