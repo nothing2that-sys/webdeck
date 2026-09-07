@@ -286,7 +286,16 @@ export function TileCard({
         </button>
 
         {isSettingsOpen ? (
-          <div ref={popoverRef} className={popoverClassName}>
+          //+_+// TASK-P12-05 (S3). P12-D17. article 의 onDoubleClick 이 v1 §7.1 의 프리뷰 전환이다.
+          //+_+// 팝오버는 설정 입력 영역이라 그 대상이 아니다. 여기서 막아야 입력칸 · 라벨 · 버튼 ·
+          //+_+// 여백 어디를 더블클릭해도(예: 텍스트 전체 선택) 안쪽 자손 전부가 한 번에 덮인다
+          <div
+            ref={popoverRef}
+            className={popoverClassName}
+            onDoubleClick={(event) => {
+              event.stopPropagation()
+            }}
+          >
             <div className="tile-settings-popover-head">
               <span>Tile</span>
               <button type="button" aria-label="타일 설정 닫기" onClick={closeSettings}>

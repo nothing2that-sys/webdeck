@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from '../src/dashboard/App'
@@ -73,6 +73,9 @@ function answer(request: DashboardRequest): DashboardResponse {
       return { ok: true, type: 'CAPTURE_TILE', imageBase64: '', format: 'jpeg', bytes: 0 }
     case 'RELOAD_TILE':
       return { ok: true, type: 'RELOAD_TILE' }
+    //+_+// TASK-P12-05 (S3). v1 §7.1 의 프리뷰 더블클릭 전환이다
+    case 'FOCUS_TILE':
+      return { ok: true, type: 'FOCUS_TILE' }
     case 'SET_TILE_SETTINGS':
       return { ok: true, type: 'SET_TILE_SETTINGS' }
     case 'REMOVE_TILE':
@@ -138,6 +141,42 @@ describe('TASK-P9-04 - opening the popover', () => {
     expect(screen.getByDisplayValue('5000')).not.toBeNull()
     //+_+// TASK-P12-04 (S2). captureTimeoutOverrideMs 항목이다. refreshIntervalOverrideMs 바로 아래다
     expect(screen.getByDisplayValue('3000')).not.toBeNull()
+  })
+})
+
+//+_+// TASK-P12-05 (S3). P12-D17. article 의 onDoubleClick(v1 §7.1) 이 팝오버 자손의 더블클릭까지
+//+_+// 받던 결함이다. 팝오버 컨테이너에서 stopPropagation 한 수정을 두 방향에서 확인한다
+describe('TASK-P12-05 (S3) - a double click inside the popover no longer switches tabs', () => {
+  it('does not send FOCUS_TILE when the double click lands on an input inside the popover', async () => {
+    const user = userEvent.setup()
+    const gears = await renderApp()
+    await user.click(gears[0])
+    await user.dblClick(screen.getByDisplayValue('A 별칭'))
+    expect(sent.some((request) => request.type === 'FOCUS_TILE')).toBe(false)
+  })
+
+  //+_+// 입력칸만이 아니라 라벨 · 여백도 막혀야 한다 (§3-1). 팝오버 머리의 "Tile" 라벨로 확인한다
+  it('does not send FOCUS_TILE when the double click lands on the popover label', async () => {
+    const user = userEvent.setup()
+    const gears = await renderApp()
+    await user.click(gears[0])
+    await user.dblClick(screen.getByText('Tile'))
+    expect(sent.some((request) => request.type === 'FOCUS_TILE')).toBe(false)
+  })
+
+  //+_+// 회귀 방지 -- 프리뷰 영역(팝오버 밖)의 더블클릭은 v1 §7.1 그대로 여전히 전환을 부른다
+  //+_+// "no preview" span 은 프레임이 없는 모든 타일이 공유하므로 이 타일 article 안으로 좁힌다
+  it('still switches to the tab on a double click over the preview area', async () => {
+    const user = userEvent.setup()
+    await renderApp()
+    //+_+// TILE_A 는 customTitle 이 있어 표시 title 이 launchUrl 이 아니라 'A 별칭'이다
+    const article = articleFor('A 별칭')
+    await user.dblClick(within(article).getByText('no preview'))
+    await waitFor(() => {
+      expect(sent.some((request) => request.type === 'FOCUS_TILE' && request.tileId === TILE_A.id)).toBe(
+        true,
+      )
+    })
   })
 })
 
