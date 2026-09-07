@@ -338,6 +338,60 @@ describe('P5-D26 - the override floor is the driver tick', () => {
   })
 })
 
+//+_+// TASK-P12-04 (S2). refreshIntervalOverrideMs 와 같은 자리·같은 형태다. P12-D13
+describe('TASK-P12-04 (S2) - captureTimeoutOverrideMs survives the round trip', () => {
+  it('round trips a tile that carries an override', () => {
+    const withOverride: WebTile = { ...tile('t1', 0, 0), captureTimeoutOverrideMs: 3000 }
+    const original = project([withOverride])
+
+    expect(deserializeProject(serializeProject(original))).toEqual(original)
+  })
+
+  it('leaves the field absent when the tile has no override', () => {
+    const restored = deserializeProject(serializeProject(project([tile('t1', 0, 0)])))
+    expect(Object.hasOwn(restored?.tiles[0] as object, 'captureTimeoutOverrideMs')).toBe(false)
+  })
+
+  it('rejects an override that is not a number', () => {
+    const dirty = {
+      ...project([]),
+      tiles: [{ ...tile('t1', 0, 0), captureTimeoutOverrideMs: 'fast' }],
+    }
+    expect(deserializeProject(dirty)).toBeNull()
+  })
+})
+
+//+_+// TASK-P12-04 (S2). P12-D15. 하한 1000 · 상한 10000 이다 -- refreshIntervalOverrideMs 는
+//+_+// 상한이 없지만 이 필드는 슬롯을 오래 무는 것을 막기 위해 상한도 검증한다
+describe('TASK-P12-04 (S2) - the capture timeout override floor and ceiling', () => {
+  function withOverride(value: unknown) {
+    return {
+      ...project([]),
+      tiles: [{ ...tile('t1', 0, 0), captureTimeoutOverrideMs: value }],
+    }
+  }
+
+  it('accepts the floor and the ceiling', () => {
+    expect(deserializeProject(withOverride(1000))?.tiles[0].captureTimeoutOverrideMs).toBe(1000)
+    expect(deserializeProject(withOverride(10000))?.tiles[0].captureTimeoutOverrideMs).toBe(10000)
+  })
+
+  it('rejects a value one below the floor or one above the ceiling', () => {
+    expect(deserializeProject(withOverride(999))).toBeNull()
+    expect(deserializeProject(withOverride(10001))).toBeNull()
+  })
+
+  it('rejects zero and a negative value', () => {
+    expect(deserializeProject(withOverride(0))).toBeNull()
+    expect(deserializeProject(withOverride(-1))).toBeNull()
+  })
+
+  it('rejects a value that is not an integer', () => {
+    expect(deserializeProject(withOverride(1000.5))).toBeNull()
+    expect(deserializeProject(withOverride(Number.NaN))).toBeNull()
+  })
+})
+
 
 //+_+// D6c. Pause 는 상태 봉투 밖의 별도 키다. schemaVersion 과 deserializeState 를 지나지 않는다
 describe('D6c - the pause flag lives in a key of its own', () => {

@@ -37,6 +37,7 @@ import {
 import type { DragMode, DragState, GridMetrics } from './layoutDrag'
 import {
   NOTICE_BIND_TAB_REQUIRED,
+  NOTICE_CAPTURE_TIMEOUT_INVALID,
   NOTICE_INTERVAL_INVALID,
   NOTICE_NONE,
   NOTICE_STALE_TABS,
@@ -54,7 +55,7 @@ import {
   toggleLabel,
   workerStartsLabel,
 } from './screenText'
-import { buildTileViews, gridArea, parseTileSettings } from './tileView'
+import { buildTileViews, gridArea, parseTileSettings, tileSettingsDraftError } from './tileView'
 import type { TileSettingsDraft, TileViewModel } from './tileView'
 
 //+_+// 4x4 를 항상 보이게 하는 빈 칸이다. 타일과 같은 좌표 계산을 쓴다
@@ -347,7 +348,11 @@ export function App({ projectId }: AppProps): React.JSX.Element {
     async (tileId: string, draft: TileSettingsDraft) => {
       const parsed = parseTileSettings(draft)
       if (parsed === null) {
-        setNotice(NOTICE_INTERVAL_INVALID)
+        setNotice(
+          tileSettingsDraftError(draft) === 'captureTimeout'
+            ? NOTICE_CAPTURE_TIMEOUT_INVALID
+            : NOTICE_INTERVAL_INVALID,
+        )
         return
       }
       const response = await setTileSettings(tileId, parsed)

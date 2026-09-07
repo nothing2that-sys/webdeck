@@ -56,6 +56,28 @@ export function tileIntervalMs(tile: WebTile): number {
   return tile.refreshIntervalOverrideMs ?? tile.refreshIntervalMs
 }
 
+//+_+// TASK-P12-04 (S2). P12-D15. 하한은 페인트 대기(L13 의 TASK-P3-PRE-02 갱신, 763~1004ms)보다
+//+_+// 짧으면 정상 캡처를 죽인다. 상한은 잠정 방어값이다 -- 슬롯이 둘뿐이라(MAX_CONCURRENT_CAPTURES)
+//+_+// 한 타일이 그보다 오래 슬롯을 물면 대시보드 전체가 밀린다. 실측 근거는 없다
+export const MIN_CAPTURE_TIMEOUT_OVERRIDE_MS = 1000
+export const MAX_CAPTURE_TIMEOUT_OVERRIDE_MS = 10000
+
+//+_+// refreshIntervalOverrideMs 의 isValidIntervalOverride 와 같은 자리·같은 판정 방식이다
+//+_+// 상한이 있다는 것만 다르다 -- 주기는 길어도 되지만 타임아웃은 길면 슬롯을 오래 문다
+export function isValidCaptureTimeoutOverride(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= MIN_CAPTURE_TIMEOUT_OVERRIDE_MS &&
+    value <= MAX_CAPTURE_TIMEOUT_OVERRIDE_MS
+  )
+}
+
+//+_+// tileIntervalMs 와 같은 자리다. 미지정이면 전역 기본값(CAPTURE_TIMEOUT_MS)을 쓴다. P12-D14
+export function tileCaptureTimeoutMs(tile: WebTile): number {
+  return tile.captureTimeoutOverrideMs ?? CAPTURE_TIMEOUT_MS
+}
+
 //+_+// 탭 단위로 판정한다. v1 section 6.1 line 451 이 동일 탭 중복 투입을 금지한다
 export function canEnqueue(
   item: CaptureQueueItem,

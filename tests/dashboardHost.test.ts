@@ -1556,13 +1556,14 @@ describe('P5-D27 - ADD_TILE covers the two v1 9.1 paths', () => {
   })
 })
 
-//+_+// P5-D31. 부분 갱신을 만들지 않는다. 4필드를 전부 싣는 전체 교체다
-describe('P5-D31 - SET_TILE_SETTINGS replaces all four fields', () => {
+//+_+// P5-D31. 부분 갱신을 만들지 않는다. 5필드를 전부 싣는 전체 교체다 (TASK-P12-04 가 4필드에서 늘렸다)
+describe('P5-D31 - SET_TILE_SETTINGS replaces all five fields', () => {
   const DEFAULTS: TileSettings = {
     customTitle: '',
     fitMode: 'contain',
     matchMode: 'exact',
     refreshIntervalOverrideMs: null,
+    captureTimeoutOverrideMs: null,
   }
 
   async function boundTile(value = fixture()): Promise<{ value: Fixture; tileId: string }> {
@@ -1585,7 +1586,7 @@ describe('P5-D31 - SET_TILE_SETTINGS replaces all four fields', () => {
     return tile
   }
 
-  it('writes all four fields onto the tile', async () => {
+  it('writes all five fields onto the tile', async () => {
     const { value, tileId } = await boundTile()
     const response = await value.host.handle({
       type: 'SET_TILE_SETTINGS',
@@ -1595,6 +1596,7 @@ describe('P5-D31 - SET_TILE_SETTINGS replaces all four fields', () => {
         fitMode: 'cover',
         matchMode: 'prefix',
         refreshIntervalOverrideMs: 9000,
+        captureTimeoutOverrideMs: 3000,
       },
     })
 
@@ -1604,6 +1606,7 @@ describe('P5-D31 - SET_TILE_SETTINGS replaces all four fields', () => {
       fitMode: 'cover',
       matchMode: 'prefix',
       refreshIntervalOverrideMs: 9000,
+      captureTimeoutOverrideMs: 3000,
     })
   })
 
@@ -1707,12 +1710,14 @@ describe('P5-D31 - SET_TILE_SETTINGS replaces all four fields', () => {
 })
 
 //+_+// J27 의 Resize 배선과 같은 성질이다. 주기를 바꾼 것만 재등록한다
-describe('S3 - only an interval change re-registers the tile', () => {
+//+_+// TASK-P12-04 (S2) 가 캡처 타임아웃 override 를 늘렸다 -- 같은 규칙으로 재등록을 튼다
+describe('S3 - only an interval or capture-timeout change re-registers the tile', () => {
   const DEFAULTS: TileSettings = {
     customTitle: '',
     fitMode: 'contain',
     matchMode: 'exact',
     refreshIntervalOverrideMs: null,
+    captureTimeoutOverrideMs: null,
   }
 
   async function settleRound(value: Fixture): Promise<number> {
@@ -1796,6 +1801,34 @@ describe('S3 - only an interval change re-registers the tile', () => {
       type: 'SET_TILE_SETTINGS',
       tileId,
       settings: { ...DEFAULTS, refreshIntervalOverrideMs: 9000 },
+    })
+    expect(await settleRound(value)).toBe(2)
+
+    value.clock.current = 1000
+    await value.host.handle({ type: 'SET_TILE_SETTINGS', tileId, settings: DEFAULTS })
+    expect(await settleRound(value)).toBe(3)
+  })
+
+  //+_+// TASK-P12-04 (S2). 캡처 주기는 그대로인데 타임아웃만 바뀌어도 재등록한다 --
+  //+_+// beginAttempt 가 state.captureTimeoutMs 를 다음 회차에 바로 읽어야 하기 때문이다
+  it('re-registers when only the capture timeout override changes', async () => {
+    const { value, tileId } = await tileWithOneRound()
+    value.clock.current = 1000
+
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, captureTimeoutOverrideMs: 3000 },
+    })
+    expect(await settleRound(value)).toBe(2)
+  })
+
+  it('re-registers when the capture timeout override is cleared', async () => {
+    const { value, tileId } = await tileWithOneRound()
+    await value.host.handle({
+      type: 'SET_TILE_SETTINGS',
+      tileId,
+      settings: { ...DEFAULTS, captureTimeoutOverrideMs: 3000 },
     })
     expect(await settleRound(value)).toBe(2)
 
@@ -1916,6 +1949,7 @@ describe('P5-D14 - a successful drop is persisted at once', () => {
         fitMode: 'contain',
         matchMode: 'exact',
         refreshIntervalOverrideMs: 9000,
+        captureTimeoutOverrideMs: null,
       },
     })
     await value.host.handle({ type: 'SET_TILE_RECT', tileId, rect: { x: 0, y: 0, w: 2, h: 2 } })
@@ -1939,6 +1973,7 @@ describe('P5-D14 - a successful drop is persisted at once', () => {
         fitMode: 'contain',
         matchMode: 'exact',
         refreshIntervalOverrideMs: 9000,
+        captureTimeoutOverrideMs: null,
       },
     })
 
@@ -2055,6 +2090,7 @@ describe('P5-D32 - REOPEN_TILE puts the tile back on a fresh tab', () => {
         fitMode: 'contain',
         matchMode: 'exact',
         refreshIntervalOverrideMs: 9000,
+        captureTimeoutOverrideMs: null,
       },
     })
 
@@ -2088,6 +2124,7 @@ describe('P5-D32 - REOPEN_TILE puts the tile back on a fresh tab', () => {
         fitMode: 'cover',
         matchMode: 'prefix',
         refreshIntervalOverrideMs: 9000,
+        captureTimeoutOverrideMs: null,
       },
     })
     await value.host.handle({ type: 'REOPEN_TILE', tileId })

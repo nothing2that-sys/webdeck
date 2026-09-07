@@ -103,6 +103,9 @@ interface TileState {
   tileId: string
   tabId: number
   baseIntervalMs: number
+  //+_+// TASK-P12-04 (S2). P12-D1 §4 조건 하의 첫 쓰기다. beginAttempt 의 clock.schedule 값으로만
+  //+_+// 쓰인다 -- startedAt · calledAt 위치, roundDurationMs · callDurationMs 계산식은 그대로다
+  captureTimeoutMs: number
   //+_+// P6-D51. nextDueAt 을 정할 때 더한 값이다. 기본 주기 · backoff 계단 · 강등 주기 중 하나다
   appliedIntervalMs: number
   nextDueAt: number
@@ -299,7 +302,15 @@ export class PreviewCaptureManager {
   //+_+// 만기는 언제나 초기화한다. 새 주기를 적용하는 것이 재등록의 목적이다
   //+_+// P6-D44. 실패 계단은 같은 탭이면 승계한다. 전에는 재등록 한 번이 계단을 통째로 지웠다
   //+_+// 다른 탭이면 지금대로 초기화한다. 새 탭이 fault 를 지우는 명시 경로라는 P5-D32 를 지킨다
-  register(tileId: string, tabId: number, baseIntervalMs: number): void {
+  //+_+// TASK-P12-04 (S2). captureTimeoutMs 는 baseIntervalMs 와 같은 성질이다 -- kept 로 승계하지
+  //+_+// 않고 매번 인자값을 그대로 쓴다. 기본값은 CAPTURE_TIMEOUT_MS 다. 기존 호출부(3개 인자)가
+  //+_+// 그대로 컴파일되도록 옵션 인자로 둔다
+  register(
+    tileId: string,
+    tabId: number,
+    baseIntervalMs: number,
+    captureTimeoutMs: number = CAPTURE_TIMEOUT_MS,
+  ): void {
     const now = this.clock.now()
     const previous = this.tiles.get(tileId)
     const kept = previous !== undefined && previous.tabId === tabId ? previous : null
@@ -307,6 +318,7 @@ export class PreviewCaptureManager {
       tileId,
       tabId,
       baseIntervalMs,
+      captureTimeoutMs,
       appliedIntervalMs: baseIntervalMs,
       touchedAt: now,
       nextDueAt: now,
@@ -536,7 +548,9 @@ export class PreviewCaptureManager {
       timedOutAt: null,
       cancelTimer: () => undefined,
     }
-    attempt.cancelTimer = this.clock.schedule(CAPTURE_TIMEOUT_MS, () => {
+    //+_+// TASK-P12-04 (S2). P12-D1 §4 -- 바뀌는 것은 이 값뿐이다. 타이머를 거는 위치와 시점,
+    //+_+// startedAt · calledAt, write() 의 두 계산식은 그대로다
+    attempt.cancelTimer = this.clock.schedule(state.captureTimeoutMs, () => {
       this.onTimeout(attempt)
     })
     this.inFlight.set(state.tileId, attempt)

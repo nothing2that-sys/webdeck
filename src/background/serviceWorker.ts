@@ -13,9 +13,13 @@ import type {
   TileSettings,
 } from '../shared/messages'
 import {
+  MAX_CAPTURE_TIMEOUT_OVERRIDE_MS,
+  MIN_CAPTURE_TIMEOUT_OVERRIDE_MS,
   MIN_TILE_INTERVAL_MS,
   defaultRefreshIntervalMs,
+  isValidCaptureTimeoutOverride,
   isValidIntervalOverride,
+  tileCaptureTimeoutMs,
   tileIntervalMs,
 } from '../shared/scheduler'
 import { RECORD_LOG_LIMIT } from '../shared/recordLimit'
@@ -227,7 +231,7 @@ export function createPreviewEngine(
     //+_+// P6-D52. 표시 상태는 더 이상 주기를 고르지 않는다. hidden 은 주기가 아니라 Pause 다
     //+_+// 그래서 등록은 타일이 정한 주기 하나만 본다. 전환이 만기를 흔들지 않는다
     registerTile: (tile, tabId) => {
-      captures.register(tile.id, tabId, tileIntervalMs(tile))
+      captures.register(tile.id, tabId, tileIntervalMs(tile), tileCaptureTimeoutMs(tile))
     },
   }
 }
@@ -628,9 +632,10 @@ export function createDashboardHost(
     return { ok: true, type: 'SET_TILE_RECT' }
   }
 
-  //+_+// P5-D31. 4필드 전체 교체다. 미지정은 필드를 지운다. undefined 를 써 넣지 않는다
-  //+_+// 주기가 바뀐 회차에만 재등록한다. J27 의 Resize 배선과 같은 성질이다
-  //+_+// matchMode / customTitle / fitMode 는 캡처 주기를 건드리지 않으므로 만기를 흔들지 않는다
+  //+_+// P5-D31. 5필드 전체 교체다 (TASK-P12-04 가 4필드에서 늘렸다). 미지정은 필드를 지운다
+  //+_+// undefined 를 써 넣지 않는다. 주기 또는 타임아웃이 바뀐 회차에만 재등록한다
+  //+_+// J27 의 Resize 배선과 같은 성질이다. matchMode / customTitle / fitMode 는 회차 진행에
+  //+_+// 영향을 주지 않으므로 만기도 타임아웃 타이머도 흔들지 않는다
   async function setTileSettings(
     tileId: string,
     settings: TileSettings,
@@ -648,8 +653,18 @@ export function createDashboardHost(
         `Interval override must be an integer of at least ${String(MIN_TILE_INTERVAL_MS)} ms`,
       )
     }
+    //+_+// TASK-P12-04 (S2). P12-D13 · D15. refreshIntervalOverrideMs 검증과 같은 자리다
+    const captureTimeoutOverride = settings.captureTimeoutOverrideMs
+    if (captureTimeoutOverride !== null && !isValidCaptureTimeoutOverride(captureTimeoutOverride)) {
+      return failure(
+        'SET_TILE_SETTINGS',
+        'INVALID_CAPTURE_TIMEOUT',
+        `Capture timeout override must be an integer between ${String(MIN_CAPTURE_TIMEOUT_OVERRIDE_MS)} and ${String(MAX_CAPTURE_TIMEOUT_OVERRIDE_MS)} ms`,
+      )
+    }
 
     const before = tileIntervalMs(tile)
+    const timeoutBefore = tileCaptureTimeoutMs(tile)
     if (settings.customTitle.length === 0) {
       delete tile.customTitle
     } else {
@@ -662,8 +677,13 @@ export function createDashboardHost(
     } else {
       tile.refreshIntervalOverrideMs = override
     }
+    if (captureTimeoutOverride === null) {
+      delete tile.captureTimeoutOverrideMs
+    } else {
+      tile.captureTimeoutOverrideMs = captureTimeoutOverride
+    }
 
-    if (tileIntervalMs(tile) !== before) {
+    if (tileIntervalMs(tile) !== before || tileCaptureTimeoutMs(tile) !== timeoutBefore) {
       await reregister(tile)
     }
     await persist()

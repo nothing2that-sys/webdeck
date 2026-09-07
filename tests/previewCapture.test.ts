@@ -240,6 +240,82 @@ describe('TASK-P3-01 item 12 - the timeout returns the slot', () => {
   })
 })
 
+describe('TASK-P12-04 (S2) - the capture timeout is a per-tile value', () => {
+  //+_+// register 의 4번째 인자를 생략한 기존 호출부는 전부 이 기본값 그대로여야 한다
+  it('keeps CAPTURE_TIMEOUT_MS(5000) as the default when no override is given', async () => {
+    const { manager, clock } = build()
+    manager.register('a', 1, 2000)
+
+    manager.tick()
+    await flush()
+
+    clock.advance(4999)
+    expect(manager.inFlightCount).toBe(1)
+    clock.advance(1)
+    expect(manager.inFlightCount).toBe(0)
+  })
+
+  it('frees the slot at the tile-specific timeout instead of 5000 ms', async () => {
+    const { manager, clock } = build()
+    manager.register('a', 1, 2000, 1000)
+
+    manager.tick()
+    await flush()
+
+    clock.advance(999)
+    expect(manager.inFlightCount).toBe(1)
+    clock.advance(1)
+    expect(manager.inFlightCount).toBe(0)
+  })
+
+  it('also honours a value longer than the default', async () => {
+    const { manager, clock } = build()
+    manager.register('a', 1, 2000, 8000)
+
+    manager.tick()
+    await flush()
+
+    clock.advance(5000)
+    expect(manager.inFlightCount).toBe(1)
+    clock.advance(3000)
+    expect(manager.inFlightCount).toBe(0)
+  })
+
+  //+_+// TASK-P12-04 §4. 값이 바뀌면 다음 회차부터 적용된다. 진행 중인 회차를 중단하지 않는다
+  //+_+// beginAttempt 가 타이머를 걸 때의 state.captureTimeoutMs 값이 그 회차 내내 고정이다
+  it('does not change an in-flight round when the tile is re-registered with a new timeout', async () => {
+    const { manager, clock } = build()
+    manager.register('a', 1, 2000, 5000)
+
+    manager.tick()
+    await flush()
+    expect(manager.inFlightCount).toBe(1)
+
+    //+_+// 같은 탭으로 다시 등록한다. 진행 중인 회차의 타이머는 이미 5000 으로 걸려 있다
+    manager.register('a', 1, 2000, 1000)
+
+    clock.advance(1000)
+    //+_+// 1000ms 로는 아직 안 끝난다 -- 이 회차는 여전히 5000 을 쓰고 있었다는 뜻이다
+    expect(manager.inFlightCount).toBe(1)
+
+    clock.advance(4000)
+    //+_+// 5000ms 에 도달하면 끝난다 (타임아웃). 슬롯이 반납되고 backoff 2000ms 가 걸린다
+    expect(manager.inFlightCount).toBe(0)
+
+    //+_+// backoff 첫 계단(2000ms)이 지나야 다음 회차가 due 해진다
+    clock.advance(2000)
+    manager.tick()
+    await flush()
+    expect(manager.inFlightCount).toBe(1)
+
+    //+_+// 다음 회차부터는 새 값(1000)이 적용된다
+    clock.advance(999)
+    expect(manager.inFlightCount).toBe(1)
+    clock.advance(1)
+    expect(manager.inFlightCount).toBe(0)
+  })
+})
+
 describe('TASK-P3-01 item 13 - a late response is never used as a frame', () => {
   it('records a late arrival and keeps no frame', async () => {
     const { manager, clock, backend } = build()

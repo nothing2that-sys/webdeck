@@ -333,6 +333,13 @@ export function TileCard({
                 setDraft((current) => ({ ...current, refreshIntervalOverrideMs: event.target.value }))
               }}
             />
+            <input
+              value={draft.captureTimeoutOverrideMs}
+              placeholder="타임아웃 ms · 비우면 5000"
+              onChange={(event) => {
+                setDraft((current) => ({ ...current, captureTimeoutOverrideMs: event.target.value }))
+              }}
+            />
             <button
               type="button"
               onClick={() => {

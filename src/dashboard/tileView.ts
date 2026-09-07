@@ -1,6 +1,6 @@
 import type { GridRect } from '../shared/grid'
 import type { TileFrame, TileSettings } from '../shared/messages'
-import { isValidIntervalOverride } from '../shared/scheduler'
+import { isValidCaptureTimeoutOverride, isValidIntervalOverride } from '../shared/scheduler'
 import type {
   Project,
   TileFitMode,
@@ -34,6 +34,8 @@ export interface TileSettingsDraft {
   fitMode: TileFitMode
   matchMode: TileMatchMode
   refreshIntervalOverrideMs: string
+  //+_+// TASK-P12-04 (S2). refreshIntervalOverrideMs 와 같은 자리다. P12-D13
+  captureTimeoutOverrideMs: string
 }
 
 //+_+// 미지정은 빈 문자열이다. 폼이 undefined 를 표시할 수 없기 때문이다
@@ -46,33 +48,71 @@ export function tileSettingsDraft(tile: WebTile): TileSettingsDraft {
       tile.refreshIntervalOverrideMs === undefined
         ? ''
         : String(tile.refreshIntervalOverrideMs),
+    captureTimeoutOverrideMs:
+      tile.captureTimeoutOverrideMs === undefined
+        ? ''
+        : String(tile.captureTimeoutOverrideMs),
   }
+}
+
+//+_+// 빈 문자열은 미지정(null)이다. 값이 있는데 규칙에 안 맞으면 이 자리표로 구분한다
+//+_+// parseTileSettings 와 tileSettingsDraftError 가 같은 판정을 쓰도록 한 곳에 둔다
+const INVALID_OVERRIDE = Symbol('invalid-override')
+
+function parseOverrideText(
+  text: string,
+  isValid: (value: unknown) => value is number,
+): number | null | typeof INVALID_OVERRIDE {
+  const trimmed = text.trim()
+  if (trimmed.length === 0) {
+    return null
+  }
+  //+_+// Number 는 빈 문자열을 0 으로 만든다. 위에서 이미 걸렀으므로 여기 도달하지 않는다
+  const parsed = Number(trimmed)
+  return isValid(parsed) ? parsed : INVALID_OVERRIDE
 }
 
 //+_+// 값이 규칙에 맞지 않으면 null 이다. 판정 권위는 워커이고 여기는 보내기 전 거름망이다
 //+_+// P5-D26 의 하한을 워커와 같은 함수로 본다. 규칙을 화면에 복제하지 않는다
+//+_+// TASK-P12-04 (S2). captureTimeoutOverrideMs 도 같은 방식(거부, 클램프 아님)으로 거른다
 export function parseTileSettings(draft: TileSettingsDraft): TileSettings | null {
-  const text = draft.refreshIntervalOverrideMs.trim()
-  if (text.length === 0) {
-    return {
-      customTitle: draft.customTitle.trim(),
-      fitMode: draft.fitMode,
-      matchMode: draft.matchMode,
-      refreshIntervalOverrideMs: null,
-    }
+  const refreshIntervalOverrideMs = parseOverrideText(
+    draft.refreshIntervalOverrideMs,
+    isValidIntervalOverride,
+  )
+  if (refreshIntervalOverrideMs === INVALID_OVERRIDE) {
+    return null
   }
-
-  //+_+// Number 는 빈 문자열을 0 으로 만든다. 위에서 이미 걸렀으므로 여기 도달하지 않는다
-  const parsed = Number(text)
-  if (!isValidIntervalOverride(parsed)) {
+  const captureTimeoutOverrideMs = parseOverrideText(
+    draft.captureTimeoutOverrideMs,
+    isValidCaptureTimeoutOverride,
+  )
+  if (captureTimeoutOverrideMs === INVALID_OVERRIDE) {
     return null
   }
   return {
     customTitle: draft.customTitle.trim(),
     fitMode: draft.fitMode,
     matchMode: draft.matchMode,
-    refreshIntervalOverrideMs: parsed,
+    refreshIntervalOverrideMs,
+    captureTimeoutOverrideMs,
   }
+}
+
+//+_+// TASK-P12-04 (S2). parseTileSettings 가 null 을 낼 때 어느 입력이 문제인지 화면이 알아야
+//+_+// 정확한 안내 문구를 고른다. NOTICE_INTERVAL_INVALID 하나로 두 필드를 덮으면 엉뚱한 필드를
+//+_+// 가리키는 문구가 뜬다. parseOverrideText 를 그대로 재사용해 판정을 두 곳에 두지 않는다
+export function tileSettingsDraftError(draft: TileSettingsDraft): 'interval' | 'captureTimeout' | null {
+  if (parseOverrideText(draft.refreshIntervalOverrideMs, isValidIntervalOverride) === INVALID_OVERRIDE) {
+    return 'interval'
+  }
+  if (
+    parseOverrideText(draft.captureTimeoutOverrideMs, isValidCaptureTimeoutOverride) ===
+    INVALID_OVERRIDE
+  ) {
+    return 'captureTimeout'
+  }
+  return null
 }
 
 //+_+// CSS Grid 는 1-based 이고 순서는 row-start / column-start / row-end / column-end 다

@@ -10,6 +10,7 @@ import {
   tabLabel,
   tileClassName,
   tileSettingsDraft,
+  tileSettingsDraftError,
 } from '../src/dashboard/tileView'
 import type { TileFrame } from '../src/shared/messages'
 import type { Project, TileRuntimeState, TileStatus, WebTile } from '../src/shared/types'
@@ -222,30 +223,34 @@ describe('P4-D7 - the view model merges tiles, runtime states and frames', () =>
 })
 
 //+_+// S3. 설정 폼은 문자열을 다루고 프로토콜은 값을 다룬다. 그 사이 변환을 순수 함수로 분리한다
+//+_+// TASK-P12-04 가 4필드에서 5필드로 늘렸다 -- captureTimeoutOverrideMs 가 다섯 번째다
 describe('P5-D31 - the settings draft round trips a tile', () => {
-  it('reads the four fields off the tile', () => {
+  it('reads the five fields off the tile', () => {
     const source: WebTile = {
       ...tile('t1', 0, 0),
       customTitle: 'Named',
       fitMode: 'cover',
       matchMode: 'prefix',
       refreshIntervalOverrideMs: 9000,
+      captureTimeoutOverrideMs: 3000,
     }
     expect(tileSettingsDraft(source)).toEqual({
       customTitle: 'Named',
       fitMode: 'cover',
       matchMode: 'prefix',
       refreshIntervalOverrideMs: '9000',
+      captureTimeoutOverrideMs: '3000',
     })
   })
 
-  //+_+// 미지정의 표현은 customTitle 이 빈 문자열, override 가 빈 문자열이다. P5-D31
-  it('shows an unset custom title and an unset override as empty text', () => {
+  //+_+// 미지정의 표현은 customTitle 이 빈 문자열, 두 override 가 빈 문자열이다. P5-D31
+  it('shows an unset custom title and unset overrides as empty text', () => {
     expect(tileSettingsDraft(tile('t1', 0, 0))).toEqual({
       customTitle: '',
       fitMode: 'contain',
       matchMode: 'origin',
       refreshIntervalOverrideMs: '',
+      captureTimeoutOverrideMs: '',
     })
   })
 
@@ -257,17 +262,19 @@ describe('P5-D31 - the settings draft round trips a tile', () => {
       fitMode: 'contain',
       matchMode: 'origin',
       refreshIntervalOverrideMs: null,
+      captureTimeoutOverrideMs: null,
     })
   })
 })
 
 describe('P5-D31 - parsing the settings draft', () => {
-  function draft(overrideText: string) {
+  function draft(overrideText: string, timeoutText = '') {
     return {
       customTitle: '',
       fitMode: 'contain' as const,
       matchMode: 'exact' as const,
       refreshIntervalOverrideMs: overrideText,
+      captureTimeoutOverrideMs: timeoutText,
     }
   }
 
@@ -303,6 +310,100 @@ describe('P5-D31 - parsing the settings draft', () => {
   it('trims the custom title', () => {
     const trimmed = parseTileSettings({ ...draft(''), customTitle: '  Named  ' })
     expect(trimmed?.customTitle).toBe('Named')
+  })
+})
+
+//+_+// TASK-P12-04 (S2). P12-D13 · D15. refreshIntervalOverrideMs 의 시험과 같은 형태로 얹는다
+describe('TASK-P12-04 (S2) - parsing the capture timeout override', () => {
+  function draft(timeoutText: string) {
+    return {
+      customTitle: '',
+      fitMode: 'contain' as const,
+      matchMode: 'exact' as const,
+      refreshIntervalOverrideMs: '',
+      captureTimeoutOverrideMs: timeoutText,
+    }
+  }
+
+  it('turns empty override text into null (falls back to CAPTURE_TIMEOUT_MS 5000)', () => {
+    expect(parseTileSettings(draft(''))?.captureTimeoutOverrideMs).toBeNull()
+  })
+
+  it('turns blank override text into null', () => {
+    expect(parseTileSettings(draft('   '))?.captureTimeoutOverrideMs).toBeNull()
+  })
+
+  it('parses a valid override', () => {
+    expect(parseTileSettings(draft('3000'))?.captureTimeoutOverrideMs).toBe(3000)
+  })
+
+  it('accepts the floor and the ceiling', () => {
+    expect(parseTileSettings(draft('1000'))?.captureTimeoutOverrideMs).toBe(1000)
+    expect(parseTileSettings(draft('10000'))?.captureTimeoutOverrideMs).toBe(10000)
+  })
+
+  it('rejects an override below the floor or above the ceiling', () => {
+    expect(parseTileSettings(draft('999'))).toBeNull()
+    expect(parseTileSettings(draft('10001'))).toBeNull()
+    expect(parseTileSettings(draft('0'))).toBeNull()
+    expect(parseTileSettings(draft('-1'))).toBeNull()
+  })
+
+  it('rejects text that is not an integer', () => {
+    expect(parseTileSettings(draft('1000.5'))).toBeNull()
+    expect(parseTileSettings(draft('fast'))).toBeNull()
+  })
+
+  //+_+// 두 override 필드가 독립적으로 판정된다. 하나가 유효해도 다른 하나가 무효면 전체가 null 이다
+  it('rejects the whole settings object when only the other field is invalid', () => {
+    expect(
+      parseTileSettings({
+        customTitle: '',
+        fitMode: 'contain',
+        matchMode: 'exact',
+        refreshIntervalOverrideMs: '9000',
+        captureTimeoutOverrideMs: '1',
+      }),
+    ).toBeNull()
+    expect(
+      parseTileSettings({
+        customTitle: '',
+        fitMode: 'contain',
+        matchMode: 'exact',
+        refreshIntervalOverrideMs: '1',
+        captureTimeoutOverrideMs: '3000',
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('TASK-P12-04 (S2) - which field a rejected draft blames', () => {
+  function draft(overrideText: string, timeoutText: string) {
+    return {
+      customTitle: '',
+      fitMode: 'contain' as const,
+      matchMode: 'exact' as const,
+      refreshIntervalOverrideMs: overrideText,
+      captureTimeoutOverrideMs: timeoutText,
+    }
+  }
+
+  it('blames the interval field when only it is invalid', () => {
+    expect(tileSettingsDraftError(draft('1', ''))).toBe('interval')
+  })
+
+  it('blames the capture timeout field when only it is invalid', () => {
+    expect(tileSettingsDraftError(draft('', '1'))).toBe('captureTimeout')
+  })
+
+  //+_+// 둘 다 잘못이면 interval 을 먼저 본다 -- parseTileSettings 와 같은 순서다
+  it('blames the interval field first when both are invalid', () => {
+    expect(tileSettingsDraftError(draft('1', '1'))).toBe('interval')
+  })
+
+  it('blames nothing when both fields are valid or empty', () => {
+    expect(tileSettingsDraftError(draft('', ''))).toBeNull()
+    expect(tileSettingsDraftError(draft('9000', '3000'))).toBeNull()
   })
 })
 

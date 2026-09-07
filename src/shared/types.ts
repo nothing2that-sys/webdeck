@@ -31,6 +31,9 @@ export interface WebTile {
   //+_+// P5-D21. 사용자 지정 주기다. v1 section 8 에 없는 유일한 추가 필드이며 P5-D16 의 구현 형태다
   //+_+// refreshIntervalMs 의 의미를 바꾸지 않는다. 그쪽은 span 자동 배정이 계속 소유한다
   refreshIntervalOverrideMs?: number
+  //+_+// TASK-P12-04 (S2). P12-D13. refreshIntervalOverrideMs 와 같은 형태의 optional 필드다
+  //+_+// 미지정이면 CAPTURE_TIMEOUT_MS(5000) 을 쓴다. WEBDECK_PLAN.md:400 원칙 -- 번호를 올리지 않는다
+  captureTimeoutOverrideMs?: number
   fitMode: TileFitMode
   keepAlive: boolean
 }
