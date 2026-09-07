@@ -13,8 +13,11 @@ import type { Clock } from '../src/background/previewCaptureManager'
 import { ROUND_LOG_PREFIX, formatRoundClock, frameFingerprint } from '../src/background/roundLog'
 import {
   LEASE_EXPIRY_MS,
+  SCROLL_VIEWPORT_LOG_KEY,
+  SCROLL_VIEWPORT_LOG_LIMIT,
   createDashboardHost,
   excludeOwnPages,
+  readScrollViewportLogRows,
 } from '../src/background/serviceWorker'
 import type {
   CreateActiveTab,
@@ -60,6 +63,11 @@ class StubDebugger implements DebuggerBackend {
   viewport: { width: number; height: number; ratio: number } = { width: 1000, height: 800, ratio: 1 }
   evaluateCalls: number[] = []
   dispatchCalls: { tabId: number; x: number; y: number; deltaY: number }[] = []
+  //+_+// TASK-P12-02 (S1, L57). 왕복 소요를 흉내낸다. clock 이 없으면(기본) 즉시 반환 -- 기존 동작 그대로
+  evaluateClock: StubClock | null = null
+  evaluateDurationMs = 0
+  //+_+// L57 실패 회차를 만든다. Runtime.evaluate 만 실패시키고 다른 명령은 건드리지 않는다
+  evaluateFails = false
 
   attach(tabId: number): Promise<void> {
     this.attached.push(tabId)
@@ -74,6 +82,12 @@ class StubDebugger implements DebuggerBackend {
   sendCommand(tabId: number, method: string, params?: Record<string, unknown>): Promise<unknown> {
     if (method === 'Runtime.evaluate') {
       this.evaluateCalls.push(tabId)
+      if (this.evaluateClock !== null) {
+        this.evaluateClock.current += this.evaluateDurationMs
+      }
+      if (this.evaluateFails) {
+        return Promise.reject(new Error('evaluate refused'))
+      }
       return Promise.resolve({ result: { value: this.viewport } })
     }
     if (method === 'Input.dispatchMouseEvent') {
@@ -3808,5 +3822,91 @@ describe('TASK-P11-04 (§8-6) - SCROLL_TILE divides by devicePixelRatio before t
       { tabId: 11, x: 500, y: 400, deltaY: 50 },
       { tabId: 11, x: 250, y: 200, deltaY: 50 },
     ])
+  })
+})
+
+//+_+// TASK-P12-02 (S1, L57). tileViewportSize 의 Runtime.evaluate 왕복 소요를 잰다
+//+_+// P12-D6 -- expression 문자열은 이 라운드에서 바꾸지 않는다. StubDebugger 도 응답 형태를 그대로 둔다
+describe('TASK-P12-02 (S1, L57) - the Runtime.evaluate round trip duration is measured', () => {
+  async function boundWithDiagnostics(): Promise<{
+    host: DashboardHost
+    debuggerBackend: StubDebugger
+    clock: StubClock
+    diagnostics: StubStorage
+  }> {
+    const diagnostics = new StubStorage()
+    const { host, debuggerBackend, clock } = fixture([11, 12], new StubStorage(), diagnostics)
+    await host.handle({ type: 'BIND_TILE', projectId: DEFAULT_PROJECT_ID, tileId: 't1', tabId: 11 })
+    //+_+// StubDebugger 는 자기만으로는 시간을 모른다 -- 이 시험이 쓰는 clock 을 넘겨줘야
+    //+_+// Runtime.evaluate 가 "왕복하는 동안" 시간이 흐른 것을 흉내낼 수 있다
+    debuggerBackend.evaluateClock = clock
+    return { host, debuggerBackend, clock, diagnostics }
+  }
+
+  //+_+// 계측을 넣기 전과 동작이 같은지가 먼저다. 반환값 자체는 계측과 무관해야 한다
+  it('leaves the successful dispatch unchanged - instrumentation does not alter behavior', async () => {
+    const { host, debuggerBackend } = await boundWithDiagnostics()
+    debuggerBackend.evaluateDurationMs = 42
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 500, y: 400 })
+    expect(debuggerBackend.dispatchCalls).toEqual([{ tabId: 11, x: 500, y: 400, deltaY: 50 }])
+  })
+
+  it('keeps returning no dispatch when Runtime.evaluate fails - the null-viewport path survives', async () => {
+    const { host, debuggerBackend } = await boundWithDiagnostics()
+    debuggerBackend.evaluateFails = true
+    const response = await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 500, y: 400 })
+    expect(response).toEqual({ ok: true, type: 'SCROLL_TILE' })
+    expect(debuggerBackend.dispatchCalls).toEqual([])
+  })
+
+  //+_+// dashboardHost.test.ts:3802 의 기존 단언("does not cache the viewport")과 같은 조건이다.
+  //+_+// 계측이 호출 횟수를 늘리지 않는다는 것을 이 describe 안에서도 직접 확인한다
+  it('still calls Runtime.evaluate exactly once per SCROLL_TILE call', async () => {
+    const { host, debuggerBackend } = await boundWithDiagnostics()
+    debuggerBackend.evaluateDurationMs = 5
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 100, y: 100 })
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 200, y: 200 })
+    expect(debuggerBackend.evaluateCalls).toEqual([11, 11])
+  })
+
+  it('records the round trip duration of a successful call under its own diagnostics key', async () => {
+    const { host, debuggerBackend, diagnostics } = await boundWithDiagnostics()
+    debuggerBackend.evaluateDurationMs = 37
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 500, y: 400 })
+
+    const rows = readScrollViewportLogRows(await diagnostics.get(SCROLL_VIEWPORT_LOG_KEY))
+    expect(rows).toEqual([
+      { at: 0, tileId: 't1', tabId: 11, durationMs: 37, outcome: 'success', message: null },
+    ])
+  })
+
+  it('records the duration and the reason of a failed call', async () => {
+    const { host, debuggerBackend, diagnostics } = await boundWithDiagnostics()
+    debuggerBackend.evaluateDurationMs = 12
+    debuggerBackend.evaluateFails = true
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 500, y: 400 })
+
+    const rows = readScrollViewportLogRows(await diagnostics.get(SCROLL_VIEWPORT_LOG_KEY))
+    expect(rows).toEqual([
+      { at: 0, tileId: 't1', tabId: 11, durationMs: 12, outcome: 'failure', message: 'evaluate refused' },
+    ])
+  })
+
+  //+_+// P12-D7. ROUND_LOG_KEY 에는 이 계측이 한 행도 섞이지 않는다
+  it('does not write to ROUND_LOG_KEY - the two logs stay separate (P12-D7)', async () => {
+    const { host, debuggerBackend, diagnostics } = await boundWithDiagnostics()
+    debuggerBackend.evaluateDurationMs = 9
+    await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 500, y: 400 })
+
+    expect(await diagnostics.get(ROUND_LOG_KEY)).toBeUndefined()
+  })
+
+  it('keeps the ring buffer bounded at SCROLL_VIEWPORT_LOG_LIMIT', async () => {
+    const { host, diagnostics } = await boundWithDiagnostics()
+    for (let index = 0; index < SCROLL_VIEWPORT_LOG_LIMIT + 5; index += 1) {
+      await host.handle({ type: 'SCROLL_TILE', tileId: 't1', deltaY: 50, x: 500, y: 400 })
+    }
+    const rows = readScrollViewportLogRows(await diagnostics.get(SCROLL_VIEWPORT_LOG_KEY))
+    expect(rows).toHaveLength(SCROLL_VIEWPORT_LOG_LIMIT)
   })
 })

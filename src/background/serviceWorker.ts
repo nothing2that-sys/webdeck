@@ -116,6 +116,87 @@ export function resolveScrollDispatchPoint(
   return { x: cssX, y: cssY }
 }
 
+//+_+// TASK-P12-02 (S1 -> §8-7). L57 측정 전용 키다. ROUND_LOG_KEY 와 섞지 않는다 (P12-D7)
+//+_+// 캡처 회차와 무관한 별도 계측이므로 diagnostics.ts 의 기존 다섯 키와 나란히 두지 않는다
+export const SCROLL_VIEWPORT_LOG_KEY = 'webdeck.diagnostics.scrollViewport'
+
+//+_+// RECONNECT_LOG_KEY · PORT_EVENT_KEY 와 같은 200 이다. 워커 한 기동 안의 관측 세션 하나를
+//+_+// 담는 용도라 ROUND_LOG_LIMIT(2000, 캡처 주기 기준)을 끌어오지 않는다. 휠은 스로틀이 없어
+//+_+// 한 번의 긴 스크롤이 200 을 넘기면 앞부분이 잘린다 -- 그 경우는 관측 절차서가 세션을 나눈다
+export const SCROLL_VIEWPORT_LOG_LIMIT = 200
+
+//+_+// at 은 sendCommand 를 부르기 직전의 clock.now() 다. durationMs 는 그 뒤 await 반환까지다
+//+_+// message 는 실패 사유다. 성공 회차는 null 이다
+export interface ScrollViewportLogRow {
+  at: number
+  tileId: string
+  tabId: number
+  durationMs: number
+  outcome: 'success' | 'failure'
+  message: string | null
+}
+
+function isScrollViewportLogRow(value: unknown): value is ScrollViewportLogRow {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const row = value as Record<string, unknown>
+  return (
+    typeof row.at === 'number' &&
+    typeof row.tileId === 'string' &&
+    typeof row.tabId === 'number' &&
+    typeof row.durationMs === 'number' &&
+    (row.outcome === 'success' || row.outcome === 'failure') &&
+    (row.message === null || typeof row.message === 'string')
+  )
+}
+
+export function readScrollViewportLogRows(stored: unknown): ScrollViewportLogRow[] {
+  if (!Array.isArray(stored)) {
+    return []
+  }
+  return stored.filter(isScrollViewportLogRow)
+}
+
+//+_+// 오래된 것을 버린다. 회차 로그(appendRoundRow)와 같은 규칙이다
+export function appendScrollViewportLogRow(
+  stored: unknown,
+  row: ScrollViewportLogRow,
+  limit = SCROLL_VIEWPORT_LOG_LIMIT,
+): ScrollViewportLogRow[] {
+  return [...readScrollViewportLogRows(stored), row].slice(-limit)
+}
+
+export interface ScrollViewportLogStore {
+  append(row: ScrollViewportLogRow): Promise<void>
+}
+
+//+_+// createRoundLogStore 와 같은 형태다. 쓰기를 직렬화하고 저장값은 첫 행에서만 읽는다
+//+_+// 휠 두 개가 거의 동시에 정산돼도 서로를 덮어 행이 사라지지 않게 한다 (S3 와 같은 이유)
+export function createScrollViewportLogStore(
+  backend: KeyValueBackend,
+  limit = SCROLL_VIEWPORT_LOG_LIMIT,
+): ScrollViewportLogStore {
+  let rows: ScrollViewportLogRow[] | null = null
+  let chain: Promise<void> = Promise.resolve()
+
+  return {
+    append(row: ScrollViewportLogRow): Promise<void> {
+      chain = chain
+        .then(async () => {
+          const stored = rows ?? (await backend.get(SCROLL_VIEWPORT_LOG_KEY))
+          const next = appendScrollViewportLogRow(stored, row, limit)
+          rows = next
+          await backend.set(SCROLL_VIEWPORT_LOG_KEY, next)
+        })
+        .catch(() => {
+          rows = null
+        })
+      return chain
+    },
+  }
+}
+
 export interface PreviewEngine {
   sessions: DebuggerSessionManager
   captures: PreviewCaptureManager
@@ -264,6 +345,9 @@ export function createDashboardHost(
   let manualPaused = false
 
   const rounds = diagnostics === null ? null : createRoundLogStore(diagnostics)
+  //+_+// TASK-P12-02 (S1). L57 측정 전용이다. rounds 와 같은 diagnostics 백엔드를 쓰지만
+  //+_+// 키가 다르므로(P12-D7) 별도 스토어다
+  const scrollViewportLog = diagnostics === null ? null : createScrollViewportLogStore(diagnostics)
 
   //+_+// TASK-P8-05 §1.5. 쓰기를 직렬화한다. 탭 둘이 동시에 끊기면 읽고 쓰는 사이에 서로를 덮는다
   //+_+// 회차 로그가 같은 이유로 체인을 쓴다 (createRoundLogStore). 여기는 버퍼 없이 체인만 둔다. J165
@@ -620,16 +704,37 @@ export function createDashboardHost(
   //+_+// TASK-P11-05 (§8-6). 캐시하지 않는다 -- 창 크기 변경이 detach·탐색 둘 다 아니라서
   //+_+// 캐시된 값이 낡아도 무효화될 계기가 없었다 (Chrome 관측, JH 2026-09-04). 휠마다 새로 읽는다
   //+_+// 읽기 실패는 오류로 올리지 않고 좌표를 못 구한 것으로 다룬다
-  async function tileViewportSize(tabId: number): Promise<ScrollViewport | null> {
+  //+_+// TASK-P12-02 (S1, L57). sendCommand 호출 직전 -> await 반환 직후만 잰다.
+  //+_+// parseScrollViewport 는 구간 밖이다 -- CDP 왕복이 아니다. clock 은 previewCaptureManager 와
+  //+_+// 같은 주입된 시계를 쓴다. Date.now() 를 새로 부르면 이 경로만 시험에서 시간을 제어할 수 없다
+  async function tileViewportSize(tabId: number, tileId: string): Promise<ScrollViewport | null> {
+    const startedAt = clock.now()
     try {
       const result = (await debuggerBackend.sendCommand(tabId, 'Runtime.evaluate', {
         expression:
           '({ width: window.innerWidth, height: window.innerHeight, ratio: window.devicePixelRatio })',
         returnByValue: true,
       })) as { result?: { value?: unknown } }
+      void scrollViewportLog?.append({
+        at: startedAt,
+        tileId,
+        tabId,
+        durationMs: clock.now() - startedAt,
+        outcome: 'success',
+        message: null,
+      })
       return parseScrollViewport(result.result?.value)
     } catch (error) {
-      console.error('[webdeck] SCROLL_TILE viewport read failed', tabId, errorMessage(error))
+      const message = errorMessage(error)
+      void scrollViewportLog?.append({
+        at: startedAt,
+        tileId,
+        tabId,
+        durationMs: clock.now() - startedAt,
+        outcome: 'failure',
+        message,
+      })
+      console.error('[webdeck] SCROLL_TILE viewport read failed', tabId, message)
       return null
     }
   }
@@ -659,7 +764,7 @@ export function createDashboardHost(
     if (tabId === undefined) {
       return { ok: true, type: 'SCROLL_TILE' }
     }
-    const viewport = await tileViewportSize(tabId)
+    const viewport = await tileViewportSize(tabId, tileId)
     if (viewport === null) {
       return { ok: true, type: 'SCROLL_TILE' }
     }
