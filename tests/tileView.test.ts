@@ -223,9 +223,9 @@ describe('P4-D7 - the view model merges tiles, runtime states and frames', () =>
 })
 
 //+_+// S3. 설정 폼은 문자열을 다루고 프로토콜은 값을 다룬다. 그 사이 변환을 순수 함수로 분리한다
-//+_+// TASK-P12-04 가 4필드에서 5필드로 늘렸다 -- captureTimeoutOverrideMs 가 다섯 번째다
+//+_+// TASK-P12-04 가 4필드에서 5필드로, TASK-P12-06 이 5필드에서 6필드로 늘렸다
 describe('P5-D31 - the settings draft round trips a tile', () => {
-  it('reads the five fields off the tile', () => {
+  it('reads the six fields off the tile', () => {
     const source: WebTile = {
       ...tile('t1', 0, 0),
       customTitle: 'Named',
@@ -233,6 +233,7 @@ describe('P5-D31 - the settings draft round trips a tile', () => {
       matchMode: 'prefix',
       refreshIntervalOverrideMs: 9000,
       captureTimeoutOverrideMs: 3000,
+      scrollCaptureIntervalOverrideMs: 500,
     }
     expect(tileSettingsDraft(source)).toEqual({
       customTitle: 'Named',
@@ -240,10 +241,11 @@ describe('P5-D31 - the settings draft round trips a tile', () => {
       matchMode: 'prefix',
       refreshIntervalOverrideMs: '9000',
       captureTimeoutOverrideMs: '3000',
+      scrollCaptureIntervalOverrideMs: '500',
     })
   })
 
-  //+_+// 미지정의 표현은 customTitle 이 빈 문자열, 두 override 가 빈 문자열이다. P5-D31
+  //+_+// 미지정의 표현은 customTitle 이 빈 문자열, 세 override 가 빈 문자열이다. P5-D31
   it('shows an unset custom title and unset overrides as empty text', () => {
     expect(tileSettingsDraft(tile('t1', 0, 0))).toEqual({
       customTitle: '',
@@ -251,6 +253,7 @@ describe('P5-D31 - the settings draft round trips a tile', () => {
       matchMode: 'origin',
       refreshIntervalOverrideMs: '',
       captureTimeoutOverrideMs: '',
+      scrollCaptureIntervalOverrideMs: '',
     })
   })
 
@@ -263,18 +266,20 @@ describe('P5-D31 - the settings draft round trips a tile', () => {
       matchMode: 'origin',
       refreshIntervalOverrideMs: null,
       captureTimeoutOverrideMs: null,
+      scrollCaptureIntervalOverrideMs: null,
     })
   })
 })
 
 describe('P5-D31 - parsing the settings draft', () => {
-  function draft(overrideText: string, timeoutText = '') {
+  function draft(overrideText: string, timeoutText = '', scrollIntervalText = '') {
     return {
       customTitle: '',
       fitMode: 'contain' as const,
       matchMode: 'exact' as const,
       refreshIntervalOverrideMs: overrideText,
       captureTimeoutOverrideMs: timeoutText,
+      scrollCaptureIntervalOverrideMs: scrollIntervalText,
     }
   }
 
@@ -322,6 +327,7 @@ describe('TASK-P12-04 (S2) - parsing the capture timeout override', () => {
       matchMode: 'exact' as const,
       refreshIntervalOverrideMs: '',
       captureTimeoutOverrideMs: timeoutText,
+      scrollCaptureIntervalOverrideMs: '',
     }
   }
 
@@ -363,6 +369,7 @@ describe('TASK-P12-04 (S2) - parsing the capture timeout override', () => {
         matchMode: 'exact',
         refreshIntervalOverrideMs: '9000',
         captureTimeoutOverrideMs: '1',
+        scrollCaptureIntervalOverrideMs: '',
       }),
     ).toBeNull()
     expect(
@@ -372,19 +379,21 @@ describe('TASK-P12-04 (S2) - parsing the capture timeout override', () => {
         matchMode: 'exact',
         refreshIntervalOverrideMs: '1',
         captureTimeoutOverrideMs: '3000',
+        scrollCaptureIntervalOverrideMs: '',
       }),
     ).toBeNull()
   })
 })
 
 describe('TASK-P12-04 (S2) - which field a rejected draft blames', () => {
-  function draft(overrideText: string, timeoutText: string) {
+  function draft(overrideText: string, timeoutText: string, scrollIntervalText = '') {
     return {
       customTitle: '',
       fitMode: 'contain' as const,
       matchMode: 'exact' as const,
       refreshIntervalOverrideMs: overrideText,
       captureTimeoutOverrideMs: timeoutText,
+      scrollCaptureIntervalOverrideMs: scrollIntervalText,
     }
   }
 
@@ -404,6 +413,71 @@ describe('TASK-P12-04 (S2) - which field a rejected draft blames', () => {
   it('blames nothing when both fields are valid or empty', () => {
     expect(tileSettingsDraftError(draft('', ''))).toBeNull()
     expect(tileSettingsDraftError(draft('9000', '3000'))).toBeNull()
+  })
+})
+
+//+_+// TASK-P12-06 (S4). P12-D20 · D21. 앞 두 override 필드의 시험과 같은 형태로 얹는다
+describe('TASK-P12-06 (S4) - parsing the scroll capture interval override', () => {
+  function draft(scrollIntervalText: string) {
+    return {
+      customTitle: '',
+      fitMode: 'contain' as const,
+      matchMode: 'exact' as const,
+      refreshIntervalOverrideMs: '',
+      captureTimeoutOverrideMs: '',
+      scrollCaptureIntervalOverrideMs: scrollIntervalText,
+    }
+  }
+
+  it('turns empty override text into null (falls back to MIN_CAPTURE_INTERVAL_MS 1100)', () => {
+    expect(parseTileSettings(draft(''))?.scrollCaptureIntervalOverrideMs).toBeNull()
+  })
+
+  it('turns blank override text into null', () => {
+    expect(parseTileSettings(draft('   '))?.scrollCaptureIntervalOverrideMs).toBeNull()
+  })
+
+  it('parses a valid override', () => {
+    expect(parseTileSettings(draft('500'))?.scrollCaptureIntervalOverrideMs).toBe(500)
+  })
+
+  it('accepts the floor and the ceiling', () => {
+    expect(parseTileSettings(draft('250'))?.scrollCaptureIntervalOverrideMs).toBe(250)
+    expect(parseTileSettings(draft('3000'))?.scrollCaptureIntervalOverrideMs).toBe(3000)
+  })
+
+  it('rejects an override below the floor or above the ceiling', () => {
+    expect(parseTileSettings(draft('249'))).toBeNull()
+    expect(parseTileSettings(draft('3001'))).toBeNull()
+    expect(parseTileSettings(draft('0'))).toBeNull()
+    expect(parseTileSettings(draft('-1'))).toBeNull()
+  })
+
+  it('rejects text that is not an integer', () => {
+    expect(parseTileSettings(draft('250.5'))).toBeNull()
+    expect(parseTileSettings(draft('fast'))).toBeNull()
+  })
+})
+
+describe('TASK-P12-06 (S4) - the scroll capture interval field is blamed on its own', () => {
+  function draft(scrollIntervalText: string) {
+    return {
+      customTitle: '',
+      fitMode: 'contain' as const,
+      matchMode: 'exact' as const,
+      refreshIntervalOverrideMs: '',
+      captureTimeoutOverrideMs: '',
+      scrollCaptureIntervalOverrideMs: scrollIntervalText,
+    }
+  }
+
+  it('blames the scroll capture interval field when only it is invalid', () => {
+    expect(tileSettingsDraftError(draft('1'))).toBe('scrollCaptureInterval')
+  })
+
+  it('blames nothing when it is valid or empty', () => {
+    expect(tileSettingsDraftError(draft(''))).toBeNull()
+    expect(tileSettingsDraftError(draft('500'))).toBeNull()
   })
 })
 

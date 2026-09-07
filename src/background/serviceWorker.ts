@@ -14,11 +14,13 @@ import type {
 } from '../shared/messages'
 import {
   MAX_CAPTURE_TIMEOUT_OVERRIDE_MS,
+  MAX_SCROLL_CAPTURE_INTERVAL_OVERRIDE_MS,
   MIN_CAPTURE_TIMEOUT_OVERRIDE_MS,
   MIN_TILE_INTERVAL_MS,
   defaultRefreshIntervalMs,
   isValidCaptureTimeoutOverride,
   isValidIntervalOverride,
+  isValidScrollCaptureIntervalOverride,
   tileCaptureTimeoutMs,
   tileIntervalMs,
 } from '../shared/scheduler'
@@ -632,10 +634,12 @@ export function createDashboardHost(
     return { ok: true, type: 'SET_TILE_RECT' }
   }
 
-  //+_+// P5-D31. 5필드 전체 교체다 (TASK-P12-04 가 4필드에서 늘렸다). 미지정은 필드를 지운다
-  //+_+// undefined 를 써 넣지 않는다. 주기 또는 타임아웃이 바뀐 회차에만 재등록한다
-  //+_+// J27 의 Resize 배선과 같은 성질이다. matchMode / customTitle / fitMode 는 회차 진행에
-  //+_+// 영향을 주지 않으므로 만기도 타임아웃 타이머도 흔들지 않는다
+  //+_+// P5-D31. 6필드 전체 교체다 (TASK-P12-04 가 4필드에서, TASK-P12-06 이 5필드에서 늘렸다)
+  //+_+// 미지정은 필드를 지운다. undefined 를 써 넣지 않는다. 주기 또는 타임아웃이 바뀐 회차에만
+  //+_+// 재등록한다. J27 의 Resize 배선과 같은 성질이다. matchMode / customTitle / fitMode 는 회차
+  //+_+// 진행에 영향을 주지 않으므로 만기도 타임아웃 타이머도 흔들지 않는다
+  //+_+// TASK-P12-06 (S4). scrollCaptureIntervalOverrideMs 도 재등록을 흔들지 않는다 -- 이 값은
+  //+_+// previewCaptureManager 로 가지 않고 대시보드(TileCard)가 tile 상태에서 직접 읽는다. §2
   async function setTileSettings(
     tileId: string,
     settings: TileSettings,
@@ -662,6 +666,18 @@ export function createDashboardHost(
         `Capture timeout override must be an integer between ${String(MIN_CAPTURE_TIMEOUT_OVERRIDE_MS)} and ${String(MAX_CAPTURE_TIMEOUT_OVERRIDE_MS)} ms`,
       )
     }
+    //+_+// TASK-P12-06 (S4). P12-D21. 같은 자리다. 하한은 MIN_TILE_INTERVAL_MS 를 그대로 쓴다
+    const scrollCaptureIntervalOverride = settings.scrollCaptureIntervalOverrideMs
+    if (
+      scrollCaptureIntervalOverride !== null &&
+      !isValidScrollCaptureIntervalOverride(scrollCaptureIntervalOverride)
+    ) {
+      return failure(
+        'SET_TILE_SETTINGS',
+        'INVALID_SCROLL_CAPTURE_INTERVAL',
+        `Scroll capture interval override must be an integer between ${String(MIN_TILE_INTERVAL_MS)} and ${String(MAX_SCROLL_CAPTURE_INTERVAL_OVERRIDE_MS)} ms`,
+      )
+    }
 
     const before = tileIntervalMs(tile)
     const timeoutBefore = tileCaptureTimeoutMs(tile)
@@ -681,6 +697,11 @@ export function createDashboardHost(
       delete tile.captureTimeoutOverrideMs
     } else {
       tile.captureTimeoutOverrideMs = captureTimeoutOverride
+    }
+    if (scrollCaptureIntervalOverride === null) {
+      delete tile.scrollCaptureIntervalOverrideMs
+    } else {
+      tile.scrollCaptureIntervalOverrideMs = scrollCaptureIntervalOverride
     }
 
     if (tileIntervalMs(tile) !== before || tileCaptureTimeoutMs(tile) !== timeoutBefore) {

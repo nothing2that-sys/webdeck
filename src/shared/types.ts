@@ -34,6 +34,10 @@ export interface WebTile {
   //+_+// TASK-P12-04 (S2). P12-D13. refreshIntervalOverrideMs 와 같은 형태의 optional 필드다
   //+_+// 미지정이면 CAPTURE_TIMEOUT_MS(5000) 을 쓴다. WEBDECK_PLAN.md:400 원칙 -- 번호를 올리지 않는다
   captureTimeoutOverrideMs?: number
+  //+_+// TASK-P12-06 (S4). P12-D20. 같은 형태의 optional 필드다. 미지정이면 대시보드의
+  //+_+// MIN_CAPTURE_INTERVAL_MS(1100) 을 쓴다. previewCaptureManager 로는 가지 않는다 -- 대시보드
+  //+_+// 안에서만(TileCard 의 스크롤 스로틀·디바운스) 쓰인다
+  scrollCaptureIntervalOverrideMs?: number
   fitMode: TileFitMode
   keepAlive: boolean
 }

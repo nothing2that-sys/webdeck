@@ -78,6 +78,21 @@ export function tileCaptureTimeoutMs(tile: WebTile): number {
   return tile.captureTimeoutOverrideMs ?? CAPTURE_TIMEOUT_MS
 }
 
+//+_+// TASK-P12-06 (S4). P12-D21. 상한만 새로 정의한다 -- 하한은 MIN_TILE_INTERVAL_MS 를 그대로
+//+_+// 쓴다. "캡처 요청이 나가는 최소 간격" 이라는 같은 성격이라 새 하한 상수를 따로 만들지 않는다
+//+_+// storage.ts(shared 층)가 검증에 써야 해서 scrollCaptureThrottle.ts(dashboard 층)가 아니라
+//+_+// 여기 둔다 -- shared 가 dashboard 를 참조하면 층이 거꾸로 된다
+export const MAX_SCROLL_CAPTURE_INTERVAL_OVERRIDE_MS = 3000
+
+export function isValidScrollCaptureIntervalOverride(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= MIN_TILE_INTERVAL_MS &&
+    value <= MAX_SCROLL_CAPTURE_INTERVAL_OVERRIDE_MS
+  )
+}
+
 //+_+// 탭 단위로 판정한다. v1 section 6.1 line 451 이 동일 탭 중복 투입을 금지한다
 export function canEnqueue(
   item: CaptureQueueItem,

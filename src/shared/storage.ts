@@ -1,4 +1,8 @@
-import { isValidCaptureTimeoutOverride, isValidIntervalOverride } from './scheduler'
+import {
+  isValidCaptureTimeoutOverride,
+  isValidIntervalOverride,
+  isValidScrollCaptureIntervalOverride,
+} from './scheduler'
 import type { Project, TileFitMode, TileMatchMode, WebTile } from './types'
 
 //+_+// P5-D17. 1 -> 2 마이그레이션을 만들지 않는다. 제품이 키를 쓴 적이 없어 폐기 비용이 0 이다
@@ -62,6 +66,9 @@ function pickTile(tile: WebTile): WebTile {
   if (tile.captureTimeoutOverrideMs !== undefined) {
     picked.captureTimeoutOverrideMs = tile.captureTimeoutOverrideMs
   }
+  if (tile.scrollCaptureIntervalOverrideMs !== undefined) {
+    picked.scrollCaptureIntervalOverrideMs = tile.scrollCaptureIntervalOverrideMs
+  }
   return picked
 }
 
@@ -97,6 +104,7 @@ function deserializeTile(value: unknown): WebTile | null {
     refreshIntervalMs,
     refreshIntervalOverrideMs,
     captureTimeoutOverrideMs,
+    scrollCaptureIntervalOverrideMs,
     fitMode,
     keepAlive,
   } = value
@@ -137,6 +145,13 @@ function deserializeTile(value: unknown): WebTile | null {
   ) {
     return null
   }
+  //+_+// TASK-P12-06 (S4). P12-D21. 같은 규칙이다
+  if (
+    scrollCaptureIntervalOverrideMs !== undefined &&
+    !isValidScrollCaptureIntervalOverride(scrollCaptureIntervalOverrideMs)
+  ) {
+    return null
+  }
 
   const tile: WebTile = {
     id,
@@ -158,6 +173,9 @@ function deserializeTile(value: unknown): WebTile | null {
   }
   if (captureTimeoutOverrideMs !== undefined) {
     tile.captureTimeoutOverrideMs = captureTimeoutOverrideMs
+  }
+  if (scrollCaptureIntervalOverrideMs !== undefined) {
+    tile.scrollCaptureIntervalOverrideMs = scrollCaptureIntervalOverrideMs
   }
   return tile
 }

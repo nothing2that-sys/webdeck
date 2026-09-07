@@ -21,6 +21,9 @@ export const NOTICE_URL_REQUIRED = 'URL 을 입력한다'
 export const NOTICE_INTERVAL_INVALID = '주기는 250 이상의 정수이거나 비어 있어야 한다'
 //+_+// TASK-P12-04 (S2). P12-D15. NOTICE_INTERVAL_INVALID 와 같은 자리다
 export const NOTICE_CAPTURE_TIMEOUT_INVALID = '타임아웃은 1000~10000 사이의 정수이거나 비어 있어야 한다'
+//+_+// TASK-P12-06 (S4). P12-D21. 같은 자리다
+export const NOTICE_SCROLL_CAPTURE_INTERVAL_INVALID =
+  '스크롤 캡처 간격은 250~3000 사이의 정수이거나 비어 있어야 한다'
 export const NOTICE_DROP_REJECTED = '그 자리에는 놓을 수 없다. 원래 자리로 되돌린다'
 
 //+_+// 실패 1건의 문구다. 코드와 사유를 그대로 싣는다. v1 section 21 이 내부 stack trace 노출을 금지한다

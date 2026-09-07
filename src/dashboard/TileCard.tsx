@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { GRID_COLUMNS } from '../shared/grid'
 import type { DragMode } from './layoutDrag'
 import {
-  MIN_CAPTURE_INTERVAL_MS,
   INITIAL_SCROLL_CAPTURE_THROTTLE_STATE,
   onCaptureRequested,
   onSettled,
   onWheel as onWheelThrottle,
   shouldCapture,
+  tileScrollCaptureIntervalMs,
 } from './scrollCaptureThrottle'
 import type { ScrollCaptureThrottleState } from './scrollCaptureThrottle'
 import { tileWheelTargetPoint } from './tileWheelCoordinate'
@@ -130,9 +130,11 @@ export function TileCard({
 
   //+_+// P10-D18 (§8-5). attempt 를 부르는 시점 셋 중 "휠이 들어왔을 때" · "onSettled 후" 가 여기를 거친다
   //+_+// 세 번째(디바운스)는 scheduleDebounce 가 부른다
+  //+_+// TASK-P12-06 (S4). P12-D20. 타일별 값을 매번 다시 읽는다 -- ref 에 캐시하지 않으므로
+  //+_+// 이 타일의 다음 렌더(설정 저장 후 폴링)부터 새 값이 자연히 반영된다
   const attemptCapture = (): void => {
     const now = Date.now()
-    if (!shouldCapture(throttleStateRef.current, now, MIN_CAPTURE_INTERVAL_MS)) {
+    if (!shouldCapture(throttleStateRef.current, now, tileScrollCaptureIntervalMs(tile))) {
       return
     }
     throttleStateRef.current = onCaptureRequested(throttleStateRef.current, now)
@@ -142,7 +144,9 @@ export function TileCard({
     })
   }
 
-  //+_+// P10-D18. 휠 멈춤 후 1회 더 -- 마지막 휠로부터 MIN_CAPTURE_INTERVAL_MS 뒤의 디바운스 타이머 1개
+  //+_+// P10-D18. 휠 멈춤 후 1회 더 -- 마지막 휠로부터 이 타일의 스크롤 캡처 간격 뒤의 디바운스 타이머 1개
+  //+_+// TASK-P12-06 (S4). 이미 걸린 타이머의 지연은 그대로 둔다 -- setTimeout 은 호출 시점 값을 쓴다.
+  //+_+// 값이 바뀌면 다음 굴림(다음 scheduleDebounce 호출)부터만 새 지연이 적용된다
   const scheduleDebounce = (): void => {
     if (debounceTimerRef.current !== null) {
       clearTimeout(debounceTimerRef.current)
@@ -150,7 +154,7 @@ export function TileCard({
     debounceTimerRef.current = setTimeout(() => {
       debounceTimerRef.current = null
       attemptCapture()
-    }, MIN_CAPTURE_INTERVAL_MS)
+    }, tileScrollCaptureIntervalMs(tile))
   }
 
   useEffect(() => {
@@ -347,6 +351,16 @@ export function TileCard({
               placeholder="타임아웃 ms · 비우면 5000"
               onChange={(event) => {
                 setDraft((current) => ({ ...current, captureTimeoutOverrideMs: event.target.value }))
+              }}
+            />
+            <input
+              value={draft.scrollCaptureIntervalOverrideMs}
+              placeholder="스크롤 캡처 간격 ms · 비우면 1100"
+              onChange={(event) => {
+                setDraft((current) => ({
+                  ...current,
+                  scrollCaptureIntervalOverrideMs: event.target.value,
+                }))
               }}
             />
             <button

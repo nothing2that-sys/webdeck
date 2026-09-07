@@ -1,6 +1,10 @@
 import type { GridRect } from '../shared/grid'
 import type { TileFrame, TileSettings } from '../shared/messages'
-import { isValidCaptureTimeoutOverride, isValidIntervalOverride } from '../shared/scheduler'
+import {
+  isValidCaptureTimeoutOverride,
+  isValidIntervalOverride,
+  isValidScrollCaptureIntervalOverride,
+} from '../shared/scheduler'
 import type {
   Project,
   TileFitMode,
@@ -36,6 +40,8 @@ export interface TileSettingsDraft {
   refreshIntervalOverrideMs: string
   //+_+// TASK-P12-04 (S2). refreshIntervalOverrideMs 와 같은 자리다. P12-D13
   captureTimeoutOverrideMs: string
+  //+_+// TASK-P12-06 (S4). 같은 자리다. P12-D20
+  scrollCaptureIntervalOverrideMs: string
 }
 
 //+_+// 미지정은 빈 문자열이다. 폼이 undefined 를 표시할 수 없기 때문이다
@@ -52,6 +58,10 @@ export function tileSettingsDraft(tile: WebTile): TileSettingsDraft {
       tile.captureTimeoutOverrideMs === undefined
         ? ''
         : String(tile.captureTimeoutOverrideMs),
+    scrollCaptureIntervalOverrideMs:
+      tile.scrollCaptureIntervalOverrideMs === undefined
+        ? ''
+        : String(tile.scrollCaptureIntervalOverrideMs),
   }
 }
 
@@ -90,19 +100,29 @@ export function parseTileSettings(draft: TileSettingsDraft): TileSettings | null
   if (captureTimeoutOverrideMs === INVALID_OVERRIDE) {
     return null
   }
+  const scrollCaptureIntervalOverrideMs = parseOverrideText(
+    draft.scrollCaptureIntervalOverrideMs,
+    isValidScrollCaptureIntervalOverride,
+  )
+  if (scrollCaptureIntervalOverrideMs === INVALID_OVERRIDE) {
+    return null
+  }
   return {
     customTitle: draft.customTitle.trim(),
     fitMode: draft.fitMode,
     matchMode: draft.matchMode,
     refreshIntervalOverrideMs,
     captureTimeoutOverrideMs,
+    scrollCaptureIntervalOverrideMs,
   }
 }
 
 //+_+// TASK-P12-04 (S2). parseTileSettings 가 null 을 낼 때 어느 입력이 문제인지 화면이 알아야
-//+_+// 정확한 안내 문구를 고른다. NOTICE_INTERVAL_INVALID 하나로 두 필드를 덮으면 엉뚱한 필드를
+//+_+// 정확한 안내 문구를 고른다. NOTICE_INTERVAL_INVALID 하나로 여러 필드를 덮으면 엉뚱한 필드를
 //+_+// 가리키는 문구가 뜬다. parseOverrideText 를 그대로 재사용해 판정을 두 곳에 두지 않는다
-export function tileSettingsDraftError(draft: TileSettingsDraft): 'interval' | 'captureTimeout' | null {
+export function tileSettingsDraftError(
+  draft: TileSettingsDraft,
+): 'interval' | 'captureTimeout' | 'scrollCaptureInterval' | null {
   if (parseOverrideText(draft.refreshIntervalOverrideMs, isValidIntervalOverride) === INVALID_OVERRIDE) {
     return 'interval'
   }
@@ -111,6 +131,13 @@ export function tileSettingsDraftError(draft: TileSettingsDraft): 'interval' | '
     INVALID_OVERRIDE
   ) {
     return 'captureTimeout'
+  }
+  //+_+// TASK-P12-06 (S4)
+  if (
+    parseOverrideText(draft.scrollCaptureIntervalOverrideMs, isValidScrollCaptureIntervalOverride) ===
+    INVALID_OVERRIDE
+  ) {
+    return 'scrollCaptureInterval'
   }
   return null
 }

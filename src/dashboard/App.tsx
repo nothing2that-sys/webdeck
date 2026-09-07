@@ -40,6 +40,7 @@ import {
   NOTICE_CAPTURE_TIMEOUT_INVALID,
   NOTICE_INTERVAL_INVALID,
   NOTICE_NONE,
+  NOTICE_SCROLL_CAPTURE_INTERVAL_INVALID,
   NOTICE_STALE_TABS,
   NOTICE_TAB_REQUIRED,
   NOTICE_URL_REQUIRED,
@@ -342,16 +343,19 @@ export function App({ projectId }: AppProps): React.JSX.Element {
     await loadTabs()
   }, [loadTabs, poll, projectId, tileUrl])
 
-  //+_+// P5-D31. 4필드 전체 교체다. 값이 규칙에 맞지 않으면 보내지 않는다. 판정 권위는 워커다
+  //+_+// P5-D31. 6필드 전체 교체다. 값이 규칙에 맞지 않으면 보내지 않는다. 판정 권위는 워커다
   //+_+// P9-D8. draft 는 팝오버를 연 타일이 자기 지역 상태로 들고, 여기엔 tileId 와 함께 넘어온다
   const applySettings = useCallback(
     async (tileId: string, draft: TileSettingsDraft) => {
       const parsed = parseTileSettings(draft)
       if (parsed === null) {
+        const invalidField = tileSettingsDraftError(draft)
         setNotice(
-          tileSettingsDraftError(draft) === 'captureTimeout'
+          invalidField === 'captureTimeout'
             ? NOTICE_CAPTURE_TIMEOUT_INVALID
-            : NOTICE_INTERVAL_INVALID,
+            : invalidField === 'scrollCaptureInterval'
+              ? NOTICE_SCROLL_CAPTURE_INTERVAL_INVALID
+              : NOTICE_INTERVAL_INVALID,
         )
         return
       }

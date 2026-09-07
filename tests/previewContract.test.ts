@@ -83,10 +83,11 @@ describe('TASK-P3-01 item 02 - TileStatus after L19 and P6-D3', () => {
   })
 })
 
-describe('P6-D135 - DashboardFailure.errorCode is a thirteen member union', () => {
-  //+_+// 값을 빠뜨리거나 더하면 컴파일이 깨진다. 13개를 타입에서 직접 끌어온다
+describe('P6-D135 - DashboardFailure.errorCode is a fourteen member union', () => {
+  //+_+// 값을 빠뜨리거나 더하면 컴파일이 깨진다. 14개를 타입에서 직접 끌어온다
   //+_+// P6-D127 이 좁혔고 P6-D135 가 13 을 12 로 정정했다. 근거는 docs/V1_DEVIATIONS.md 9
-  //+_+// TASK-P12-04 (S2) 가 INVALID_CAPTURE_TIMEOUT 을 더해 12 를 13 으로 되돌렸다
+  //+_+// TASK-P12-04 (S2) 가 INVALID_CAPTURE_TIMEOUT 을 더해 12 를 13 으로,
+  //+_+// TASK-P12-06 (S4) 가 INVALID_SCROLL_CAPTURE_INTERVAL 을 더해 13 을 14 로 되돌렸다
   const codes: Record<DashboardErrorCode, true> = {
     TILE_NOT_FOUND: true,
     TAB_NOT_FOUND: true,
@@ -96,6 +97,7 @@ describe('P6-D135 - DashboardFailure.errorCode is a thirteen member union', () =
     INVALID_LAYOUT: true,
     INVALID_INTERVAL: true,
     INVALID_CAPTURE_TIMEOUT: true,
+    INVALID_SCROLL_CAPTURE_INTERVAL: true,
     NO_LAUNCH_URL: true,
     CAPTURE_FAILED: true,
     NOT_IMPLEMENTED: true,
@@ -103,8 +105,8 @@ describe('P6-D135 - DashboardFailure.errorCode is a thirteen member union', () =
     SEND_FAILED: true,
   }
 
-  it('holds exactly thirteen codes', () => {
-    expect(Object.keys(codes)).toHaveLength(13)
+  it('holds exactly fourteen codes', () => {
+    expect(Object.keys(codes)).toHaveLength(14)
   })
 
   //+_+// AttachResult 에서 나서 TileStatus 로만 흐른다. DashboardFailure 에 담기는 경로가 없다

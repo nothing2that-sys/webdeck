@@ -44,9 +44,9 @@ export function clientIdOfPortName(name: string): string | null {
 //+_+// v1 section 9.1 의 두 경로다. tab 은 기존 탭을 걸고 url 은 워커가 새 탭을 만든다
 export type AddTileSource = { kind: 'tab'; tabId: number } | { kind: 'url'; url: string }
 
-//+_+// P5-D31. 부분 갱신을 만들지 않는다. 5필드 전체 교체다 (TASK-P12-04 가 4필드에서 늘렸다)
-//+_+// 부분 갱신은 "필드 부재" 와 "값 비우기" 를 구별할 수 없다. customTitle 을 지우는 경로가 필요하다
-//+_+// 미지정의 표현은 customTitle 이 빈 문자열, refreshIntervalOverrideMs·captureTimeoutOverrideMs 가 null 이다
+//+_+// P5-D31. 부분 갱신을 만들지 않는다. 6필드 전체 교체다 (TASK-P12-04 가 4필드에서, TASK-P12-06 이
+//+_+// 5필드에서 늘렸다). 부분 갱신은 "필드 부재" 와 "값 비우기" 를 구별할 수 없다. customTitle 을
+//+_+// 지우는 경로가 필요하다. 미지정의 표현은 customTitle 이 빈 문자열, 세 override 가 null 이다
 export interface TileSettings {
   customTitle: string
   fitMode: TileFitMode
@@ -54,6 +54,8 @@ export interface TileSettings {
   refreshIntervalOverrideMs: number | null
   //+_+// TASK-P12-04 (S2). P12-D13. refreshIntervalOverrideMs 와 같은 자리·같은 성질이다
   captureTimeoutOverrideMs: number | null
+  //+_+// TASK-P12-06 (S4). P12-D20. 같은 자리·같은 성질이다
+  scrollCaptureIntervalOverrideMs: number | null
 }
 
 //+_+// v1 section 19 line 1143~1150 의 7개. WORKSPACE 계열만 PROJECT 로 치환했다
@@ -119,6 +121,8 @@ export type DashboardErrorCode =
   //+_+// TASK-P12-04 (S2). P12-D13. INVALID_INTERVAL 과 같은 성질의 별도 코드다 -- 재사용하면
   //+_+// 실패 문구가 주기 얘기를 하는데 실제로는 타임아웃 필드가 잘못된 경우를 가리키게 된다
   | 'INVALID_CAPTURE_TIMEOUT'
+  //+_+// TASK-P12-06 (S4). 같은 이유로 별도 코드다 -- 세 override 필드가 서로 다른 오류를 가리켜야 한다
+  | 'INVALID_SCROLL_CAPTURE_INTERVAL'
   | 'NO_LAUNCH_URL'
   | 'CAPTURE_FAILED'
   | 'NOT_IMPLEMENTED'

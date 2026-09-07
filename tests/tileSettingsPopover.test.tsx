@@ -32,6 +32,8 @@ const TILE_A = tile({
   refreshIntervalOverrideMs: 5000,
   //+_+// TASK-P12-04 (S2). 팝오버가 이 값을 채워 보여주는지를 아래 테스트가 확인한다
   captureTimeoutOverrideMs: 3000,
+  //+_+// TASK-P12-06 (S4). 같은 이유다
+  scrollCaptureIntervalOverrideMs: 500,
 })
 const TILE_B = tile({ id: 't.b', x: 1, y: 0 })
 //+_+// TASK-P9-04-R1 (P9-D15). x + w >= GRID_COLUMNS(4) 인 맨 오른쪽 열이다. flip 시험 대상
@@ -141,6 +143,8 @@ describe('TASK-P9-04 - opening the popover', () => {
     expect(screen.getByDisplayValue('5000')).not.toBeNull()
     //+_+// TASK-P12-04 (S2). captureTimeoutOverrideMs 항목이다. refreshIntervalOverrideMs 바로 아래다
     expect(screen.getByDisplayValue('3000')).not.toBeNull()
+    //+_+// TASK-P12-06 (S4). scrollCaptureIntervalOverrideMs 항목이다. captureTimeoutOverrideMs 바로 아래다
+    expect(screen.getByDisplayValue('500')).not.toBeNull()
   })
 })
 
@@ -229,6 +233,44 @@ describe('TASK-P12-04 (S2) - Apply carries the capture timeout override', () => 
             request.type === 'SET_TILE_SETTINGS' &&
             request.tileId === TILE_A.id &&
             request.settings.captureTimeoutOverrideMs === null,
+        ),
+      ).toBe(true)
+    })
+  })
+})
+
+//+_+// TASK-P12-06 (S4). 위 캡처 타임아웃 시험과 같은 형태다
+describe('TASK-P12-06 (S4) - Apply carries the scroll capture interval override', () => {
+  it('carries the stored value unchanged when nothing was edited', async () => {
+    const user = userEvent.setup()
+    const gears = await renderApp()
+    await user.click(gears[0])
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => {
+      expect(
+        sent.some(
+          (request) =>
+            request.type === 'SET_TILE_SETTINGS' &&
+            request.tileId === TILE_A.id &&
+            request.settings.scrollCaptureIntervalOverrideMs === 500,
+        ),
+      ).toBe(true)
+    })
+  })
+
+  it('clears the override when the field is emptied', async () => {
+    const user = userEvent.setup()
+    const gears = await renderApp()
+    await user.click(gears[0])
+    await user.clear(screen.getByDisplayValue('500'))
+    await user.click(screen.getByRole('button', { name: 'Apply' }))
+    await waitFor(() => {
+      expect(
+        sent.some(
+          (request) =>
+            request.type === 'SET_TILE_SETTINGS' &&
+            request.tileId === TILE_A.id &&
+            request.settings.scrollCaptureIntervalOverrideMs === null,
         ),
       ).toBe(true)
     })
