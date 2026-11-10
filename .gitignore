@@ -3,3 +3,11 @@ dist/
 dist-harness/
 tools/measure/.profile/
 tools/measure/reports/
+
+# Local profiles, caches and credentials
+data/
+credentials/
+.env
+.env.*
+.sites-runtime/
+.claude/
